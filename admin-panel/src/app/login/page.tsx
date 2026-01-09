@@ -59,27 +59,31 @@ export default function LoginPage() {
               )}
 
               <div>
+                <label htmlFor="username" className="block text-sm font-medium text-gray-200 mb-1">
+                  Username
+                </label>
                 <Input
                   id="username"
                   type="text"
-                  label="Username"
                   placeholder="Enter your username"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  className="bg-white/10 border-white/20 text-white placeholder-gray-400"
+                  className="bg-white/10 border-white/20 text-white placeholder-gray-400 focus:ring-indigo-500 focus:border-indigo-500"
                   required
                 />
               </div>
 
               <div>
+                <label htmlFor="password" className="block text-sm font-medium text-gray-200 mb-1">
+                  Password
+                </label>
                 <Input
                   id="password"
                   type="password"
-                  label="Password"
                   placeholder="Enter your password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="bg-white/10 border-white/20 text-white placeholder-gray-400"
+                  className="bg-white/10 border-white/20 text-white placeholder-gray-400 focus:ring-indigo-500 focus:border-indigo-500"
                   required
                 />
               </div>
@@ -93,13 +97,6 @@ export default function LoginPage() {
                 Sign In
               </Button>
             </form>
-
-            {/* Demo credentials hint */}
-            <div className="mt-6 p-4 rounded-lg bg-white/5 border border-white/10">
-              <p className="text-xs text-gray-400 text-center">
-                Demo: <span className="text-indigo-400">superadmin</span> / <span className="text-indigo-400">admin123</span>
-              </p>
-            </div>
           </CardBody>
         </Card>
       </div>

@@ -95,13 +95,6 @@ export default function LoginPage() {
               ) : 'Sign In'}
             </button>
           </form>
-
-          {/* Demo hint */}
-          <div className="mt-6 p-4 rounded-lg bg-gray-50 border border-gray-100 text-center">
-            <p className="text-xs text-gray-500">
-              Demo: <span className="text-black font-bold">student</span> / <span className="text-black font-bold">student123</span>
-            </p>
-          </div>
         </div>
       </div>
     </div>
