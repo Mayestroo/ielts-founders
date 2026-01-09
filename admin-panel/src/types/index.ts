@@ -193,6 +193,7 @@ export interface CreateExamSectionForm {
   questions: Question[];
   audioUrl?: string;
   passages?: Passage[];
+  centerId?: string;
 }
 
 export interface CreateAssignmentForm {

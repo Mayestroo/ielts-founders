@@ -10,8 +10,10 @@ import {
     Modal,
     Select,
 } from "@/components/ui";
+import { useAuth } from "@/contexts/AuthContext";
 import { api } from "@/lib/api";
 import {
+    Center,
     CreateExamSectionForm,
     ExamSectionType,
     Passage,
@@ -91,6 +93,8 @@ export default function EditExamPage() {
   const [error, setError] = useState("");
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [centers, setCenters] = useState<Center[]>([]);
+  const { user } = useAuth();
 
   const [formData, setFormData] = useState({
     title: "",
@@ -98,6 +102,7 @@ export default function EditExamPage() {
     description: "",
     duration: 60,
     audioUrl: "",
+    centerId: "",
   });
 
   const [passages, setPassages] = useState<Passage[]>([]);
@@ -113,6 +118,7 @@ export default function EditExamPage() {
           description: section.description || "",
           duration: section.duration,
           audioUrl: section.audioUrl || "",
+          centerId: section.centerId,
         });
         setQuestions(section.questions || []);
         setPassages(section.passages || []);
@@ -160,6 +166,12 @@ export default function EditExamPage() {
       calculateDuration();
     }
   }, [formData.audioUrl, formData.type]);
+
+  useEffect(() => {
+    if (user?.role === "SUPER_ADMIN") {
+      api.getCenters().then(setCenters).catch(console.error);
+    }
+  }, [user]);
 
   // Add passage (for Reading)
   const addPassage = () => {
@@ -287,6 +299,7 @@ export default function EditExamPage() {
       description: data.description || "",
       duration: data.duration || 60,
       audioUrl: data.audioUrl || "",
+      centerId: data.centerId || "",
     });
     setQuestions(data.questions || []);
     setPassages(data.passages || []);
@@ -488,6 +501,21 @@ export default function EditExamPage() {
                   </Button>
                 </div>
               </div>
+            )}
+
+            {user?.role === "SUPER_ADMIN" && (
+              <Select
+                label="Assigned Center"
+                value={formData.centerId}
+                onChange={(e) =>
+                  setFormData({ ...formData, centerId: e.target.value })
+                }
+                options={[
+                  { value: "", label: "Select a center" },
+                  ...centers.map((c) => ({ value: c.id, label: c.name })),
+                ]}
+                required
+              />
             )}
           </CardBody>
         </Card>

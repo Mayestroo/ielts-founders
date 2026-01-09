@@ -2,21 +2,24 @@
 
 import { ImportModal } from "@/components/exam/ImportModal";
 import {
-    Button,
-    Card,
-    CardBody,
-    CardHeader,
-    Input,
-    Modal,
-    Select,
+  Button,
+  Card,
+  CardBody,
+  CardHeader,
+  Input,
+  Modal,
+  Select,
+  useToast,
 } from "@/components/ui";
+import { useAuth } from "@/contexts/AuthContext";
 import { api } from "@/lib/api";
 import {
-    CreateExamSectionForm,
-    ExamSectionType,
-    Passage,
-    Question,
-    QuestionType,
+  Center,
+  CreateExamSectionForm,
+  ExamSectionType,
+  Passage,
+  Question,
+  QuestionType,
 } from "@/types";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
@@ -99,7 +102,10 @@ export default function CreateExamPage() {
 
 function CreateExamContent() {
   const router = useRouter();
+  const { user } = useAuth();
+  const { success, error: showToastError } = useToast();
   const [isLoading, setIsLoading] = useState(false);
+  const [centers, setCenters] = useState<Center[]>([]);
   const [error, setError] = useState("");
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -111,6 +117,7 @@ function CreateExamContent() {
     description: "",
     duration: 60,
     audioUrl: "",
+    centerId: "",
   });
 
   const [passages, setPassages] = useState<Passage[]>([]);
@@ -155,6 +162,12 @@ function CreateExamContent() {
       calculateDuration();
     }
   }, [formData.audioUrl, formData.type]);
+
+  useEffect(() => {
+    if (user?.role === "SUPER_ADMIN") {
+      api.getCenters().then(setCenters).catch(console.error);
+    }
+  }, [user]);
 
   // Initialize Writing tasks if type is WRITING
   useEffect(() => {
@@ -304,6 +317,7 @@ function CreateExamContent() {
       description: data.description || "",
       duration: data.duration || 60,
       audioUrl: data.audioUrl || "",
+      centerId: data.centerId || "",
     });
     setQuestions(data.questions || []);
     setPassages(data.passages || []);
@@ -490,6 +504,21 @@ function CreateExamContent() {
                   </Button>
                 </div>
               </div>
+            )}
+
+            {user?.role === "SUPER_ADMIN" && (
+              <Select
+                label="Assigned Center"
+                value={formData.centerId}
+                onChange={(e) =>
+                  setFormData({ ...formData, centerId: e.target.value })
+                }
+                options={[
+                  { value: "", label: "Select a center" },
+                  ...centers.map((c) => ({ value: c.id, label: c.name })),
+                ]}
+                required
+              />
             )}
           </CardBody>
         </Card>
