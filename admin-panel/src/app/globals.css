@@ -1,0 +1,84 @@
+@import "tailwindcss";
+
+/* Enable class-based dark mode for Tailwind v4 */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* =========================
+   DESIGN TOKENS (Tailwind v4)
+   ========================= */
+
+@theme {
+  /* Light mode (default) */
+  --color-background: #ffffff;
+  --color-foreground: #171717;
+
+  --color-muted: #f4f4f5;
+  --color-border: #e4e4e7;
+}
+
+/* =========================
+   BASE STYLES
+   ========================= */
+
+@layer base {
+  html {
+    color-scheme: light;
+  }
+
+  /* Dark mode via class */
+  html.dark {
+    color-scheme: dark;
+    --color-background: #0a0a0a;
+    --color-foreground: #ededed;
+    --color-muted: #18181b;
+    --color-border: #27272a;
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: "Arial", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    transition: background-color 0.2s ease, color 0.2s ease;
+  }
+
+  button,
+  [role="button"] {
+    cursor: pointer;
+  }
+}
+
+/* =========================
+   UTILITIES
+   ========================= */
+
+@layer utilities {
+  /* Scrollbar (WebKit) */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background-color: var(--color-gray-300);
+    border-radius: 9999px;
+    transition: background-color 150ms ease;
+  }
+
+  :is(.dark) ::-webkit-scrollbar-thumb {
+    background-color: var(--color-gray-700);
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: var(--color-gray-400);
+  }
+
+  :is(.dark) ::-webkit-scrollbar-thumb:hover {
+    background-color: var(--color-gray-600);
+  }
+}

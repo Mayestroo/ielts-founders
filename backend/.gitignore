@@ -1,0 +1,28 @@
+# compiled output
+/dist
+/node_modules
+
+# logs
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+nest-debug.log*
+
+# environment variables
+.env
+.env.test
+.env.production
+
+# prisma
+/prisma/*.db
+/prisma/*.db-journal
+
+# coverage
+/coverage
+
+# test
+/test/coverage
+/test/reports
+
+# misc
+.DS_Store

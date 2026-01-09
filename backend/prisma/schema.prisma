@@ -1,0 +1,128 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// Enums
+enum Role {
+  SUPER_ADMIN
+  CENTER_ADMIN
+  TEACHER
+  STUDENT
+}
+
+enum ExamSectionType {
+  LISTENING
+  READING
+  WRITING
+}
+
+enum AssignmentStatus {
+  ASSIGNED
+  IN_PROGRESS
+  SUBMITTED
+}
+
+// Models
+model Center {
+  id            String   @id @default(uuid())
+  name          String   @unique
+  logo          String?  // URL to center logo
+  loginPassword String?  // Optional login password for center
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  users        User[]
+  examSections ExamSection[]
+}
+
+model User {
+  id        String   @id @default(uuid())
+  username  String   @unique
+  password  String
+  firstName String?
+  lastName  String?
+  role      Role     @default(STUDENT)
+  centerId  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  center          Center?          @relation(fields: [centerId], references: [id], onDelete: SetNull)
+  createdSections ExamSection[]    @relation("TeacherSections")
+  assignments     ExamAssignment[] @relation("StudentAssignments")
+  results         ExamResult[]     @relation("StudentResults")
+
+  @@index([centerId])
+  @@index([role])
+}
+
+model ExamSection {
+  id          String          @id @default(uuid())
+  title       String
+  type        ExamSectionType
+  description String?
+  duration    Int             // Duration in minutes
+  questions   Json            // JSON array of question objects
+  audioUrl    String?         // For listening sections
+  passages    Json?           // For reading sections - array of passage objects
+  teacherId   String
+  centerId    String
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  teacher     User             @relation("TeacherSections", fields: [teacherId], references: [id], onDelete: Cascade)
+  center      Center           @relation(fields: [centerId], references: [id], onDelete: Cascade)
+  assignments ExamAssignment[]
+  results     ExamResult[]
+
+  @@index([teacherId])
+  @@index([centerId])
+  @@index([type])
+}
+
+model ExamAssignment {
+  id         String           @id @default(uuid())
+  studentId  String
+  sectionId  String
+  status     AssignmentStatus @default(ASSIGNED)
+  startTime  DateTime?        // When student started the exam
+  endTime    DateTime?        // When exam should end (calculated from startTime + duration)
+  answers    Json?            // Student's answers
+  highlights Json?            // Highlights for reading/listening sections
+  score      Float?           // Calculated score
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+
+  student User        @relation("StudentAssignments", fields: [studentId], references: [id], onDelete: Cascade)
+  section ExamSection @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, sectionId]) // One assignment per student per section
+  @@index([studentId])
+  @@index([sectionId])
+  @@index([status])
+}
+
+model ExamResult {
+  id           String   @id @default(uuid())
+  studentId    String
+  sectionId    String
+  score        Float
+  totalScore   Float    // Maximum possible score
+  bandScore    Float?   // IELTS band score (0-9)
+  answers      Json     // Copy of submitted answers
+  feedback     Json?    // Teacher feedback or auto-generated feedback
+  submittedAt  DateTime @default(now())
+  createdAt    DateTime @default(now())
+
+  student User        @relation("StudentResults", fields: [studentId], references: [id], onDelete: Cascade)
+  section ExamSection @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+
+  @@index([studentId])
+  @@index([sectionId])
+}

@@ -1,0 +1,18 @@
+# System Files
+.DS_Store
+Thumbs.db
+*.log
+
+# Editor Directories
+.idea
+.vscode
+*.swp
+*.swo
+
+# Dependency Directories (if installed in root)
+node_modules/
+
+# Environment Variables
+.env
+.env.*
+!.env.example

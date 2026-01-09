@@ -1,0 +1,120 @@
+@import "tailwindcss";
+
+:root {
+  --exam-base-font-size: 16px;
+  --exam-text-color: #30343C;
+  --exam-bg-color: #ffffff;
+  --exam-border-color: #E5E7EB;
+  --exam-secondary-bg: #F9FAFB;
+  --exam-active-bg: #000000;
+  --exam-active-text: #ffffff;
+  color-scheme: light;
+  font-family: Arial, sans-serif;
+}
+
+.high-contrast {
+  --exam-bg-color: #000000;
+  --exam-text-color: #ffffff;
+  --exam-border-color: #ffffff;
+  --exam-secondary-bg: #111111;
+  --exam-active-bg: #ffffff;
+  --exam-active-text: #000000;
+  color-scheme: dark;
+}
+
+
+body {
+  @apply text-[#30343C];
+  color: var(--exam-text-color);
+  background-color: var(--exam-bg-color);
+}
+
+.high-contrast body {
+  background-color: #000000;
+}
+
+/* Accessibility Variables Overrides */
+.text-base {
+  font-size: var(--exam-base-font-size);
+}
+
+.high-contrast .bg-white,
+.high-contrast .bg-gray-50,
+.high-contrast .bg-gray-100 {
+  background-color: var(--exam-bg-color) !important;
+}
+
+.high-contrast .text-gray-900,
+.high-contrast .text-gray-800,
+.high-contrast .text-gray-700,
+.high-contrast .text-gray-600,
+.high-contrast .text-black,
+.high-contrast .text-\[\#333333\],
+.high-contrast .text-\[\#30343C\] {
+  color: var(--exam-text-color) !important;
+}
+
+.high-contrast .text-gray-500,
+.high-contrast .text-gray-400 {
+  color: rgba(255, 255, 255, 0.6) !important;
+}
+
+.high-contrast .hover\:bg-gray-50:hover,
+.high-contrast .hover\:bg-gray-100:hover,
+.high-contrast .hover\:bg-gray-200:hover,
+.high-contrast .hover\:bg-gray-300:hover,
+.high-contrast .hover\:bg-gray-800:hover {
+  background-color: #222222 !important;
+}
+
+
+.high-contrast .bg-\[\#F1F2EC\],
+.high-contrast .bg-\[\#EBEBEB\] {
+  background-color: var(--exam-secondary-bg) !important;
+}
+
+.high-contrast .border-gray-200,
+.high-contrast .border-gray-300,
+.high-contrast .border-gray-800,
+.high-contrast .border-black,
+.high-contrast .border-\[\#D9D9D9\] {
+  border-color: var(--exam-border-color) !important;
+}
+
+
+.high-contrast .bg-black {
+  background-color: #ffffff !important;
+  color: #000000 !important;
+}
+
+.high-contrast .text-white {
+  color: #000000 !important;
+}
+
+
+
+@layer utilities {
+  /* Custom Scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-gray-300 rounded-full transition-colors;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-gray-400;
+  }
+}
+
+@layer base {
+  button, [role="button"] {
+    cursor: pointer;
+  }
+}
