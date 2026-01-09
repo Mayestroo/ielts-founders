@@ -26,4 +26,8 @@ export class CreateExamSectionDto {
   @IsOptional()
   @IsArray()
   passages?: any[]; // For reading sections
+
+  @IsOptional()
+  @IsString()
+  centerId?: string; // Optional: specify center explicitly (useful for SuperAdmins)
 }

@@ -19,7 +19,6 @@ import { UsersModule } from './modules/users';
     AuthModule,
     UsersModule,
     ExamsModule,
-    ExamsModule,
     CentersModule,
     DashboardModule,
     UploadsModule,

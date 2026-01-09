@@ -1,25 +1,26 @@
 import {
-  Body,
-  Controller,
-  Delete,
-  Get,
-  Param,
-  Post,
-  Put,
-  Query,
-  Request,
-  UseGuards,
+    BadRequestException,
+    Body,
+    Controller,
+    Delete,
+    Get,
+    Param,
+    Post,
+    Put,
+    Query,
+    Request,
+    UseGuards,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { Role } from '@prisma/client';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import {
-  CreateAssignmentDto,
-  CreateExamSectionDto,
-  SaveHighlightsDto,
-  SubmitAnswersDto,
-  UpdateExamSectionDto,
+    CreateAssignmentDto,
+    CreateExamSectionDto,
+    SaveHighlightsDto,
+    SubmitAnswersDto,
+    UpdateExamSectionDto,
 } from './dto';
 import { ExamsService } from './exams.service';
 
@@ -42,14 +43,20 @@ export class ExamsController {
 
   @Post('exam-sections')
   @Roles(Role.TEACHER, Role.CENTER_ADMIN, Role.SUPER_ADMIN)
-  createSection(
+  async createSection(
     @Body() createSectionDto: CreateExamSectionDto,
     @Request() req: AuthenticatedRequest,
   ) {
+    const centerId = createSectionDto.centerId || req.user.centerId;
+    
+    if (!centerId) {
+      throw new BadRequestException('centerId is required. Please specify a center.');
+    }
+
     return this.examsService.createSection(
       createSectionDto,
       req.user.id,
-      req.user.centerId!,
+      centerId,
     );
   }
 
