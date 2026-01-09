@@ -2,20 +2,21 @@
 
 import { ImportModal } from "@/components/exam/ImportModal";
 import {
-  Button,
-  Card,
-  CardBody,
-  CardHeader,
-  Input,
-  Select,
+    Button,
+    Card,
+    CardBody,
+    CardHeader,
+    Input,
+    Modal,
+    Select,
 } from "@/components/ui";
 import { api } from "@/lib/api";
 import {
-  CreateExamSectionForm,
-  ExamSectionType,
-  Passage,
-  Question,
-  QuestionType,
+    CreateExamSectionForm,
+    ExamSectionType,
+    Passage,
+    Question,
+    QuestionType,
 } from "@/types";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
@@ -101,6 +102,8 @@ function CreateExamContent() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
 
   const [formData, setFormData] = useState({
     title: "",
@@ -314,11 +317,14 @@ function CreateExamContent() {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    setIsLoading(true);
+    setIsUploading(true);
+    setUploadProgress(0);
     setError("");
 
     try {
-      const { url } = await api.uploadFile(file);
+      const { url } = await api.uploadFile(file, (percent) => {
+        setUploadProgress(percent);
+      });
       if (target === "audio") {
         setFormData({ ...formData, audioUrl: url });
       } else if (target === "question-image" && questionId) {
@@ -327,7 +333,8 @@ function CreateExamContent() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "File upload failed");
     } finally {
-      setIsLoading(false);
+      setIsUploading(false);
+      setUploadProgress(0);
       // Reset input
       e.target.value = "";
     }
@@ -360,6 +367,28 @@ function CreateExamContent() {
         onClose={() => setIsImportModalOpen(false)}
         onImport={handleImport}
       />
+
+      <Modal 
+        isOpen={isUploading} 
+        onClose={() => {}} 
+        title="Uploading File..."
+      >
+        <div className="space-y-4 py-2">
+          <div className="flex items-center justify-between text-sm mb-1">
+            <span className="text-gray-500">Please wait while the file is being uploaded</span>
+            <span className="font-medium text-indigo-600">{uploadProgress}%</span>
+          </div>
+          <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2.5">
+            <div 
+              className="bg-indigo-600 h-2.5 rounded-full transition-all duration-300" 
+              style={{ width: `${uploadProgress}%` }}
+            ></div>
+          </div>
+          <p className="text-xs text-center text-gray-400 mt-4">
+            For large audio files, this may take a moment. Do not close this page.
+          </p>
+        </div>
+      </Modal>
 
       <form onSubmit={handleSubmit} className="space-y-6">
         {error && (

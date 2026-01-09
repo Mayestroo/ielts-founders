@@ -233,27 +233,53 @@ class ApiClient {
   }
 
   // Uploads
-  async uploadFile(file: File): Promise<{ url: string }> {
-    const formData = new FormData();
-    formData.append('file', file);
+  async uploadFile(
+    file: File,
+    onProgress?: (percent: number) => void
+  ): Promise<{ url: string }> {
+    return new Promise((resolve, reject) => {
+      const formData = new FormData();
+      formData.append('file', file);
 
-    const token = this.getToken();
-    const headers: HeadersInit = {
-      ...(token && { Authorization: `Bearer ${token}` }),
-    };
+      const xhr = new XMLHttpRequest();
+      const token = this.getToken();
 
-    const response = await fetch(`${API_URL}/uploads`, {
-      method: 'POST',
-      headers,
-      body: formData,
+      xhr.open('POST', `${API_URL}/uploads`, true);
+      if (token) {
+        xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+      }
+
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable && onProgress) {
+          const percentComplete = Math.round((event.loaded / event.total) * 100);
+          onProgress(percentComplete);
+        }
+      };
+
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            const response = JSON.parse(xhr.responseText);
+            resolve(response);
+          } catch (e) {
+            reject(new Error('Failed to parse upload response'));
+          }
+        } else {
+          try {
+            const error = JSON.parse(xhr.responseText);
+            reject(new Error(error.message || `Upload failed with status ${xhr.status}`));
+          } catch (e) {
+            reject(new Error(`Upload failed with status ${xhr.status}`));
+          }
+        }
+      };
+
+      xhr.onerror = () => {
+        reject(new Error('Network error during upload'));
+      };
+
+      xhr.send(formData);
     });
-
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ message: 'Upload failed' }));
-      throw new Error(error.message || `HTTP error! status: ${response.status}`);
-    }
-
-    return response.json();
   }
 }
 

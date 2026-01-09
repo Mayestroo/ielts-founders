@@ -1,13 +1,13 @@
 "use client";
 
 import {
-  Button,
-  Card,
-  CardBody,
-  ConfirmationModal,
-  Input,
-  Modal,
-  useToast,
+    Button,
+    Card,
+    CardBody,
+    ConfirmationModal,
+    Input,
+    Modal,
+    useToast,
 } from "@/components/ui";
 import { api } from "@/lib/api";
 import { Center } from "@/types";
@@ -26,6 +26,8 @@ export default function CentersPage() {
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const [centerToDelete, setCenterToDelete] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -93,8 +95,14 @@ export default function CentersPage() {
 
       // Upload new logo if selected
       if (logoFile) {
-        const uploadResult = await api.uploadFile(logoFile);
+        setIsUploading(true);
+        setUploadProgress(0);
+        const uploadResult = await api.uploadFile(logoFile, (percent) => {
+          setUploadProgress(percent);
+        });
         logoUrl = uploadResult.url;
+        setIsUploading(false);
+        setUploadProgress(0);
       }
 
       const centerData = {
@@ -317,6 +325,25 @@ export default function CentersPage() {
           </div>
         )}
       </div>
+
+      <Modal 
+        isOpen={isUploading} 
+        onClose={() => {}} 
+        title="Uploading Logo..."
+      >
+        <div className="space-y-4 py-2">
+          <div className="flex items-center justify-between text-sm mb-1">
+            <span className="text-gray-500">Please wait while the logo is being uploaded</span>
+            <span className="font-medium text-indigo-600">{uploadProgress}%</span>
+          </div>
+          <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2.5">
+            <div 
+              className="bg-indigo-600 h-2.5 rounded-full transition-all duration-300" 
+              style={{ width: `${uploadProgress}%` }}
+            ></div>
+          </div>
+        </div>
+      </Modal>
 
       {/* Create/Edit Center Modal */}
       <Modal
