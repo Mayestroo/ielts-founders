@@ -8,6 +8,7 @@ Thumbs.db
 .vscode
 *.swp
 *.swo
+plesk.md
 
 # Dependency Directories (if installed in root)
 node_modules/

@@ -3,7 +3,7 @@
 import { Badge, Button, Card, CardBody, ConfirmationModal, Input, Modal, Select, useToast } from '@/components/ui';
 import { useAuth } from '@/contexts/AuthContext';
 import { api } from '@/lib/api';
-import { CreateUserForm, Role, User } from '@/types';
+import { Center, CreateUserForm, Role, User } from '@/types';
 import { useEffect, useState } from 'react';
 
 export default function UsersPage() {
@@ -17,13 +17,14 @@ export default function UsersPage() {
   const [error, setError] = useState('');
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [userToDelete, setUserToDelete] = useState<string | null>(null);
+  const [centers, setCenters] = useState<Center[]>([]);
 
   const [formData, setFormData] = useState<CreateUserForm>({
     username: '',
     password: '',
     firstName: '',
     lastName: '',
-    role: 'STUDENT',
+    role: 'CENTER_ADMIN',
     centerId: currentUser?.centerId || '',
   });
 
@@ -44,6 +45,13 @@ export default function UsersPage() {
   useEffect(() => {
     loadUsers();
   }, [page]);
+
+  useEffect(() => {
+    // Load centers for SuperAdmin to select when creating users
+    if (hasRole('SUPER_ADMIN')) {
+      api.getCenters().then(setCenters).catch(console.error);
+    }
+  }, [hasRole]);
 
   const { success, error: showError } = useToast();
 
@@ -71,8 +79,8 @@ export default function UsersPage() {
         password: '',
         firstName: '',
         lastName: '',
-        role: 'STUDENT',
-        centerId: currentUser?.centerId || '',
+        role: 'CENTER_ADMIN',
+        centerId: '',
       });
       loadUsers();
     } catch (err) {
@@ -302,8 +310,8 @@ export default function UsersPage() {
             password: '',
             firstName: '',
             lastName: '',
-            role: 'STUDENT',
-            centerId: currentUser?.centerId || '',
+            role: 'CENTER_ADMIN',
+            centerId: '',
           });
         }}
         title={editingUser ? "Edit User" : "Create New User"}
@@ -350,6 +358,19 @@ export default function UsersPage() {
             onChange={(e) => setFormData({ ...formData, role: e.target.value as Role })}
             required
           />
+
+          {hasRole('SUPER_ADMIN') && (
+            <Select
+              label="Center"
+              options={[
+                { value: '', label: 'Select a center' },
+                ...centers.map(c => ({ value: c.id, label: c.name }))
+              ]}
+              value={formData.centerId || ''}
+              onChange={(e) => setFormData({ ...formData, centerId: e.target.value })}
+              required
+            />
+          )}
 
           <div className="flex gap-3 pt-4">
             <Button type="button" variant="secondary" onClick={() => setShowModal(false)} className="flex-1">

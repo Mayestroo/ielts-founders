@@ -1,8 +1,8 @@
 import {
-  BadRequestException,
-  ForbiddenException,
-  Injectable,
-  NotFoundException,
+    BadRequestException,
+    ForbiddenException,
+    Injectable,
+    NotFoundException,
 } from '@nestjs/common';
 import { AssignmentStatus, Prisma, Role } from '@prisma/client';
 import { AiService, WritingEvaluation } from '../ai/ai.service';
@@ -67,8 +67,9 @@ export class ExamsService {
   ) {
     let where: Prisma.ExamSectionWhereInput = {};
 
-    if (userRole === Role.TEACHER) {
-      where = { teacherId };
+    if (userRole === Role.TEACHER && centerId) {
+      // Teachers see all sections in their center (not just their own)
+      where = { centerId };
     } else if (userRole === Role.CENTER_ADMIN && centerId) {
       where = { centerId };
     }
