@@ -70,14 +70,14 @@ export function MCQQuestion({
           <p 
             className="text-gray-900 font-medium text-base leading-relaxed"
             dangerouslySetInnerHTML={{ 
-              __html: questionText.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br />')
+              __html: (questionText || '').replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br />')
             }}
           />
         )}
       </div>
       
       <div className="flex flex-col gap-1 pl-10">
-        {options.map((option) => (
+        {(options || []).map((option) => (
           <label
             key={option.id}
             className={`flex items-center gap-3 cursor-pointer group px-3 py-2 rounded-lg transition-all ${isSelected(option.id) ? 'bg-blue-50' : 'hover:bg-gray-50'}`}

@@ -20,14 +20,14 @@ interface HighlightableTextProps {
 }
 
 export function HighlightableText({ 
-  content: rawContent, 
+  content: rawContent = '', 
   onHighlightsChange,
   initialHighlights = [],
   inline = false,
   className = ''
 }: HighlightableTextProps) {
   // Strip HTML tags first
-  const contentWithoutHtml = rawContent.replace(/<[^>]*>/g, '');
+  const contentWithoutHtml = (rawContent || '').replace(/<[^>]*>/g, '');
   
   // Parse bold ranges from the original content BEFORE stripping markers
   // We need to track where bold text is in the STRIPPED content
@@ -162,17 +162,6 @@ export function HighlightableText({
     const lines = text.split('\n');
     return lines.map((line, lineIdx) => {
       const lineStartOffset = startOffset + lines.slice(0, lineIdx).reduce((acc, l, i) => acc + l.length + (i < lineIdx ? 1 : 0), 0);
-      
-      // Check if line is a single capital letter label
-      const isLabel = /^[A-Z]$/.test(line.trim());
-      if (isLabel) {
-        return (
-          <span key={lineIdx}>
-            <span className="font-bold text-gray-900 text-base">{line}</span>
-            {lineIdx < lines.length - 1 && '\n'}
-          </span>
-        );
-      }
       
       // Build segments with bold ranges applied
       const segments: React.ReactNode[] = [];

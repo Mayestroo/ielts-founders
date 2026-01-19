@@ -21,7 +21,7 @@ export function TableGroup({
   onQuestionClick,
   sectionType
 }: TableGroupProps) {
-  const tableData = (questions[0] as any).tableData;
+  const tableData = questions.length > 0 ? (questions[0] as any).tableData : null;
 
   if (tableData) {
     let questionIndex = 0;

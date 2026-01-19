@@ -1,12 +1,12 @@
 import {
-  Body,
-  Controller,
-  Delete,
-  Get,
-  Param,
-  Post,
-  Put,
-  UseGuards,
+    Body,
+    Controller,
+    Delete,
+    Get,
+    Param,
+    Post,
+    Put,
+    UseGuards,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { Role } from '@prisma/client';
@@ -33,7 +33,7 @@ export class CentersController {
   }
 
   @Get(':id')
-  @Roles(Role.SUPER_ADMIN, Role.CENTER_ADMIN)
+  @Roles(Role.SUPER_ADMIN, Role.CENTER_ADMIN, Role.TEACHER, Role.STUDENT)
   findOne(@Param('id') id: string) {
     return this.centersService.findOne(id);
   }

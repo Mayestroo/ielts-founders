@@ -475,7 +475,17 @@ export class ExamsService {
     let totalScore = 0;
 
     for (const question of questions) {
-      const points = question.points || 1;
+      let points = question.points || 1;
+      
+      // Fallback for MCQ_MULTIPLE if points is missing/1
+      if (question.type === 'MCQ_MULTIPLE' && points === 1 && question.instruction) {
+        const instr = question.instruction.toUpperCase();
+        if (instr.includes('TWO')) points = 2;
+        else if (instr.includes('THREE')) points = 3;
+        else if (instr.includes('FOUR')) points = 4;
+        else if (instr.includes('FIVE')) points = 5;
+      }
+
       totalScore += points;
 
       const studentAnswer = answers[question.id] as

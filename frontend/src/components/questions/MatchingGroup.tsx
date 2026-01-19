@@ -59,7 +59,7 @@ export function MatchingGroup({
     const optionId = e.dataTransfer.getData("text/plain");
 
     // Check if option is valid for this group (simple check: exists in options list)
-    if (options.some((opt) => opt.id === optionId)) {
+    if ((options || []).some((opt) => opt.id === optionId)) {
       onChange(questionId, optionId);
     }
   };
@@ -85,9 +85,10 @@ export function MatchingGroup({
             {questionsLabel}
           </h4>
           <div className="space-y-8">
-            {questions.map((q) => {
+            {(questions || []).map((q) => {
               const isActive = currentQuestionId === q.id;
-              const isDragOver = dragOverId === q.id;
+              const dragOverIdValue = (dragOverId as string | null);
+              const isDragOver = dragOverIdValue === q.id;
               const value = answers[q.id] || "";
               const isFilled = !!value;
 
@@ -95,10 +96,10 @@ export function MatchingGroup({
               const idMatch = q.id.match(/\d+/);
               const displayNum = idMatch
                 ? idMatch[0]
-                : (q as Question & { number?: string }).number;
+                : (q as any).number;
 
               // Clean question text (remove [BLANK] or placeholders)
-              const cleanText = q.questionText
+              const cleanText = (q.questionText || "")
                 .replace(/[:\s]*\[BLANK\][:\s]*/i, "")
                 .trim();
 
@@ -199,9 +200,9 @@ export function MatchingGroup({
             {optionsLabel}
           </h4>
           <div className="flex flex-col gap-3">
-            {options.map((option) => {
+            {(options || []).map((option) => {
               // Count how many times this option is used
-              const usedCount = questions.filter(
+              const usedCount = (questions || []).filter(
                 (q) => answers[q.id] === option.id
               ).length;
               const isUsed = usedCount > 0;

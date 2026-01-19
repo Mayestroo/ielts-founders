@@ -25,7 +25,6 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useAntiCheat } from "@/hooks/useAntiCheat";
 import { api } from "@/lib/api";
 import { ExamAssignment, Question } from "@/types";
-import Image from "next/image";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -34,6 +33,27 @@ const API_BASE_URL = (
 ).replace("/api", "");
 
 type AnswerValue = string | string[] | Record<string, string>;
+const getEffectivePoints = (q: Question) => {
+  if (q.points > 1) return q.points;
+  if (q.type === "MCQ_MULTIPLE") {
+    if (q.questionRange) {
+      const rangeMatch = q.questionRange.match(/(\d+)\s*[–-]\s*(\d+)/);
+      if (rangeMatch) {
+        const start = parseInt(rangeMatch[1]);
+        const end = parseInt(rangeMatch[2]);
+        return Math.max(1, end - start + 1);
+      }
+    }
+    if (q.instruction) {
+      const instr = q.instruction.toUpperCase();
+      if (instr.includes("TWO")) return 2;
+      if (instr.includes("THREE")) return 3;
+      if (instr.includes("FOUR")) return 4;
+      if (instr.includes("FIVE")) return 5;
+    }
+  }
+  return q.points || 1;
+};
 
 function ExamContent({ assignmentId }: { assignmentId: string }) {
   const { isLoading, isAuthenticated } = useAuth();
@@ -253,16 +273,17 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
       return (assignment.section.passages || []).map((p, i) => {
         const partQuestions = questions.filter((q) => q.passageId === p.id);
         const totalPoints = partQuestions.reduce(
-          (sum, q) => sum + (q.points || 1),
+          (sum, q) => sum + getEffectivePoints(q),
           0
         );
 
         const answeredCount = partQuestions.reduce((sum, q) => {
           const ans = answers[q.id];
+          const points = getEffectivePoints(q);
           if (q.type === "MCQ_MULTIPLE" && Array.isArray(ans)) {
-            return sum + Math.min(ans.length, q.points || 1);
+            return sum + Math.min(ans.length, points);
           }
-          return sum + (ans ? q.points || 1 : 0);
+          return sum + (ans ? points : 0);
         }, 0);
 
         const firstMatch = partQuestions[0]?.id.match(/\d+/);
@@ -271,12 +292,15 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
         const navQuestions = partQuestions.map((q) => {
           const m = q.id.match(/\d+/);
           const start = m ? parseInt(m[0]) : questions.indexOf(q) + 1;
+          const points = getEffectivePoints(q);
           const displayLabel =
-            q.points > 1 ? `${start}-${start + q.points - 1}` : start;
+            points > 1 ? `${start}-${start + points - 1}` : start;
           return {
             id: q.id,
             number: displayLabel,
-            isAnswered: !!answers[q.id],
+            isAnswered: Array.isArray(answers[q.id])
+              ? (answers[q.id] as any[]).length > 0
+              : !!answers[q.id],
           };
         });
 
@@ -336,14 +360,15 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
 
         const answeredCount = partQuestions.reduce((sum, q) => {
           const ans = answers[q.id];
+          const points = getEffectivePoints(q);
           if (q.type === "MCQ_MULTIPLE" && Array.isArray(ans)) {
-            return sum + Math.min(ans.length, q.points || 1);
+            return sum + Math.min(ans.length, points);
           }
-          return sum + (ans ? q.points || 1 : 0);
+          return sum + (ans ? points : 0);
         }, 0);
 
         const totalPoints = partQuestions.reduce(
-          (sum, q) => sum + (q.points || 1),
+          (sum, q) => sum + getEffectivePoints(q),
           0
         );
 
@@ -351,8 +376,9 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
           // Parse number reliably
           const m = q.id.match(/\d+/);
           const start = m ? parseInt(m[0]) : 0;
+          const points = getEffectivePoints(q);
           const displayLabel =
-            q.points > 1 ? `${start}-${start + q.points - 1}` : start;
+            points > 1 ? `${start}-${start + points - 1}` : start;
           return {
             id: q.id,
             number: displayLabel,
@@ -438,10 +464,9 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
     // Extract numeric portion from ID (e.g., "q6" -> 6) or fallback to index
     const idMatch = question.id.match(/\d+/);
     const startNum = idMatch ? parseInt(idMatch[0]) : index + 1;
+    const points = getEffectivePoints(question);
     const displayNumber =
-      question.points > 1
-        ? `${startNum}-${startNum + question.points - 1}`
-        : startNum;
+      points > 1 ? `${startNum}-${startNum + points - 1}` : startNum;
     const isActive = currentQuestionId === question.id;
 
     return (
@@ -713,7 +738,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
   // Reading Section Layout
   if (section.type === "READING") {
     return (
-      <div className="h-screen overflow-hidden bg-white flex flex-col">
+      <div className="h-screen overflow-hidden bg-white flex flex-col exam-content">
         <ExamHeader
           title={section.title}
           remainingSeconds={assignment.remainingTime || section.duration * 60}
@@ -747,9 +772,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
                         </h2>
                         <div className="prose prose-gray max-w-none">
                           <HighlightableText
-                            content={passage.content
-                              .replace(/(^|\n+)\s*([A-Z])\s+/g, "\n\n$2\n")
-                              .trim()}
+                            content={passage.content.trim()}
                             initialHighlights={[]}
                             onHighlightsChange={() => {
                               // TODO: Persist highlights to backend
@@ -765,9 +788,9 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
                   ref={rightPanelRef}
                   className="h-full overflow-y-auto p-6 space-y-4 bg-white"
                 >
-                  {renderQuestionsWithGrouping(
+                  {currentPart && renderQuestionsWithGrouping(
                     questions.filter((q) =>
-                      currentPart.questions.some((pq) => pq.id === q.id)
+                      currentPart.questions?.some((pq) => pq.id === q.id)
                     )
                   )}
                 </div>
@@ -896,7 +919,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
         : "You should spend about 40 minutes on this task. Write at least 250 words.";
 
     return (
-      <div className="h-screen overflow-hidden bg-white flex flex-col">
+      <div className="h-screen overflow-hidden bg-white flex flex-col exam-content">
         <div className="h-16 shrink-0">
           <ExamHeader
             title={section.title}
@@ -925,18 +948,11 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
                     {activeQuestion.questionText}
                   </p>
                   {activeQuestion.imageUrl && (
-                    <div
-                      className="mb-6 border border-gray-200 rounded-lg overflow-hidden bg-white relative"
-                      style={{ minHeight: "200px" }}
-                    >
-                      <Image
-                        src={activeQuestion.imageUrl}
-                        alt="Task Image"
-                        fill
-                        className="object-contain"
-                        unoptimized
-                      />
-                    </div>
+                    <img
+                      src={activeQuestion.imageUrl}
+                      alt="Task Image"
+                      className="w-full h-auto mb-6 border border-gray-200 rounded-lg bg-white"
+                    />
                   )}
                   {instructionLines.map((line, idx) => (
                     <p
@@ -989,9 +1005,9 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
             <video
               ref={introVideoRef}
               autoPlay
-              muted
               playsInline
               onEnded={handleVideoEnded}
+              onPlay={() => setIsVideoAutoplayBlocked(false)}
               onLoadStart={() =>
                 console.log("Video loading:", assignment?.section?.type)
               }
@@ -1006,6 +1022,33 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
               />
               Your browser does not support the video tag.
             </video>
+            {isVideoAutoplayBlocked && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 z-10">
+                <button
+                  onClick={() => {
+                    if (introVideoRef.current) {
+                      introVideoRef.current
+                        .play()
+                        .catch((e) => console.warn("Manual play failed:", e));
+                      setIsVideoAutoplayBlocked(false);
+                    }
+                  }}
+                  className="px-8 py-4 bg-white text-black rounded-full font-bold flex items-center gap-2 hover:bg-gray-100 transition-all scale-110 shadow-2xl"
+                >
+                  <svg
+                    className="w-6 h-6"
+                    fill="currentColor"
+                    viewBox="0 0 20 20"
+                  >
+                    <path d="M6.3 2.841A1.5 1.5 0 004 4.11v11.78a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z" />
+                  </svg>
+                  Play Introduction
+                </button>
+                <p className="text-white/60 mt-4 text-sm font-medium">
+                  Sound is required for this introduction
+                </p>
+              </div>
+            )}
           </div>
         )}
         <SettingsModal
@@ -1019,7 +1062,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
   // Listening Section Layout (similar to Reading but with audio)
   return (
     <div
-      className={`min-h-screen bg-white flex flex-col notranslate ${
+      className={`min-h-screen bg-white flex flex-col notranslate exam-content ${
         showPlayOverlay ? "h-screen overflow-hidden" : ""
       }`}
       translate="no"
@@ -1071,9 +1114,9 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
 
           {/* filtered questions */}
           <div className="space-y-0">
-            {renderQuestionsWithGrouping(
+            {currentPart && renderQuestionsWithGrouping(
               questions.filter((q) =>
-                currentPart.questions.some((pq) => pq.id === q.id)
+                currentPart.questions?.some((pq) => pq.id === q.id)
               )
             )}
           </div>

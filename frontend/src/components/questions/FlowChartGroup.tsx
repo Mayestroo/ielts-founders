@@ -25,8 +25,8 @@ export function FlowChartGroup({
 }: FlowChartGroupProps) {
   const [dragOverId, setDragOverId] = useState<string | null>(null);
   const firstQ = questions[0];
-  const flowchartData = (firstQ as any).flowchartData;
-  const options = (firstQ as any).options as { id: string; text: string }[] | undefined;
+  const flowchartData = firstQ ? (firstQ as any).flowchartData : null;
+  const options = firstQ ? (firstQ as any).options as { id: string; text: string }[] | undefined : undefined;
 
   let questionIndex = 0;
 

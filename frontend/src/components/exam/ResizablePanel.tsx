@@ -15,7 +15,7 @@ export function ResizablePanel({
   rightPanel,
   leftMinWidth = 300,
   rightMinWidth = 400,
-  initialLeftWidth = 50,
+  initialLeftWidth = 65,
 }: ResizablePanelProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [leftWidth, setLeftWidth] = useState(initialLeftWidth);
@@ -82,7 +82,7 @@ export function ResizablePanel({
       <div
         onMouseDown={handleMouseDown}
         className={`
-          w-1.5 z-10 cursor-col-resize shrink-0 relative group
+          w-2 z-10 cursor-col-resize shrink-0 relative group
           transition-all duration-200 ease-in-out
           ${isDragging 
             ? 'bg-blue-300 ' 

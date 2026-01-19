@@ -38,6 +38,27 @@ body {
   font-size: var(--exam-base-font-size);
 }
 
+/* Exam content font size scaling */
+.exam-content {
+  font-size: var(--exam-base-font-size);
+}
+
+.exam-content * {
+  font-size: inherit;
+}
+
+/* Override specific text sizes to scale with base font */
+.exam-content .text-xs { font-size: calc(var(--exam-base-font-size) * 0.75); }
+.exam-content .text-sm { font-size: calc(var(--exam-base-font-size) * 0.875); }
+.exam-content .text-lg { font-size: calc(var(--exam-base-font-size) * 1.125); }
+.exam-content .text-xl { font-size: calc(var(--exam-base-font-size) * 1.25); }
+.exam-content .text-2xl { font-size: calc(var(--exam-base-font-size) * 1.5); }
+
+/* Handle arbitrary font sizes with scaling */
+.exam-content [class*="text-["] {
+  font-size: var(--exam-base-font-size);
+}
+
 .high-contrast .bg-white,
 .high-contrast .bg-gray-50,
 .high-contrast .bg-gray-100 {
@@ -96,8 +117,8 @@ body {
 @layer utilities {
   /* Custom Scrollbar */
   ::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
+    width: 15px;
+    height: 15px;
   }
 
   ::-webkit-scrollbar-track {
@@ -105,7 +126,7 @@ body {
   }
 
   ::-webkit-scrollbar-thumb {
-    @apply bg-gray-300 rounded-full transition-colors;
+    @apply bg-gray-300  transition-colors;
   }
 
   ::-webkit-scrollbar-thumb:hover {
