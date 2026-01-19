@@ -1,7 +1,7 @@
 'use client';
 
 import { ExamResult, User } from '@/types';
-import jsPDF from 'jspdf';
+import { jsPDF } from 'jspdf';
 
 interface StudentReportData {
   student: User;

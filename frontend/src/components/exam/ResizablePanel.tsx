@@ -15,7 +15,7 @@ export function ResizablePanel({
   rightPanel,
   leftMinWidth = 300,
   rightMinWidth = 400,
-  initialLeftWidth = 65,
+  initialLeftWidth = 50,
 }: ResizablePanelProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [leftWidth, setLeftWidth] = useState(initialLeftWidth);

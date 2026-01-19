@@ -12,6 +12,7 @@ plesk.md
 
 # Dependency Directories (if installed in root)
 node_modules/
+tests/
 
 # Environment Variables
 .env
