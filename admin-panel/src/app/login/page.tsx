@@ -2,6 +2,7 @@
 
 import { Button, Card, CardBody, Input } from '@/components/ui';
 import { useAuth } from '@/contexts/AuthContext';
+import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 
@@ -29,37 +30,35 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-linear-to-br from-slate-900 via-purple-900 to-slate-900">
+    <div className="min-h-screen flex items-center justify-center bg-gray-50">
       {/* Background decoration */}
       <div className="absolute inset-0 overflow-hidden">
-        <div className="absolute -top-1/2 -left-1/2 w-full h-full bg-linear-to-br from-indigo-500/20 to-transparent rounded-full blur-3xl" />
-        <div className="absolute -bottom-1/2 -right-1/2 w-full h-full bg-linear-to-tl from-purple-500/20 to-transparent rounded-full blur-3xl" />
+        <div className="absolute -top-1/2 -left-1/2 w-full h-full bg-linear-to-br from-black/5 to-transparent rounded-full blur-3xl" />
+        <div className="absolute -bottom-1/2 -right-1/2 w-full h-full bg-linear-to-tl from-black/5 to-transparent rounded-full blur-3xl" />
       </div>
 
       <div className="relative z-10 w-full max-w-md px-4">
-        <Card className="backdrop-blur-xl bg-white/10 border-white/20">
+        <Card className="bg-white rounded-2xl border border-gray-200 p-8 shadow-xl shadow-gray-200/50">
           <CardBody className="p-8">
             {/* Logo */}
             <div className="text-center mb-8">
-              <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-linear-to-br from-indigo-500 to-purple-600 shadow-lg shadow-indigo-500/50 mb-4">
-                <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
-                </svg>
+              <div className="inline-flex items-center justify-center  mb-4">
+                <Image src="/logo.png" alt="Logo" width={156} height={156} />
               </div>
-              <h1 className="text-2xl font-bold text-white">IELTS Mock Platform</h1>
-              <p className="text-gray-400 mt-2">Admin Dashboard</p>
+              <h1 className="text-2xl font-bold text-gray-900">IELTS Mock Platform</h1>
+              <p className="text-gray-500 mt-2">Admin Dashboard</p>
             </div>
 
             {/* Login Form */}
             <form onSubmit={handleSubmit} className="space-y-5">
               {error && (
-                <div className="p-3 rounded-lg bg-red-500/20 border border-red-500/50 text-red-300 text-sm">
+                <div className="p-3 rounded-lg bg-black text-white text-sm border border-black/10 text-center">
                   {error}
                 </div>
               )}
 
               <div>
-                <label htmlFor="username" className="block text-sm font-medium text-gray-200 mb-1">
+                <label htmlFor="username" className="block text-sm font-medium text-gray-700 mb-1">
                   Username
                 </label>
                 <Input
@@ -68,13 +67,13 @@ export default function LoginPage() {
                   placeholder="Enter your username"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  className="bg-white/10 border-white/20 text-white placeholder-gray-400 focus:ring-indigo-500 focus:border-indigo-500"
+                  className="w-full px-4 py-3 rounded-lg bg-gray-50 border border-gray-200 text-gray-900 placeholder-gray-400 focus:ring-2 focus:ring-black focus:border-transparent outline-none transition-all"
                   required
                 />
               </div>
 
               <div>
-                <label htmlFor="password" className="block text-sm font-medium text-gray-200 mb-1">
+                <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-1">
                   Password
                 </label>
                 <Input
@@ -83,7 +82,7 @@ export default function LoginPage() {
                   placeholder="Enter your password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="bg-white/10 border-white/20 text-white placeholder-gray-400 focus:ring-indigo-500 focus:border-indigo-500"
+                  className="w-full px-4 py-3 rounded-lg bg-gray-50 border border-gray-200 text-gray-900 placeholder-gray-400 focus:ring-2 focus:ring-black focus:border-transparent outline-none transition-all"
                   required
                 />
               </div>
