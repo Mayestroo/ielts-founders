@@ -30,7 +30,11 @@ export class DashboardService {
         this.prisma.examAssignment.count({
           where: {
             status: { not: 'SUBMITTED' },
-            ...(isSuperAdmin ? {} : { centerId: centerId || 'non-existent-id' }),
+            ...(isSuperAdmin
+              ? {}
+              : {
+                  student: { centerId: centerId || 'non-existent-id' },
+                }),
           },
         }),
         this.prisma.examResult.count({
