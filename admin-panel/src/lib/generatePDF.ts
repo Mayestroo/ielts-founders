@@ -26,16 +26,31 @@ async function loadImage(url: string): Promise<LoadedImage> {
     const img = new Image();
     img.crossOrigin = 'Anonymous';
     img.onload = () => {
+      // Scale down large images to max 1000px width/height to save space
+      const maxDim = 1000;
+      let width = img.width;
+      let height = img.height;
+      
+      if (width > maxDim || height > maxDim) {
+        if (width > height) {
+          height = (height / width) * maxDim;
+          width = maxDim;
+        } else {
+          width = (width / height) * maxDim;
+          height = maxDim;
+        }
+      }
+
       const canvas = document.createElement('canvas');
-      canvas.width = img.width;
-      canvas.height = img.height;
+      canvas.width = width;
+      canvas.height = height;
       const ctx = canvas.getContext('2d');
-      ctx?.drawImage(img, 0, 0);
+      ctx?.drawImage(img, 0, 0, width, height);
       resolve({
         base64: canvas.toDataURL('image/png'),
-        width: img.width,
-        height: img.height,
-        ratio: img.width / img.height
+        width: width,
+        height: height,
+        ratio: width / height
       });
     };
     img.onerror = reject;
@@ -274,7 +289,7 @@ async function drawReportPage(doc: jsPDF, data: StudentReportData, logoData: Loa
 }
 
 export async function generateResultPDF(data: StudentReportData) {
-  const doc = new jsPDF();
+  const doc = new jsPDF({ compress: true });
   const logoUrl = '/logo.png';
   let logoData: LoadedImage | null = null;
   try {
@@ -289,7 +304,7 @@ export async function generateResultPDF(data: StudentReportData) {
 }
 
 export async function generateBatchPDF(reports: StudentReportData[]) {
-  const doc = new jsPDF();
+  const doc = new jsPDF({ compress: true });
   const logoUrl = '/logo.png';
   let logoData: LoadedImage | null = null;
   try {
