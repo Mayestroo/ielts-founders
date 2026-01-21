@@ -5,21 +5,44 @@ import { PrismaService } from '../prisma/prisma.service';
 export class DashboardService {
   constructor(private prisma: PrismaService) {}
 
-  async getStats() {
+  async getStats(user: any) {
+    const { role, centerId, id: userId } = user;
+    const isSuperAdmin = role === 'SUPER_ADMIN';
+
+    // Build where clause for center scoping
+    const centerFilter = !isSuperAdmin && centerId ? { centerId } : {};
+    // For teachers, we might want to be more specific, but "own statistics" usually means center stats for dashboard.
+    // Ideally, for teachers, it might be scoped to their students, but typically dashboards show center activity.
+    // Without specific requirements, center scoping is the safest interpretation of "new center statistics should stay 0".
+
     const [totalUsers, examSections, activeAssignments, completedTests] =
       await Promise.all([
-        this.prisma.user.count(),
-        this.prisma.examSection.count(),
-        this.prisma.examAssignment.count({
-          where: { status: { not: 'SUBMITTED' } },
+        this.prisma.user.count({
+          where: isSuperAdmin ? {} : { centerId },
         }),
-        this.prisma.examResult.count(),
+        this.prisma.examSection.count({
+          where: isSuperAdmin ? {} : { centerId },
+        }),
+        this.prisma.examAssignment.count({
+          where: {
+            status: { not: 'SUBMITTED' },
+            ...(isSuperAdmin ? {} : { centerId }),
+          },
+        }),
+        this.prisma.examResult.count({
+          where: isSuperAdmin
+            ? {}
+            : {
+                student: { centerId },
+              },
+        }),
       ]);
 
     // Recent Activity
     const newUsers = await this.prisma.user.findMany({
       take: 5,
       orderBy: { createdAt: 'desc' },
+      where: isSuperAdmin ? {} : { centerId },
       select: {
         username: true,
         firstName: true,
@@ -31,6 +54,11 @@ export class DashboardService {
     const newResults = await this.prisma.examResult.findMany({
       take: 5,
       orderBy: { submittedAt: 'desc' },
+      where: isSuperAdmin
+        ? {}
+        : {
+            student: { centerId },
+          },
       include: {
         student: {
           select: { username: true, firstName: true, lastName: true },
@@ -41,6 +69,7 @@ export class DashboardService {
     const newSections = await this.prisma.examSection.findMany({
       take: 5,
       orderBy: { createdAt: 'desc' },
+      where: isSuperAdmin ? {} : { centerId },
       include: {
         teacher: {
           select: { username: true, firstName: true, lastName: true },

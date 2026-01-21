@@ -1,8 +1,8 @@
 import {
-    BadRequestException,
-    ForbiddenException,
-    Injectable,
-    NotFoundException,
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
 } from '@nestjs/common';
 import { AssignmentStatus, Prisma, Role } from '@prisma/client';
 import { AiService, WritingEvaluation } from '../ai/ai.service';
@@ -686,35 +686,39 @@ export class ExamsService {
       if (rawScore >= 39) return 9.0;
       if (rawScore >= 37) return 8.5;
       if (rawScore >= 35) return 8.0;
-      if (rawScore >= 32) return 7.5; // 32, 33, 34 -> 7.5
-      if (rawScore >= 30) return 7.0; // 30, 31 -> 7.0
-      if (rawScore >= 27) return 6.5; // 27, 28, 29 -> 6.5
-      if (rawScore >= 23) return 6.0; // 23, 24, 25, 26 -> 6.0
-      if (rawScore >= 18) return 5.5; // 18, 19, 20, 21, 22 -> 5.5
-      if (rawScore >= 15) return 5.0; // 15, 16, 17 -> 5.0
+      if (rawScore >= 32) return 7.5;
+      if (rawScore >= 30) return 7.0;
+      if (rawScore >= 26) return 6.5;
+      if (rawScore >= 23) return 6.0;
+      if (rawScore >= 18) return 5.5;
+      if (rawScore >= 16) return 5.0;
       if (rawScore >= 13) return 4.5;
-      if (rawScore >= 10) return 4.0;
+      if (rawScore >= 11) return 4.0;
       if (rawScore >= 8) return 3.5;
       if (rawScore >= 6) return 3.0;
       if (rawScore >= 4) return 2.5;
-      return 2.0;
+      if (rawScore >= 2) return 2.0;
+      if (rawScore >= 1) return 1.0;
+      return 0.0;
     } else {
       // ACADEMIC READING
       if (rawScore >= 39) return 9.0;
       if (rawScore >= 37) return 8.5;
       if (rawScore >= 35) return 8.0;
-      if (rawScore >= 33) return 7.5; // 33, 34 -> 7.5
-      if (rawScore >= 30) return 7.0; // 30, 31, 32 -> 7.0
-      if (rawScore >= 27) return 6.5; // 27, 28, 29 -> 6.5
-      if (rawScore >= 23) return 6.0; // 23, 24, 25, 26 -> 6.0
-      if (rawScore >= 20) return 5.5; // 20, 21, 22 -> 5.5
-      if (rawScore >= 15) return 5.0; // 15, 16, 17, 18, 19 -> 5.0
+      if (rawScore >= 33) return 7.5;
+      if (rawScore >= 30) return 7.0;
+      if (rawScore >= 27) return 6.5;
+      if (rawScore >= 23) return 6.0;
+      if (rawScore >= 19) return 5.5;
+      if (rawScore >= 15) return 5.0;
       if (rawScore >= 13) return 4.5;
       if (rawScore >= 10) return 4.0;
       if (rawScore >= 8) return 3.5;
       if (rawScore >= 6) return 3.0;
       if (rawScore >= 4) return 2.5;
-      return 2.0;
+      if (rawScore >= 2) return 2.0;
+      if (rawScore >= 1) return 1.0;
+      return 0.0;
     }
   }
 

@@ -24,7 +24,7 @@ export default function UsersPage() {
     password: '',
     firstName: '',
     lastName: '',
-    role: 'CENTER_ADMIN',
+    role: currentUser?.role === 'SUPER_ADMIN' ? 'CENTER_ADMIN' : 'TEACHER',
     centerId: currentUser?.centerId || '',
   });
 
@@ -79,7 +79,7 @@ export default function UsersPage() {
         password: '',
         firstName: '',
         lastName: '',
-        role: 'CENTER_ADMIN',
+        role: currentUser?.role === 'SUPER_ADMIN' ? 'CENTER_ADMIN' : 'TEACHER',
         centerId: '',
       });
       loadUsers();
@@ -151,7 +151,17 @@ export default function UsersPage() {
           <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Users</h1>
           <p className="text-gray-500 mt-1">Manage users and their roles</p>
         </div>
-        <Button onClick={() => setShowModal(true)}>
+        <Button onClick={() => {
+          setFormData({
+            username: '',
+            password: '',
+            firstName: '',
+            lastName: '',
+            role: currentUser?.role === 'SUPER_ADMIN' ? 'CENTER_ADMIN' : 'TEACHER',
+            centerId: currentUser?.centerId || '',
+          });
+          setShowModal(true);
+        }}>
           <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
           </svg>
@@ -310,7 +320,7 @@ export default function UsersPage() {
             password: '',
             firstName: '',
             lastName: '',
-            role: 'CENTER_ADMIN',
+            role: currentUser?.role === 'SUPER_ADMIN' ? 'CENTER_ADMIN' : 'TEACHER',
             centerId: '',
           });
         }}

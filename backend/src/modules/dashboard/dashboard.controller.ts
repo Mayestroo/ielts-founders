@@ -1,4 +1,4 @@
-import { Controller, Get, UseGuards } from '@nestjs/common';
+import { Controller, Get, Request, UseGuards } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -12,7 +12,7 @@ export class DashboardController {
 
   @Get('stats')
   @Roles(Role.SUPER_ADMIN, Role.CENTER_ADMIN, Role.TEACHER)
-  getStats() {
-    return this.dashboardService.getStats();
+  getStats(@Request() req) {
+    return this.dashboardService.getStats(req.user);
   }
 }
