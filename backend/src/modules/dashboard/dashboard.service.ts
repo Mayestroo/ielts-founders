@@ -11,29 +11,33 @@ export class DashboardService {
 
     // Build where clause for center scoping
     const centerFilter = !isSuperAdmin && centerId ? { centerId } : {};
-    // For teachers, we might want to be more specific, but "own statistics" usually means center stats for dashboard.
-    // Ideally, for teachers, it might be scoped to their students, but typically dashboards show center activity.
-    // Without specific requirements, center scoping is the safest interpretation of "new center statistics should stay 0".
-
+    
+    // For non-super admins with no centerId (shouldn't happen but safe guard), we might return 0
+    // But passing { centerId: undefined } to prisma means "no filter" which is dangerous (shows all).
+    // EXCEPT Prisma checks for undefined. If value is undefined, it skips the field.
+    // We must ensure that if !isSuperAdmin, we STRICTLY filter.
+    
+    const safeCenterFilter = isSuperAdmin ? {} : { centerId: centerId || 'non-existent-id' };
+    
     const [totalUsers, examSections, activeAssignments, completedTests] =
       await Promise.all([
         this.prisma.user.count({
-          where: isSuperAdmin ? {} : { centerId },
+          where: safeCenterFilter,
         }),
         this.prisma.examSection.count({
-          where: isSuperAdmin ? {} : { centerId },
+          where: safeCenterFilter,
         }),
         this.prisma.examAssignment.count({
           where: {
             status: { not: 'SUBMITTED' },
-            ...(isSuperAdmin ? {} : { centerId }),
+            ...(isSuperAdmin ? {} : { centerId: centerId || 'non-existent-id' }),
           },
         }),
         this.prisma.examResult.count({
           where: isSuperAdmin
             ? {}
             : {
-                student: { centerId },
+                student: { centerId: centerId || 'non-existent-id' },
               },
         }),
       ]);
@@ -42,7 +46,7 @@ export class DashboardService {
     const newUsers = await this.prisma.user.findMany({
       take: 5,
       orderBy: { createdAt: 'desc' },
-      where: isSuperAdmin ? {} : { centerId },
+      where: safeCenterFilter,
       select: {
         username: true,
         firstName: true,
@@ -57,7 +61,7 @@ export class DashboardService {
       where: isSuperAdmin
         ? {}
         : {
-            student: { centerId },
+            student: { centerId: centerId || 'non-existent-id' },
           },
       include: {
         student: {
@@ -69,7 +73,7 @@ export class DashboardService {
     const newSections = await this.prisma.examSection.findMany({
       take: 5,
       orderBy: { createdAt: 'desc' },
-      where: isSuperAdmin ? {} : { centerId },
+      where: safeCenterFilter,
       include: {
         teacher: {
           select: { username: true, firstName: true, lastName: true },

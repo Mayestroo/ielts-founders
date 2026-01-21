@@ -9,6 +9,7 @@ Thumbs.db
 *.swp
 *.swo
 plesk.md
+PROJECT.md
 
 # Dependency Directories (if installed in root)
 node_modules/
