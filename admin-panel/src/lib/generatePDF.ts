@@ -299,7 +299,8 @@ export async function generateResultPDF(data: StudentReportData) {
   await drawReportPage(doc, data, logoData);
 
   const formattedDate = new Date(data.testDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).replace(/ /g, '-').toUpperCase();
-  const fileName = `IELTS_Official_Report_${data.student.username}_${formattedDate}.pdf`;
+  const namePart = `${data.student.firstName || ''}_${data.student.lastName || ''}`.trim().replace(/\s+/g, '_').toUpperCase() || data.student.username.toUpperCase();
+  const fileName = `IELTS_${namePart}_${formattedDate}.pdf`;
   doc.save(fileName);
 }
 
@@ -317,7 +318,15 @@ export async function generateBatchPDF(reports: StudentReportData[]) {
   }
 
   const dateStr = new Date().toISOString().split('T')[0];
-  doc.save(`IELTS_Batch_Report_${dateStr}.pdf`);
+  
+  if (reports.length === 1) {
+    const data = reports[0];
+    const formattedDate = new Date(data.testDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).replace(/ /g, '-').toUpperCase();
+    const namePart = `${data.student.firstName || ''}_${data.student.lastName || ''}`.trim().replace(/\s+/g, '_').toUpperCase() || data.student.username.toUpperCase();
+    doc.save(`IELTS_${namePart}_${formattedDate}.pdf`);
+  } else {
+    doc.save(`IELTS_Batch_Report_${dateStr}.pdf`);
+  }
 }
 
 export function calculateOverallBand(results: ExamResult[]): number {
