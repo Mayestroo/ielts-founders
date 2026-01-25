@@ -32,6 +32,8 @@ export default function ResultsPage() {
   const [aiError, setAiError] = useState<string | null>(null);
   const [pdfLoading, setPdfLoading] = useState<string | null>(null); // studentId being processed
   const [docxLoading, setDocxLoading] = useState(false);
+  const [aiProgress, setAiProgress] = useState(0);
+  const [aiStatus, setAiStatus] = useState('');
   const [successModal, setSuccessModal] = useState<{ isOpen: boolean; bandScore: number }>({
     isOpen: false,
     bandScore: 0,
@@ -127,9 +129,29 @@ export default function ResultsPage() {
     
     setAiLoading(true);
     setAiError(null);
+    setAiProgress(5);
+    setAiStatus('Connecting to AI Service...');
+
+    // Progress Simulation
+    let progress = 5;
+    const progressInterval = setInterval(() => {
+      progress += Math.random() * 5;
+      if (progress > 95) progress = 95;
+      setAiProgress(Math.floor(progress));
+      
+      if (progress > 80) setAiStatus('Applying IELTS Band Descriptors...');
+      else if (progress > 60) setAiStatus('Evaluating Task 2...');
+      else if (progress > 40) setAiStatus('Analyzing Coherence & Cohesion...');
+      else if (progress > 20) setAiStatus('Analyzing Task 1...');
+    }, 1000);
+
     try {
       console.log('Starting AI evaluation for result:', selectedResult.id);
       const response = await api.evaluateWriting(selectedResult.id);
+      clearInterval(progressInterval);
+      setAiProgress(100);
+      setAiStatus('Evaluation complete!');
+      
       console.log('AI Evaluation response:', response);
       setAiEvaluation(response.aiEvaluation || response.feedback);
       
@@ -146,6 +168,7 @@ export default function ResultsPage() {
       setTimeout(() => loadResults(), 500);
       setSuccessModal({ isOpen: true, bandScore: response.bandScore });
     } catch (err) {
+      clearInterval(progressInterval);
       console.error('AI evaluation failed:', err);
       setAiError(err instanceof Error ? err.message : 'Failed to evaluate with AI');
     } finally {
@@ -302,6 +325,24 @@ export default function ResultsPage() {
                 </Button>
               )}
             </div>
+
+            {aiLoading && (
+              <div className="mb-6 space-y-3 animate-in fade-in duration-300">
+                <div className="flex justify-between items-center text-sm">
+                  <span className="text-indigo-600 dark:text-indigo-400 font-medium flex items-center">
+                    <div className="h-4 w-4 border-2 border-indigo-600/30 border-t-indigo-600 rounded-full animate-spin mr-2" />
+                    {aiStatus}
+                  </span>
+                  <span className="text-gray-500 font-bold">{aiProgress}%</span>
+                </div>
+                <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2 overflow-hidden">
+                  <div 
+                    className="bg-indigo-600 h-full transition-all duration-500 ease-out shadow-[0_0_10px_rgba(79,70,229,0.5)]" 
+                    style={{ width: `${aiProgress}%` }} 
+                  />
+                </div>
+              </div>
+            )}
 
             {aiError && (
               <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 p-4 rounded-lg mb-4">

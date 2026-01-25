@@ -36,7 +36,8 @@ export class AiService {
   }
 
   async evaluateWritingSection(
-    tasks: { id: string; description: string; response: string }[]
+    tasks: { id: string; description: string; response: string }[],
+    minTotalWeight: number = 0
   ): Promise<{ bandScore: number; tasks: Record<string, WritingEvaluation> }> {
     if (this.keys.length === 0) {
       this.logger.warn('Skipping AI evaluation: No API key');
@@ -80,11 +81,13 @@ export class AiService {
 
     // Calculate final band score rounded to nearest 0.5
     let finalBandScore = 0;
-    if (totalWeight > 0) {
-      const average = weightedScoreSum / totalWeight;
+    const effectiveTotalWeight = Math.max(totalWeight, minTotalWeight);
+    
+    if (effectiveTotalWeight > 0) {
+      const average = weightedScoreSum / effectiveTotalWeight;
       // Round to nearest 0.5: (round(x * 2) / 2)
-      finalBandScore = Math.max(1.0, Math.round(average * 2) / 2);
-      this.logger.log(`Calculated section band score: ${finalBandScore} (avg: ${average.toFixed(2)})`);
+      finalBandScore = Math.max(0.0, Math.round(average * 2) / 2);
+      this.logger.log(`Calculated section band score: ${finalBandScore} (avg: ${average.toFixed(2)}, totalWeight: ${totalWeight}, effectiveWeight: ${effectiveTotalWeight})`);
     }
 
     return {
@@ -119,17 +122,17 @@ export class AiService {
       throw new Error('Gemini API key not configured');
     }
 
-    if (!studentResponse || studentResponse.trim().length < 20) {
-       // Return minimal evaluation for very short answers to avoid API errors
+    if (!studentResponse || studentResponse.trim().length < 2) {
+       // Return zero evaluation for empty/nearly empty answers
        return {
-         bandScore: 1,
-         overallFeedback: 'Response is too short to evaluate meaningfuly.',
+         bandScore: 0,
+         overallFeedback: 'No response provided.',
          strengths: [],
-         areasForImprovement: ['Write more to demonstrate your ability.'],
-         taskAchievement: { score: 1, feedback: 'Insufficient length.' },
-         coherenceAndCohesion: { score: 1, feedback: 'Insufficient length.' },
-         lexicalResource: { score: 1, feedback: 'Insufficient length.' },
-         grammaticalRangeAndAccuracy: { score: 1, feedback: 'Insufficient length.' }
+         areasForImprovement: ['Submit a response to receive feedback.'],
+         taskAchievement: { score: 0, feedback: 'Did not attempt task.' },
+         coherenceAndCohesion: { score: 0, feedback: 'N/A' },
+         lexicalResource: { score: 0, feedback: 'N/A' },
+         grammaticalRangeAndAccuracy: { score: 0, feedback: 'N/A' }
        };
     }
 
@@ -234,6 +237,11 @@ Evaluate this response based on the four IELTS Writing assessment criteria:
 3. Lexical Resource
 4. Grammatical Range and Accuracy
 
+## Critical Scoring Rules:
+- **Band 0**: Award if the response is completely off-topic, consists only of random letters/gibberish (e.g., "sdfjaklsjfa"), or is not in English.
+- **Off-topic Penalty**: If the student does not answer the specific question asked, significantly penalize the Task Achievement/Response score.
+- **Authenticity**: Check if the meaning makes sense. A string of words that doesn't form coherent sentences should be Band 0 or 1.
+
 Provide your evaluation in the following JSON format ONLY (no markdown, no explanations outside JSON):
 
 {
@@ -278,25 +286,25 @@ Provide your evaluation in the following JSON format ONLY (no markdown, no expla
 
     try {
       const parsed = JSON.parse(jsonString);
-      const bandScore = Math.max(1.0, Number(parsed.bandScore) || 1.0);
+      const bandScore = Math.max(0.0, Number(parsed.bandScore) || 0.0);
       this.logger.log(`Parsed AI evaluation: Band ${bandScore}`);
       
       return {
         bandScore: bandScore,
         taskAchievement: {
-          score: Math.max(1.0, Number(parsed.taskAchievement?.score) || 1.0),
+          score: Math.max(0.0, Number(parsed.taskAchievement?.score) || 0.0),
           feedback: String(parsed.taskAchievement?.feedback || 'No feedback available'),
         },
         coherenceAndCohesion: {
-          score: Math.max(1.0, Number(parsed.coherenceAndCohesion?.score) || 1.0),
+          score: Math.max(0.0, Number(parsed.coherenceAndCohesion?.score) || 0.0),
           feedback: String(parsed.coherenceAndCohesion?.feedback || 'No feedback available'),
         },
         lexicalResource: {
-          score: Math.max(1.0, Number(parsed.lexicalResource?.score) || 1.0),
+          score: Math.max(0.0, Number(parsed.lexicalResource?.score) || 0.0),
           feedback: String(parsed.lexicalResource?.feedback || 'No feedback available'),
         },
         grammaticalRangeAndAccuracy: {
-          score: Math.max(1.0, Number(parsed.grammaticalRangeAndAccuracy?.score) || 1.0),
+          score: Math.max(0.0, Number(parsed.grammaticalRangeAndAccuracy?.score) || 0.0),
           feedback: String(parsed.grammaticalRangeAndAccuracy?.feedback || 'No feedback available'),
         },
         overallFeedback: String(parsed.overallFeedback || 'Evaluation completed.'),

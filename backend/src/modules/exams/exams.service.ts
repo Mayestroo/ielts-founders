@@ -372,39 +372,43 @@ export class ExamsService {
         response: string;
       }[] = [];
 
-      // Check for Task 1 and Task 2 keys (w1, w2) or generic 'writing' key
+      // Standard IELTS Writing usually has Task 1 (w1) and Task 2 (w2)
+      // If the section has 2 questions, we expect both.
       const questions = assignment.section.questions as QuestionItem[] | null;
-      if (answers['w1'] || answers['task1']) {
-        const response = answers['w1'] || answers['task1'];
+      
+      // Always add Task 1 if expected
+      if (questions?.[0]) {
         tasksToEvaluate.push({
           id: 'Task 1',
-          description:
-            (questions?.[0]?.questionText as string) || 'IELTS Writing Task 1',
-          response: response,
+          description: (questions[0].questionText as string) || 'IELTS Writing Task 1',
+          response: (answers['w1'] || answers['task1'] || '') as string,
         });
       }
-      if (answers['w2'] || answers['task2']) {
-        const response = answers['w2'] || answers['task2'];
+      
+      // Always add Task 2 if expected
+      if (questions?.[1]) {
         tasksToEvaluate.push({
           id: 'Task 2',
-          description:
-            (questions?.[1]?.questionText as string) || 'IELTS Writing Task 2',
-          response: response,
+          description: (questions[1].questionText as string) || 'IELTS Writing Task 2',
+          response: (answers['w2'] || answers['task2'] || '') as string,
         });
       }
-      if (answers['writing'] && !answers['w1'] && !answers['w2']) {
-        // Fallback for single writing task
+
+      // Fallback for single writing task if nothing added yet
+      if (tasksToEvaluate.length === 0 && (answers['writing'] || assignment.section.description)) {
         tasksToEvaluate.push({
           id: 'Writing Task',
           description: assignment.section.description || 'IELTS Writing Task',
-          response: answers['writing'],
+          response: (answers['writing'] || '') as string,
         });
       }
 
       if (tasksToEvaluate.length > 0) {
         try {
+          // Determine minTotalWeight: if 2 tasks exist, weight is 1+2=3
+          const minTotalWeight = questions?.length === 2 ? 3 : tasksToEvaluate.length;
           const evaluationResult =
-            await this.aiService.evaluateWritingSection(tasksToEvaluate);
+            await this.aiService.evaluateWritingSection(tasksToEvaluate, minTotalWeight);
           bandScore = evaluationResult.bandScore;
           aiEvaluation = evaluationResult;
           // Writing raw score is often not used, but we can set it to band score * 10 or similar for internal consistency,
@@ -1008,25 +1012,28 @@ export class ExamsService {
       response: string;
     }[] = [];
 
-    // Check for Task 1 and Task 2 keys (w1, w2)
-    if (answers['w1'] || answers['task1']) {
+    // Check for Task 1 and Task 2 using questions from section
+    const questions = examResult.section.questions as QuestionItem[] | null;
+    
+    if (questions?.[0]) {
       tasksToEvaluate.push({
         id: 'Task 1',
-        description: 'Task 1',
-        response: String(answers['w1'] || answers['task1']),
+        description: questions[0].questionText || 'Task 1',
+        response: String(answers['w1'] || answers['task1'] || ''),
       });
     }
-    if (answers['w2'] || answers['task2']) {
+    if (questions?.[1]) {
       tasksToEvaluate.push({
         id: 'Task 2',
-        description: 'Task 2',
-        response: String(answers['w2'] || answers['task2']),
+        description: questions[1].questionText || 'Task 2',
+        response: String(answers['w2'] || answers['task2'] || ''),
       });
     }
 
     if (tasksToEvaluate.length > 0) {
-      // Multi-task evaluation
-      evaluation = await this.aiService.evaluateWritingSection(tasksToEvaluate);
+      // Multi-task evaluation with IELTS standard weighting (1+2=3)
+      const minTotalWeight = questions?.length === 2 ? 3 : tasksToEvaluate.length;
+      evaluation = await this.aiService.evaluateWritingSection(tasksToEvaluate, minTotalWeight);
     } else if (writingResponse) {
       // Fallback for single writing task often used in simple setups
       evaluation = await this.aiService.evaluateWritingTask(
