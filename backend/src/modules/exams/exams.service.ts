@@ -402,14 +402,24 @@ export class ExamsService {
       }
 
       if (tasksToEvaluate.length > 0) {
-        const evaluationResult =
-          await this.aiService.evaluateWritingSection(tasksToEvaluate);
-        bandScore = evaluationResult.bandScore;
-        aiEvaluation = evaluationResult;
-        // Writing raw score is often not used, but we can set it to band score * 10 or similar for internal consistency,
-        // or just rely on bandScore. Let's set score = bandScore for simplicity in tracking.
-        score = bandScore;
-        totalScore = 9; // Max band score
+        try {
+          const evaluationResult =
+            await this.aiService.evaluateWritingSection(tasksToEvaluate);
+          bandScore = evaluationResult.bandScore;
+          aiEvaluation = evaluationResult;
+          // Writing raw score is often not used, but we can set it to band score * 10 or similar for internal consistency,
+          // or just rely on bandScore. Let's set score = bandScore for simplicity in tracking.
+          score = bandScore;
+          totalScore = 9; // Max band score
+        } catch (error) {
+          // If AI evaluation fails during submission, DON'T block the student.
+          // They should still be able to submit their work.
+          console.error('AI evaluation failed during submission:', error);
+          score = 0;
+          totalScore = 9;
+          bandScore = 0;
+          aiEvaluation = null;
+        }
       }
     } else {
       // Handle Reading / Listening
@@ -989,36 +999,7 @@ export class ExamsService {
         ? ((w1 || w2 || writing) as string)
         : '';
 
-    // Check if already evaluated to prevent redundant calls
-    const feedbackObj = examResult.feedback as Record<string, unknown> | null;
-    if (
-      feedbackObj &&
-      typeof feedbackObj === 'object' &&
-      'bandScore' in feedbackObj
-    ) {
-      return {
-        ...examResult,
-        aiEvaluation: examResult.feedback,
-      };
-    }
-
-    const existingEvaluation = answers?._aiEvaluation as
-      | WritingEvaluation
-      | undefined;
-    if (existingEvaluation) {
-      // If stored in answers but not in feedback field, sync it
-      await this.prisma.examResult.update({
-        where: { id: resultId },
-        data: {
-          feedback: existingEvaluation as unknown as Prisma.InputJsonValue,
-        },
-      });
-      return {
-        ...examResult,
-        aiEvaluation: existingEvaluation,
-      };
-    }
-
+    // AI evaluation logic (always fresh attempt)
     let evaluation: WritingEvaluation | SectionEvaluationResult;
 
     const tasksToEvaluate: {
@@ -1056,10 +1037,12 @@ export class ExamsService {
       throw new BadRequestException('No writing response found to evaluate');
     }
 
-    // 3. Update ExamResult with band score and feedback
-    await this.prisma.examResult.update({
+    // 3. Update ExamResult with band score, raw score and feedback
+    const updatedResult = await this.prisma.examResult.update({
       where: { id: resultId },
       data: {
+        score: evaluation.bandScore, // Sync raw score with band score for Writing
+        totalScore: 9,               // Force Writing total score to 9
         bandScore: evaluation.bandScore,
         feedback: evaluation as unknown as Prisma.InputJsonValue,
       },
@@ -1077,8 +1060,7 @@ export class ExamsService {
     });
 
     return {
-      ...examResult,
-      bandScore: evaluation.bandScore,
+      ...updatedResult,
       aiEvaluation: evaluation,
     };
   }

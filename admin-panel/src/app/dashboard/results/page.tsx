@@ -1,6 +1,6 @@
 'use client';
 
-import { Badge, Button, Card, CardBody, CardHeader } from '@/components/ui';
+import { Badge, Button, Card, CardBody, CardHeader, Modal } from '@/components/ui';
 import { api } from '@/lib/api';
 import { generateWritingDOCX } from '@/lib/generateDOCX';
 import { generateResultPDF } from '@/lib/generatePDF';
@@ -32,6 +32,10 @@ export default function ResultsPage() {
   const [aiError, setAiError] = useState<string | null>(null);
   const [pdfLoading, setPdfLoading] = useState<string | null>(null); // studentId being processed
   const [docxLoading, setDocxLoading] = useState(false);
+  const [successModal, setSuccessModal] = useState<{ isOpen: boolean; bandScore: number }>({
+    isOpen: false,
+    bandScore: 0,
+  });
 
   const handleDownloadReport = async (studentId: string, studentName: string) => {
     setPdfLoading(studentId);
@@ -124,8 +128,23 @@ export default function ResultsPage() {
     setAiLoading(true);
     setAiError(null);
     try {
+      console.log('Starting AI evaluation for result:', selectedResult.id);
       const response = await api.evaluateWriting(selectedResult.id);
-      setAiEvaluation(response.aiEvaluation);
+      console.log('AI Evaluation response:', response);
+      setAiEvaluation(response.aiEvaluation || response.feedback);
+      
+      // Update the selected result in state so the details modal refreshes
+      setSelectedResult(prev => prev ? {
+        ...prev,
+        score: response.score ?? response.bandScore,
+        totalScore: response.totalScore ?? 9,
+        bandScore: response.bandScore,
+        feedback: response.aiEvaluation || response.feedback
+      } : null);
+      
+      // Short delay to ensure DB consistency before refreshing table
+      setTimeout(() => loadResults(), 500);
+      setSuccessModal({ isOpen: true, bandScore: response.bandScore });
     } catch (err) {
       console.error('AI evaluation failed:', err);
       setAiError(err instanceof Error ? err.message : 'Failed to evaluate with AI');
@@ -261,7 +280,7 @@ export default function ResultsPage() {
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold text-gray-900 dark:text-white">AI Evaluation</h3>
               
-            {(!aiEvaluation || aiEvaluation.bandScore === 0) && selectedResult?.section?.type === 'WRITING' && (
+            {selectedResult?.section?.type === 'WRITING' && (
                 <Button 
                   onClick={handleEvaluateWithAI} 
                   disabled={aiLoading}
@@ -734,6 +753,34 @@ export default function ResultsPage() {
           </div>
         </div>
       )}
+
+      {/* Success Modal */}
+      <Modal 
+        isOpen={successModal.isOpen} 
+        onClose={() => setSuccessModal({ ...successModal, isOpen: false })}
+        title="Evaluation Completed"
+      >
+        <div className="text-center space-y-4">
+          <div className="mx-auto w-16 h-16 bg-green-100 dark:bg-green-900/30 rounded-full flex items-center justify-center">
+            <svg className="w-8 h-8 text-green-600 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+            </svg>
+          </div>
+          <div>
+            <p className="text-gray-600 dark:text-gray-400">The AI has completed the evaluation of the writing tasks.</p>
+            <div className="mt-4 p-4 bg-indigo-50 dark:bg-indigo-900/20 rounded-xl">
+              <p className="text-sm text-indigo-700 dark:text-indigo-300 font-medium">Final Band Score</p>
+              <p className="text-4xl font-bold text-indigo-600 dark:text-indigo-400 mt-1">{successModal.bandScore}</p>
+            </div>
+          </div>
+          <Button 
+            onClick={() => setSuccessModal({ ...successModal, isOpen: false })}
+            className="w-full bg-indigo-600 hover:bg-indigo-700 text-white"
+          >
+            Close
+          </Button>
+        </div>
+      </Modal>
 
       {/* Details Modal */}
       {showModal && (

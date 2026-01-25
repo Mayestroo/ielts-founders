@@ -50,12 +50,13 @@ export class AiService {
     let weightedScoreSum = 0;
     let totalWeight = 0;
 
-    for (const task of tasks) {
-      if (!task.response || task.response.trim().length < 20) {
-        this.logger.warn(`Skipping task ${task.id}: Response too short`);
-        continue;
-      }
+    let lastEvaluationError: any = null;
 
+    for (let i = 0; i < tasks.length; i++) {
+      const task = tasks[i];
+      // Add a small delay between tasks to avoid immediate rate limits
+      if (i > 0) await this.delay(1000);
+      
       try {
         const evaluation = await this.evaluateWritingTask(task.description, task.response);
         taskEvaluations[task.id] = evaluation;
@@ -66,9 +67,15 @@ export class AiService {
         weightedScoreSum += evaluation.bandScore * weight;
         totalWeight += weight;
       } catch (error) {
-        this.logger.error(`Failed to evaluate task ${task.id}:`, error);
-        // Continue to next task even if one fails
+        lastEvaluationError = error;
+        this.logger.error(`Failed to evaluate task ${task.id}:`, error.message || error);
+        // Continue to next task to see if others succeed
       }
+    }
+
+    if (totalWeight === 0 && tasks.length > 0) {
+      this.logger.error('All tasks in section failed evaluation.');
+      throw lastEvaluationError || new Error('AI evaluation failed for all tasks');
     }
 
     // Calculate final band score rounded to nearest 0.5
@@ -76,7 +83,8 @@ export class AiService {
     if (totalWeight > 0) {
       const average = weightedScoreSum / totalWeight;
       // Round to nearest 0.5: (round(x * 2) / 2)
-      finalBandScore = Math.round(average * 2) / 2;
+      finalBandScore = Math.max(1.0, Math.round(average * 2) / 2);
+      this.logger.log(`Calculated section band score: ${finalBandScore} (avg: ${average.toFixed(2)})`);
     }
 
     return {
@@ -87,10 +95,17 @@ export class AiService {
 
   // Multi-model fallback strategy
   private readonly models = [
-    'gemini-2.5-flash',        // Try this first (has quota available)
-    'gemini-2.0-flash-lite',   // Lighter version
-    'gemini-2.0-flash',        // Original (may be rate limited)
-    'gemini-2.5-pro',          // More powerful fallback
+    'gemini-2.0-flash',
+    'gemini-2.5-flash',
+    'gemini-1.5-flash',
+    'gemini-flash-latest',
+    'gemini-2.0-flash-lite',
+    'gemini-2.5-pro',
+    'gemini-1.5-pro',
+    'gemini-pro-latest',
+    'gemini-2.0-flash-exp',
+    'gemini-3-flash-preview',
+    'gemini-3-pro-preview',
   ];
 
   // Helper for delay
@@ -162,7 +177,7 @@ export class AiService {
             
             if (statusCode === 429) {
               this.logger.warn(`Model ${model} rate limited (429) with key ...${currentApiKey.slice(-4)}. Rotating key...`);
-              await this.delay(500); // Short delay before retrying with next key
+              await this.delay(2000); // Increased to 2s for better rate limit management
               continue; // Try next key
             }
 
@@ -263,23 +278,25 @@ Provide your evaluation in the following JSON format ONLY (no markdown, no expla
 
     try {
       const parsed = JSON.parse(jsonString);
+      const bandScore = Math.max(1.0, Number(parsed.bandScore) || 1.0);
+      this.logger.log(`Parsed AI evaluation: Band ${bandScore}`);
       
       return {
-        bandScore: Number(parsed.bandScore) || 5,
+        bandScore: bandScore,
         taskAchievement: {
-          score: Number(parsed.taskAchievement?.score) || 5,
+          score: Math.max(1.0, Number(parsed.taskAchievement?.score) || 1.0),
           feedback: String(parsed.taskAchievement?.feedback || 'No feedback available'),
         },
         coherenceAndCohesion: {
-          score: Number(parsed.coherenceAndCohesion?.score) || 5,
+          score: Math.max(1.0, Number(parsed.coherenceAndCohesion?.score) || 1.0),
           feedback: String(parsed.coherenceAndCohesion?.feedback || 'No feedback available'),
         },
         lexicalResource: {
-          score: Number(parsed.lexicalResource?.score) || 5,
+          score: Math.max(1.0, Number(parsed.lexicalResource?.score) || 1.0),
           feedback: String(parsed.lexicalResource?.feedback || 'No feedback available'),
         },
         grammaticalRangeAndAccuracy: {
-          score: Number(parsed.grammaticalRangeAndAccuracy?.score) || 5,
+          score: Math.max(1.0, Number(parsed.grammaticalRangeAndAccuracy?.score) || 1.0),
           feedback: String(parsed.grammaticalRangeAndAccuracy?.feedback || 'No feedback available'),
         },
         overallFeedback: String(parsed.overallFeedback || 'Evaluation completed.'),
