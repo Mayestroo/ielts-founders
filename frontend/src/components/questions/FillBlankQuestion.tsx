@@ -88,7 +88,7 @@ export function FillBlankQuestion({
   );
 
   const textContent = parts.map((part, index) => (
-    <span key={index}>
+    <span key={index} className="inline whitespace-pre-wrap">
       {part && (
         (sectionType === 'LISTENING' || sectionType === 'READING') ? (
           <HighlightableText 

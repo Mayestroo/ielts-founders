@@ -42,7 +42,7 @@ export function TableGroup({
           <thead>
             <tr className="bg-gray-100">
               {tableData.headers.map((header: string, i: number) => (
-                <th key={i} className="p-3 border-r-2 last:border-r-0 border-black text-left font-bold text-black min-w-[120px]">
+                <th key={i} className="p-3 border-r-2 last:border-r-0 border-black text-left font-bold text-black min-w-[120px] whitespace-pre-wrap">
                   <HighlightableText 
                     content={header} 
                     initialHighlights={[]}
@@ -68,9 +68,9 @@ export function TableGroup({
                   let currentCellQuestionOffset = 0;
 
                   return (
-                    <td key={cellIndex} className="p-4 border-r-2 last:border-r-0 border-black text-black">
+                    <td key={cellIndex} className="p-4 border-r-2 last:border-r-0 border-black text-black whitespace-pre-wrap leading-[34px]">
                       {cell.split(/\[BLANK\]|\[blank\]/gi).map((part, partIdx, array) => (
-                        <span key={partIdx}>
+                        <span key={partIdx} className="inline">
                           <HighlightableText 
                             content={part} 
                             initialHighlights={[]}

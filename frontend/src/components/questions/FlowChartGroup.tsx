@@ -156,7 +156,7 @@ export function FlowChartGroup({
       </div>
 
       {options && (
-        <div className="w-full lg:w-72 shrink-0 lg:sticky lg:top-10 z-20 h-fit">
+        <div className="w-full lg:w-72 shrink-0 sticky top-6 z-20">
           <div className="bg-white border-2 border-black rounded-lg p-6 shadow-sm max-h-[80vh] overflow-y-auto">
               <div className="flex flex-col gap-4">
                 {options.map((opt) => (

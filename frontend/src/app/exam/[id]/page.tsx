@@ -1,24 +1,24 @@
 "use client";
 
 import {
-  BottomNav,
-  ExamHeader,
-  PartBanner,
-  ResizablePanel,
-  ReviewModal,
-  SettingsModal,
+    BottomNav,
+    ExamHeader,
+    PartBanner,
+    ResizablePanel,
+    ReviewModal,
+    SettingsModal,
 } from "@/components/exam";
 import { HighlightableText } from "@/components/exam/HighlightableText";
 import {
-  FillBlankQuestion,
-  FlowChartGroup,
-  MatchingGroup,
-  MCQQuestion,
-  ShortAnswerQuestion,
-  SummaryGroup,
-  TableGroup,
-  TrueFalseQuestion,
-  WritingTask,
+    FillBlankQuestion,
+    FlowChartGroup,
+    MatchingGroup,
+    MCQQuestion,
+    ShortAnswerQuestion,
+    SummaryGroup,
+    TableGroup,
+    TrueFalseQuestion,
+    WritingTask,
 } from "@/components/questions";
 import { ConfirmationModal } from "@/components/ui/ConfirmationModal";
 import { useAuth } from "@/contexts/AuthContext";
@@ -92,6 +92,11 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
 
   useEffect(() => {
     if (assignmentId && isAuthenticated) {
+      // Clear previous data while loading
+      setAssignment(null);
+      setAnswers({});
+      setError("");
+      
       // Fetch details first without starting the timer
       api
         .getAssignment(assignmentId)
@@ -1062,9 +1067,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
   // Listening Section Layout (similar to Reading but with audio)
   return (
     <div
-      className={`min-h-screen bg-white flex flex-col notranslate exam-content ${
-        showPlayOverlay ? "h-screen overflow-hidden" : ""
-      }`}
+      className="h-screen overflow-hidden bg-white flex flex-col notranslate exam-content"
       translate="no"
     >
       <div className="h-16 shrink-0">

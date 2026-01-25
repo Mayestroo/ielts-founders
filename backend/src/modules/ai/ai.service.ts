@@ -14,20 +14,31 @@ export interface WritingEvaluation {
 @Injectable()
 export class AiService {
   private readonly logger = new Logger(AiService.name);
-  private readonly apiKey: string;
+  private readonly keys: string[];
+  private currentKeyIndex = 0;
 
   constructor() {
-    this.apiKey = process.env.GEMINI_API_KEY || '';
-    if (!this.apiKey) {
+    const keysString = process.env.GEMINI_API_KEY || '';
+    this.keys = keysString.split(',').map(k => k.trim()).filter(k => k.length > 0);
+    
+    if (this.keys.length === 0) {
       this.logger.warn('GEMINI_API_KEY not configured. AI evaluation will not work.');
+    } else {
+      this.logger.log(`Loaded ${this.keys.length} Gemini API key(s)`);
     }
+  }
+
+  private getNextKey(): string {
+    if (this.keys.length === 0) return '';
+    const key = this.keys[this.currentKeyIndex];
+    this.currentKeyIndex = (this.currentKeyIndex + 1) % this.keys.length;
+    return key;
   }
 
   async evaluateWritingSection(
     tasks: { id: string; description: string; response: string }[]
   ): Promise<{ bandScore: number; tasks: Record<string, WritingEvaluation> }> {
-    if (!this.apiKey) {
-      // Return dummy result if API key missing (for dev safety) or assume 0
+    if (this.keys.length === 0) {
       this.logger.warn('Skipping AI evaluation: No API key');
       return { 
         bandScore: 0, 
@@ -76,10 +87,10 @@ export class AiService {
 
   // Multi-model fallback strategy
   private readonly models = [
-    'gemini-2.0-flash',
-    'gemini-1.5-flash',
-    'gemini-2.5-flash',
-    'gemini-2.5-flash-lite',
+    'gemini-2.5-flash',        // Try this first (has quota available)
+    'gemini-2.0-flash-lite',   // Lighter version
+    'gemini-2.0-flash',        // Original (may be rate limited)
+    'gemini-2.5-pro',          // More powerful fallback
   ];
 
   // Helper for delay
@@ -89,7 +100,7 @@ export class AiService {
 
   // Changed to generic evaluation method
   async evaluateWritingTask(taskDescription: string, studentResponse: string): Promise<WritingEvaluation> {
-    if (!this.apiKey) {
+    if (this.keys.length === 0) {
       throw new Error('Gemini API key not configured');
     }
 
@@ -110,64 +121,83 @@ export class AiService {
     const prompt = this.buildEvaluationPrompt(taskDescription, studentResponse);
     let lastError: any = null;
 
-    // Try each model in sequence if we hit rate limits
+    // Retry logic with key rotation
+    // We try models, and for each model we try available keys if we hit rate limits
     for (const model of this.models) {
-      try {
-        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
-        this.logger.log(`Attempting evaluation with model: ${model}`);
+      // Try up to the number of keys times for each model (if rate limited)
+      // or just once if other error
+      let attempts = 0;
+      const maxAttempts = this.keys.length; // Try each key once per model if needed
 
-        const response = await fetch(`${apiUrl}?key=${this.apiKey}`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            contents: [
-              {
-                parts: [{ text: prompt }],
-              },
-            ],
-            generationConfig: {
-              temperature: 0.3,
-              topP: 0.8,
-              maxOutputTokens: 2048,
+      while (attempts < maxAttempts) {
+        attempts++;
+        const currentApiKey = this.getNextKey();
+        
+        try {
+          const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+          this.logger.log(`Attempting evaluation with model: ${model} (Key ending in ...${currentApiKey.slice(-4)})`);
+
+          const response = await fetch(`${apiUrl}?key=${currentApiKey}`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
             },
-          }),
-        });
+            body: JSON.stringify({
+              contents: [
+                {
+                  parts: [{ text: prompt }],
+                },
+              ],
+              generationConfig: {
+                temperature: 0.3,
+                topP: 0.8,
+                maxOutputTokens: 2048,
+              },
+            }),
+          });
 
-        if (!response.ok) {
-          const errorText = await response.text();
-          const statusCode = response.status;
-          
-          if (statusCode === 429) {
-            this.logger.warn(`Model ${model} rate limited (429). Trying next model...`);
-            await this.delay(1000); // 1s delay before next attempt
-            continue;
+          if (!response.ok) {
+            const errorText = await response.text();
+            const statusCode = response.status;
+            
+            if (statusCode === 429) {
+              this.logger.warn(`Model ${model} rate limited (429) with key ...${currentApiKey.slice(-4)}. Rotating key...`);
+              await this.delay(500); // Short delay before retrying with next key
+              continue; // Try next key
+            }
+
+            this.logger.error(`Gemini API error (${model}): ${statusCode} - ${errorText}`);
+            throw new Error(`Gemini API error: ${statusCode}`);
           }
 
-          this.logger.error(`Gemini API error (${model}): ${statusCode} - ${errorText}`);
-          throw new Error(`Gemini API error: ${statusCode}`);
+          const data = await response.json();
+          const textContent = data.candidates?.[0]?.content?.parts?.[0]?.text;
+
+          if (!textContent) {
+            throw new Error(`No response from Gemini API using model ${model}`);
+          }
+
+          return this.parseEvaluationResponse(textContent);
+        } catch (error) {
+          lastError = error;
+          // If it really wasn't a 429 (caught above), we might want to break inner loop and try next model
+          // But if we caught an error inside try block (like fetch failure), we check message
+          if (error.message && error.message.includes('429')) {
+             // It was a rate limit, loop continues to next key
+             continue;
+          }
+          
+          this.logger.error(`Error with model ${model}:`, error.message);
+          // For non-rate-limit errors, maybe try next model immediately
+          break; 
         }
-
-        const data = await response.json();
-        const textContent = data.candidates?.[0]?.content?.parts?.[0]?.text;
-
-        if (!textContent) {
-          throw new Error(`No response from Gemini API using model ${model}`);
-        }
-
-        return this.parseEvaluationResponse(textContent);
-      } catch (error) {
-        lastError = error;
-        this.logger.error(`Error with model ${model}:`, error.message);
-        // If it's not a 429, we might still want to try another model if it's a transient server error
-        if (error.message.includes('429')) continue;
-        // For other errors, we wait and try the next model too
-        await this.delay(500);
       }
+      
+      // If we are here, it means we exhausted keys for this model OR hit a non-429 error
+      // proceed to next model
     }
 
-    this.logger.error('All Gemini models failed or reached quota.');
+    this.logger.error('All Gemini models and keys failed.');
     throw lastError || new Error('All AI evaluation attempts failed');
   }
 

@@ -492,7 +492,20 @@ export class ExamsService {
         | string
         | string[]
         | undefined;
-      const correctAnswer = question.correctAnswer;
+      let correctAnswer = question.correctAnswer;
+
+      // For MATCHING questions, correctAnswer might be an object like {q14: "IV"}
+      // Extract the value for this specific question
+      if (
+        (question.type === 'MATCHING' ||
+          question.type === 'PLAN_MAP_LABELING' ||
+          question.type === 'DIAGRAM_LABELING') &&
+        correctAnswer &&
+        typeof correctAnswer === 'object' &&
+        !Array.isArray(correctAnswer)
+      ) {
+        correctAnswer = (correctAnswer as Record<string, string>)[question.id];
+      }
 
       if (
         question.type === 'MCQ_MULTIPLE' &&
@@ -591,6 +604,20 @@ export class ExamsService {
   ): boolean {
     const studentStr = String(studentAnswer).trim();
     const correctStr = String(correctAnswer).trim();
+
+    // Percentage equivalence: "50%" ↔ "50 percent"
+    const normalizePercentage = (text: string): string => {
+      // Replace "X%" with "X percent"
+      return text.replace(/(\d+)%/g, '$1 percent');
+    };
+
+    const studentNormalized = normalizePercentage(studentStr);
+    const correctNormalized = normalizePercentage(correctStr);
+
+    // Check normalized versions (case-insensitive)
+    if (studentNormalized.toLowerCase() === correctNormalized.toLowerCase()) {
+      return true;
+    }
 
     // Number/Word equivalence check (if instruction allows numbers)
     if (

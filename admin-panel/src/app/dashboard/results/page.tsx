@@ -2,6 +2,7 @@
 
 import { Badge, Button, Card, CardBody, CardHeader } from '@/components/ui';
 import { api } from '@/lib/api';
+import { generateWritingDOCX } from '@/lib/generateDOCX';
 import { generateResultPDF } from '@/lib/generatePDF';
 import { ExamResult } from '@/types';
 import React, { useEffect, useState } from 'react';
@@ -30,6 +31,7 @@ export default function ResultsPage() {
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const [pdfLoading, setPdfLoading] = useState<string | null>(null); // studentId being processed
+  const [docxLoading, setDocxLoading] = useState(false);
 
   const handleDownloadReport = async (studentId: string, studentName: string) => {
     setPdfLoading(studentId);
@@ -132,6 +134,27 @@ export default function ResultsPage() {
     }
   };
 
+  const handleDownloadWritingDOCX = async () => {
+    if (!selectedResult || selectedResult.section?.type !== 'WRITING') return;
+    
+    setDocxLoading(true);
+    try {
+      const answers = selectedResult.answers || {};
+      await generateWritingDOCX({
+        student: selectedResult.student!,
+        sectionTitle: selectedResult.section?.title || 'Writing Section',
+        task1: answers['w1'] || answers['writing'],
+        task2: answers['w2'],
+        submittedAt: selectedResult.submittedAt,
+      });
+    } catch (err) {
+      console.error('Failed to generate DOCX:', err);
+      alert('Failed to generate DOCX file.');
+    } finally {
+      setDocxLoading(false);
+    }
+  };
+
   const isAnswerCorrect = (studentAnswer: any, correctAnswer: any, type: string) => {
     if (!studentAnswer || !correctAnswer) return false;
     
@@ -181,10 +204,30 @@ export default function ResultsPage() {
               <svg className="w-5 h-5 text-blue-600 dark:text-blue-400 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
-              <div>
+              <div className="flex-1">
                 <p className="font-medium text-blue-900 dark:text-blue-100">Writing tasks require careful evaluation</p>
                 <p className="text-sm text-blue-700 dark:text-blue-300 mt-1">Student responses for each task are shown below. Band scores are automatically provided by AI but should be verified.</p>
               </div>
+              <Button 
+                onClick={handleDownloadWritingDOCX}
+                disabled={docxLoading}
+                className="bg-green-600 hover:bg-green-700 text-white shrink-0"
+                size="sm"
+              >
+                {docxLoading ? (
+                  <>
+                    <div className="h-4 w-4 border-2 border-white/30 border-t-white rounded-full animate-spin mr-2" />
+                    Generating...
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    Download as DOCX
+                  </>
+                )}
+              </Button>
             </div>
           </div>
 
@@ -218,7 +261,7 @@ export default function ResultsPage() {
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold text-gray-900 dark:text-white">AI Evaluation</h3>
               
-            {!aiEvaluation && selectedResult?.section?.type === 'WRITING' && (
+            {(!aiEvaluation || aiEvaluation.bandScore === 0) && selectedResult?.section?.type === 'WRITING' && (
                 <Button 
                   onClick={handleEvaluateWithAI} 
                   disabled={aiLoading}
@@ -234,7 +277,7 @@ export default function ResultsPage() {
                       <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
                       </svg>
-                      Evaluate with AI
+                      {aiEvaluation ? 'Re-evaluate with AI' : 'Evaluate with AI'}
                     </>
                   )}
                 </Button>
@@ -487,7 +530,21 @@ export default function ResultsPage() {
       } else {
         // Standard single question
         questionCounter++;
-        const isCorrect = isAnswerCorrect(studentAnswer, question.correctAnswer, question.type);
+        
+        let correctAnswer = question.correctAnswer;
+        // Handle MATCHING/Labeling where correctAnswer is an object {qid: "A"}
+        if (
+          (question.type === 'MATCHING' ||
+           question.type === 'PLAN_MAP_LABELING' ||
+           question.type === 'DIAGRAM_LABELING') &&
+          correctAnswer &&
+          typeof correctAnswer === 'object' &&
+          !Array.isArray(correctAnswer)
+        ) {
+          correctAnswer = (correctAnswer as Record<string, string>)[question.id];
+        }
+
+        const isCorrect = isAnswerCorrect(studentAnswer, correctAnswer, question.type);
 
         items.push(
           <div key={question.id} className={`p-4 rounded-lg border ${isCorrect ? 'border-green-200 bg-green-50/50 dark:bg-green-900/10 dark:border-green-800' : 'border-red-200 bg-red-50/50 dark:bg-red-900/10 dark:border-red-800'}`}>
@@ -507,7 +564,7 @@ export default function ResultsPage() {
               <div>
                 <p className="text-gray-500 mb-1">Correct Answer:</p>
                 <p className="font-medium text-gray-700 dark:text-gray-300">
-                   {formatAnswer(question.correctAnswer, question.type)}
+                   {formatAnswer(correctAnswer, question.type)}
                 </p>
               </div>
             </div>

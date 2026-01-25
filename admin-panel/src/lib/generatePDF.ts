@@ -63,8 +63,10 @@ function getCEFR(bandScore: number): string {
   if (bandScore >= 7.0) return 'C1';
   if (bandScore >= 5.5) return 'B2';
   if (bandScore >= 4.0) return 'B1';
-  return 'A2';
+  if (bandScore >= 3.0) return 'A2';
+  return 'A1';
 }
+
 
 async function drawReportPage(doc: jsPDF, data: StudentReportData, logoData: LoadedImage | null) {
   const pageWidth = doc.internal.pageSize.getWidth();
