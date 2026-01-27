@@ -18,6 +18,11 @@ export default function UsersPage() {
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [userToDelete, setUserToDelete] = useState<string | null>(null);
   const [centers, setCenters] = useState<Center[]>([]);
+  
+  // Filtering States
+  const [searchTerm, setSearchTerm] = useState('');
+  const [roleFilter, setRoleFilter] = useState('');
+  const [centerFilter, setCenterFilter] = useState('');
 
   const [formData, setFormData] = useState<CreateUserForm>({
     username: '',
@@ -32,7 +37,13 @@ export default function UsersPage() {
     setIsLoading(true);
     try {
       const skip = (page - 1) * pageSize;
-      const { users, total } = await api.getUsers(skip, pageSize);
+      const { users, total } = await api.getUsers(
+        skip, 
+        pageSize, 
+        searchTerm, 
+        roleFilter as Role, 
+        centerFilter
+      );
       setUsers(users);
       setTotal(total);
     } catch (err) {
@@ -43,8 +54,22 @@ export default function UsersPage() {
   };
 
   useEffect(() => {
+    // Debounce search
+    const timer = setTimeout(() => {
+      setPage(1); // Reset to page 1 on new filter
+      loadUsers();
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [searchTerm, roleFilter, centerFilter]);
+
+  // Handle page changes separately to strict loading
+  useEffect(() => {
     loadUsers();
   }, [page]);
+
+  // Removed client-side filtering
+  const filteredUsers = users;
 
   useEffect(() => {
     // Load centers for SuperAdmin to select when creating users
@@ -135,13 +160,7 @@ export default function UsersPage() {
     }
   };
 
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-indigo-500"></div>
-      </div>
-    );
-  }
+
 
   return (
     <div className="space-y-6">
@@ -169,8 +188,63 @@ export default function UsersPage() {
         </Button>
       </div>
 
+      {/* Filters Bar */}
+      <Card className="mb-6">
+        <CardBody className="py-4 px-6">
+          <div className="flex flex-wrap items-center gap-4">
+             <div className="flex-1 min-w-[200px]">
+               <Input 
+                 placeholder="Search name or username..." 
+                 value={searchTerm}
+                 onChange={(e) => setSearchTerm(e.target.value)}
+                 className="w-full"
+               />
+             </div>
+             <div className="w-48">
+               <Select
+                 options={[
+                   { value: '', label: 'All Roles' },
+                   { value: 'CENTER_ADMIN', label: 'Center Admin' },
+                   { value: 'TEACHER', label: 'Teacher' },
+                   { value: 'STUDENT', label: 'Student' },
+                 ]}
+                 value={roleFilter}
+                 onChange={(e) => setRoleFilter(e.target.value)}
+               />
+             </div>
+             {hasRole('SUPER_ADMIN') && (
+               <div className="w-48">
+                 <Select
+                   options={[
+                     { value: '', label: 'All Centers' },
+                     ...centers.map(c => ({ value: c.id, label: c.name }))
+                   ]}
+                   value={centerFilter}
+                   onChange={(e) => setCenterFilter(e.target.value)}
+                 />
+               </div>
+             )}
+             <Button 
+               variant="secondary" 
+               onClick={() => {
+                 setSearchTerm('');
+                 setRoleFilter('');
+                 setCenterFilter('');
+               }}
+             >
+               Clear
+             </Button>
+          </div>
+        </CardBody>
+      </Card>
+
       {/* Users Table */}
-      <Card>
+      {isLoading ? (
+        <div className="flex items-center justify-center h-64">
+          <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-indigo-500"></div>
+        </div>
+      ) : (
+        <Card>
         <CardBody className="p-0">
           <div className="overflow-x-auto">
             <table className="w-full">
@@ -184,7 +258,7 @@ export default function UsersPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-                {users.map((user) => (
+                {filteredUsers.map((user) => (
                   <tr key={user.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/50">
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-3">
@@ -229,10 +303,10 @@ export default function UsersPage() {
                     </td>
                   </tr>
                 ))}
-                {users.length === 0 && (
+                {filteredUsers.length === 0 && (
                   <tr>
                     <td colSpan={5} className="px-6 py-12 text-center text-gray-500">
-                      No users found
+                      {searchTerm || roleFilter || centerFilter ? 'No users match your filters' : 'No users found'}
                     </td>
                   </tr>
                 )}
@@ -241,6 +315,7 @@ export default function UsersPage() {
           </div>
         </CardBody>
       </Card>
+      )}
 
       {/* Pagination */}
       {total > pageSize && (

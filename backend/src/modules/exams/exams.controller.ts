@@ -247,4 +247,13 @@ export class ExamsController {
   ) {
     return this.examsService.reassignAssignment(id, req.user.id, req.user.role);
   }
+
+  @Delete('assignments/:id')
+  @Roles(Role.TEACHER, Role.CENTER_ADMIN, Role.SUPER_ADMIN)
+  deleteAssignment(
+    @Param('id') id: string,
+    @Request() req: AuthenticatedRequest,
+  ) {
+    return this.examsService.deleteAssignment(id, req.user.id, req.user.role);
+  }
 }

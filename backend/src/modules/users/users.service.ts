@@ -66,8 +66,16 @@ export class UsersService {
     return result;
   }
 
-  async findAll(userRole: Role, userCenterId: string | null, skip?: number, take?: number) {
-    let where = {};
+  async findAll(
+    userRole: Role, 
+    userCenterId: string | null, 
+    skip?: number, 
+    take?: number, 
+    search?: string,
+    roleFilter?: Role,
+    centerFilter?: string,
+  ) {
+    let where: any = {};
 
     if (userRole === Role.CENTER_ADMIN) {
       // CENTER_ADMIN sees only users in their center
@@ -78,6 +86,39 @@ export class UsersService {
     } else if (userRole !== Role.SUPER_ADMIN) {
       // Other roles can't list users
       throw new ForbiddenException('You do not have permission to list users');
+    }
+
+    // Apply additional filters
+    if (roleFilter) {
+      where.role = roleFilter;
+    }
+
+    if (centerFilter && userRole === Role.SUPER_ADMIN) {
+      where.centerId = centerFilter;
+    }
+
+    if (search) {
+      const trimmedSearch = search.trim();
+      const parts = trimmedSearch.split(/\s+/);
+
+      if (parts.length > 1) {
+        // Handle "First Last" search
+        where.OR = [
+          {
+            AND: [
+              { firstName: { startsWith: parts[0], mode: 'insensitive' } },
+              { lastName: { startsWith: parts.slice(1).join(' '), mode: 'insensitive' } },
+            ],
+          },
+          // Also allowing "LastName FirstName" if needed, but sticking to logical assumption for now or single string match fallback
+        ];
+      } else {
+        where.OR = [
+          { firstName: { startsWith: trimmedSearch, mode: 'insensitive' } },
+          { lastName: { startsWith: trimmedSearch, mode: 'insensitive' } },
+          { username: { startsWith: trimmedSearch, mode: 'insensitive' } },
+        ];
+      }
     }
 
     const [users, total] = await Promise.all([

@@ -1,8 +1,8 @@
 import {
-  BadRequestException,
-  ForbiddenException,
-  Injectable,
-  NotFoundException,
+    BadRequestException,
+    ForbiddenException,
+    Injectable,
+    NotFoundException,
 } from '@nestjs/common';
 import { AssignmentStatus, Prisma, Role } from '@prisma/client';
 import { AiService, WritingEvaluation } from '../ai/ai.service';
@@ -1104,6 +1104,26 @@ export class ExamsService {
         startTime: null,
         endTime: null,
       },
+    });
+  }
+
+  async deleteAssignment(
+    assignmentId: string,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    _requesterId: string,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    _requesterRole: Role,
+  ) {
+    const assignment = await this.prisma.examAssignment.findUnique({
+      where: { id: assignmentId },
+    });
+
+    if (!assignment) {
+      throw new NotFoundException('Assignment not found');
+    }
+
+    return this.prisma.examAssignment.delete({
+      where: { id: assignmentId },
     });
   }
 }

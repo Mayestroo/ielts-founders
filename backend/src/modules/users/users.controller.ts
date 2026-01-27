@@ -39,8 +39,11 @@ export class UsersController {
     @Request() req,
     @Query('skip') skip?: number,
     @Query('take') take?: number,
+    @Query('search') search?: string,
+    @Query('role') role?: Role,
+    @Query('centerId') centerId?: string,
   ) {
-    return this.usersService.findAll(req.user.role, req.user.centerId, skip, take);
+    return this.usersService.findAll(req.user.role, req.user.centerId, skip, take, search, role, centerId);
   }
 
   @Get(':id')

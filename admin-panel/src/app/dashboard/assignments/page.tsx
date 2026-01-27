@@ -3,7 +3,7 @@
 import { Badge, Button, Card, CardBody, CardHeader, ConfirmationModal, Select } from '@/components/ui';
 import { api } from '@/lib/api';
 import { ExamAssignment, ExamSection, User } from '@/types';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 export default function AssignmentsPage() {
   const [assignments, setAssignments] = useState<ExamAssignment[]>([]);
@@ -23,15 +23,65 @@ export default function AssignmentsPage() {
     writingSectionId: '',
   });
 
+  // Filtering States
+  const [searchTerm, setSearchTerm] = useState('');
+  const [typeFilter, setTypeFilter] = useState('');
+
   const [reassignAssignmentId, setReassignAssignmentId] = useState<string | null>(null);
   const [showReassignConfirm, setShowReassignConfirm] = useState(false);
   const [reassignLoading, setReassignLoading] = useState(false);
+  
+  const [deleteAssignmentId, setDeleteAssignmentId] = useState<string | null>(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Group exams by type
+  // UX Grouping state
+  const [selectedStudent, setSelectedStudent] = useState<{ student: User; assignments: ExamAssignment[] } | null>(null);
+  const [showDetailsModal, setShowDetailsModal] = useState(false);
+
+  // Group exams by type for the creation form
   const listeningExams = exams.filter(e => e.type === 'LISTENING');
   const readingExams = exams.filter(e => e.type === 'READING');
   const writingExams = exams.filter(e => e.type === 'WRITING');
+
+  // Group assignments by student for the main table
+  const groupedAssignments = useMemo(() => {
+    // Perform client-side filtering
+    const filtered = assignments.filter(assignment => {
+      const student = assignment.student!;
+      const matchesSearch = 
+        (student.firstName?.toLowerCase().includes(searchTerm.toLowerCase()) || 
+         student.lastName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+         student.username.toLowerCase().includes(searchTerm.toLowerCase()));
+      
+      const matchesType = !typeFilter || assignment.section?.type === typeFilter;
+      
+      return matchesSearch && matchesType;
+    });
+
+    const groups: Record<string, { student: User; assignments: ExamAssignment[]; latestDate: string }> = {};
+    
+    filtered.forEach((assignment) => {
+      const studentId = assignment.studentId;
+      if (!groups[studentId]) {
+        groups[studentId] = {
+          student: assignment.student!,
+          assignments: [],
+          latestDate: assignment.createdAt as string,
+        };
+      }
+      groups[studentId].assignments.push(assignment);
+      if (new Date(assignment.createdAt) > new Date(groups[studentId].latestDate)) {
+        groups[studentId].latestDate = assignment.createdAt as string;
+      }
+    });
+
+    return Object.values(groups).sort((a, b) => 
+      new Date(b.latestDate).getTime() - new Date(a.latestDate).getTime()
+    );
+  }, [assignments, searchTerm, typeFilter]);
 
   const handleReassign = async () => {
     if (!reassignAssignmentId) return;
@@ -41,10 +91,20 @@ export default function AssignmentsPage() {
       await api.reassignAssignment(reassignAssignmentId);
       setShowReassignConfirm(false);
       setReassignAssignmentId(null);
+      
+      // Update local state for the modal if open
+      if (selectedStudent) {
+        setSelectedStudent({
+          ...selectedStudent,
+          assignments: selectedStudent.assignments.map(a => 
+            a.id === reassignAssignmentId ? { ...a, status: 'ASSIGNED' } : a
+          )
+        });
+      }
+      
       loadData(); // Refresh list to update status
     } catch (err) {
       console.error('Failed to reassign:', err);
-      // Ideally show toast error here
     } finally {
       setReassignLoading(false);
     }
@@ -55,13 +115,44 @@ export default function AssignmentsPage() {
     setShowReassignConfirm(true);
   };
 
+  const handleDelete = async () => {
+    if (!deleteAssignmentId) return;
+    
+    setDeleteLoading(true);
+    try {
+      await api.deleteAssignment(deleteAssignmentId);
+      setShowDeleteConfirm(false);
+      setDeleteAssignmentId(null);
+      
+      // Update local state for the modal if open
+      if (selectedStudent) {
+        setSelectedStudent({
+          ...selectedStudent,
+          assignments: selectedStudent.assignments.filter(a => a.id !== deleteAssignmentId)
+        });
+      }
+      
+      loadData(); // Refresh list
+    } catch (err) {
+      console.error('Failed to delete:', err);
+      alert('Failed to delete assignment');
+    } finally {
+      setDeleteLoading(false);
+    }
+  };
+
+  const openDeleteConfirm = (id: string) => {
+    setDeleteAssignmentId(id);
+    setShowDeleteConfirm(true);
+  };
+
   const loadData = async () => {
     setIsLoading(true);
     try {
       const skip = (page - 1) * pageSize;
       const [{ assignments, total }, { users: studentsData }, examsData] = await Promise.all([
         api.getAssignments(skip, pageSize),
-        api.getUsers(0, 1000), // Get enough students for the dropdown
+        api.getUsers(0, 1000),
         api.getExamSections(),
       ]);
       setAssignments(assignments);
@@ -97,7 +188,6 @@ export default function AssignmentsPage() {
     }
 
     try {
-      // Create assignments for each selected section
       const promises = sectionsToAssign.map(sectionId =>
         api.createAssignment({ studentId: formData.studentId, sectionId })
       );
@@ -106,9 +196,7 @@ export default function AssignmentsPage() {
       
       setShowModal(false);
       setFormData({ studentId: '', listeningSectionId: '', readingSectionId: '', writingSectionId: '' });
-      const { assignments: assignmentsData, total: assignmentsTotal } = await api.getAssignments((page - 1) * pageSize, pageSize);
-      setAssignments(assignmentsData);
-      setTotal(assignmentsTotal);
+      loadData();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to assign exam');
     } finally {
@@ -121,6 +209,15 @@ export default function AssignmentsPage() {
       case 'ASSIGNED': return 'info';
       case 'IN_PROGRESS': return 'warning';
       case 'SUBMITTED': return 'success';
+      default: return 'default';
+    }
+  };
+
+  const getSectionBadgeVariant = (type: string) => {
+    switch (type) {
+      case 'READING': return 'info';
+      case 'LISTENING': return 'warning';
+      case 'WRITING': return 'success';
       default: return 'default';
     }
   };
@@ -149,7 +246,50 @@ export default function AssignmentsPage() {
         </Button>
       </div>
 
-      {/* Assignments Table */}
+      {/* Filters Bar */}
+      <Card className="mb-6">
+        <CardBody className="py-4 px-6">
+          <div className="flex flex-wrap items-center gap-4">
+             <div className="flex-1 min-w-[200px]">
+                <div className="relative">
+                  <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-gray-400">
+                    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+                  </span>
+                  <input 
+                    type="text"
+                    placeholder="Search student name or username..." 
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="w-full pl-10 pr-4 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                  />
+                </div>
+             </div>
+             <div className="w-48">
+               <Select
+                 options={[
+                   { value: '', label: 'All Section Types' },
+                   { value: 'READING', label: 'Reading' },
+                   { value: 'LISTENING', label: 'Listening' },
+                   { value: 'WRITING', label: 'Writing' },
+                 ]}
+                 value={typeFilter}
+                 onChange={(e) => setTypeFilter(e.target.value)}
+               />
+             </div>
+             <Button 
+               variant="secondary" 
+               onClick={() => {
+                 setSearchTerm('');
+                 setTypeFilter('');
+               }}
+             >
+               Clear
+             </Button>
+          </div>
+        </CardBody>
+      </Card>
+
+      {/* Grouped Assignments Table */}
       <Card>
         <CardBody className="p-0">
           <div className="overflow-x-auto">
@@ -157,65 +297,78 @@ export default function AssignmentsPage() {
               <thead className="bg-gray-50 dark:bg-gray-800">
                 <tr>
                   <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Student</th>
-                  <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Exam Section</th>
-                  <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
-                  <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Assigned At</th>
+                  <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Active Exams</th>
+                  <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Summary</th>
+                  <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Last Activity</th>
                   <th className="px-6 py-4 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-                {assignments.map((assignment) => (
-                  <tr key={assignment.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/50">
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-full bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center text-indigo-600 dark:text-indigo-400 font-semibold text-xs">
-                          {assignment.student?.firstName?.[0] || assignment.student?.username[0].toUpperCase()}
+                {groupedAssignments.map((group) => {
+                  const student = group.student;
+                  const assignments = group.assignments;
+                  const stats = {
+                    assigned: assignments.filter(a => a.status === 'ASSIGNED').length,
+                    progress: assignments.filter(a => a.status === 'IN_PROGRESS').length,
+                    submitted: assignments.filter(a => a.status === 'SUBMITTED').length,
+                  };
+
+                  return (
+                    <tr key={student.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/50">
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-full bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center text-indigo-600 dark:text-indigo-400 font-semibold text-xs">
+                            {student.firstName?.[0] || student.username[0].toUpperCase()}
+                          </div>
+                          <div>
+                            <p className="font-medium text-gray-900 dark:text-white">
+                              {student.firstName ? `${student.firstName} ${student.lastName || ''}` : student.username}
+                            </p>
+                            <p className="text-xs text-gray-500">@{student.username}</p>
+                          </div>
                         </div>
-                        <div>
-                          <p className="font-medium text-gray-900 dark:text-white">
-                            {assignment.student?.firstName ? `${assignment.student.firstName} ${assignment.student.lastName || ''}` : assignment.student?.username}
-                          </p>
-                          <p className="text-xs text-gray-500">@{assignment.student?.username}</p>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="flex flex-wrap gap-2">
+                          {assignments.slice(0, 3).map(a => (
+                            <Badge key={a.id} variant={getSectionBadgeVariant(a.section?.type || '')} size="sm">
+                              {a.section?.type}
+                            </Badge>
+                          ))}
+                          {assignments.length > 3 && (
+                            <span className="text-xs text-gray-500">+{assignments.length - 3} more</span>
+                          )}
                         </div>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-2">
-                        <Badge variant={
-                          assignment.section?.type === 'READING' ? 'info' :
-                          assignment.section?.type === 'LISTENING' ? 'warning' : 'success'
-                        } size="sm">
-                          {assignment.section?.type}
-                        </Badge>
-                        <span className="text-gray-900 dark:text-white">{assignment.section?.title}</span>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <Badge variant={getStatusBadgeVariant(assignment.status)}>
-                        {assignment.status.replace('_', ' ')}
-                      </Badge>
-                    </td>
-                    <td className="px-6 py-4 text-gray-500 dark:text-gray-400">
-                      {new Date(assignment.createdAt).toLocaleDateString()}
-                    </td>
-                    <td className="px-6 py-4 text-right">
-                      {(assignment.status === 'SUBMITTED' || assignment.status === 'IN_PROGRESS') && (
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="flex gap-3 text-xs font-medium">
+                           {stats.assigned > 0 && <span className="text-blue-600 dark:text-blue-400">{stats.assigned} Assigned</span>}
+                           {stats.progress > 0 && <span className="text-amber-600 dark:text-amber-400">{stats.progress} In Progress</span>}
+                           {stats.submitted > 0 && <span className="text-emerald-600 dark:text-emerald-400">{stats.submitted} Submitted</span>}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 text-gray-500 dark:text-gray-400 text-sm">
+                        {new Date(group.latestDate).toLocaleDateString()}
+                      </td>
+                      <td className="px-6 py-4 text-right">
                         <Button 
                           size="sm" 
-                          variant="danger" 
-                          onClick={() => openReassignConfirm(assignment.id)}
-                          className="text-xs"
+                          variant="secondary" 
+                          onClick={() => {
+                            setSelectedStudent(group);
+                            setShowDetailsModal(true);
+                          }}
                         >
-                          Reassign
+                          View Details
                         </Button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-                {assignments.length === 0 && (
+                      </td>
+                    </tr>
+                  );
+                })}
+                {groupedAssignments.length === 0 && (
                   <tr>
                     <td colSpan={5} className="px-6 py-12 text-center text-gray-500">
-                      No assignments found
+                      {searchTerm || typeFilter ? 'No assignments match your filters' : 'No assignments found'}
                     </td>
                   </tr>
                 )}
@@ -247,8 +400,7 @@ export default function AssignmentsPage() {
           <div className="hidden sm:flex sm:flex-1 sm:items-center sm:justify-between">
             <div>
               <p className="text-sm text-gray-700 dark:text-gray-300">
-                Showing <span className="font-medium">{(page - 1) * pageSize + 1}</span> to <span className="font-medium">{Math.min(page * pageSize, total)}</span> of{' '}
-                <span className="font-medium">{total}</span> results
+                Showing entries for <span className="font-medium">{groupedAssignments.length}</span> students
               </p>
             </div>
             <div>
@@ -292,7 +444,84 @@ export default function AssignmentsPage() {
         </div>
       )}
 
-      {/* Assign Modal - Section-Based */}
+      {/* Student Details Modal */}
+      {showDetailsModal && selectedStudent && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <Card className="w-full max-w-2xl">
+            <CardHeader className="flex flex-row items-center justify-between">
+              <div>
+                <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
+                  Assignments for {selectedStudent.student.firstName || selectedStudent.student.username}
+                </h2>
+                <p className="text-sm text-gray-500 mt-1">Manage individual exam assignments</p>
+              </div>
+              <button 
+                onClick={() => setShowDetailsModal(false)}
+                className="text-gray-400 hover:text-gray-500 dark:hover:text-gray-300"
+              >
+                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </CardHeader>
+            <CardBody className="p-0 overflow-y-auto max-h-[60vh]">
+              <div className="divide-y divide-gray-200 dark:divide-gray-700">
+                {selectedStudent.assignments.map((assignment) => (
+                  <div key={assignment.id} className="p-6 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-gray-800/50">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <Badge variant={getSectionBadgeVariant(assignment.section?.type || '')} size="sm">
+                          {assignment.section?.type}
+                        </Badge>
+                        <span className="font-medium text-gray-900 dark:text-white">{assignment.section?.title}</span>
+                      </div>
+                      <div className="flex items-center gap-4 text-xs text-gray-500">
+                        <span>Assigned: {new Date(assignment.createdAt).toLocaleDateString()}</span>
+                        {assignment.startTime && <span>Started: {new Date(assignment.startTime).toLocaleString()}</span>}
+                      </div>
+                    </div>
+                    
+                    <div className="flex items-center gap-4">
+                      <Badge variant={getStatusBadgeVariant(assignment.status)}>
+                        {assignment.status.replace('_', ' ')}
+                      </Badge>
+                      
+                      <div className="flex items-center gap-2">
+                        {(assignment.status === 'SUBMITTED' || assignment.status === 'IN_PROGRESS') && (
+                          <Button 
+                            size="sm" 
+                            variant="danger" 
+                            onClick={() => openReassignConfirm(assignment.id)}
+                            className="text-xs"
+                          >
+                            Reassign
+                          </Button>
+                        )}
+                        
+                        <Button 
+                          size="sm" 
+                          variant="secondary" 
+                          onClick={() => openDeleteConfirm(assignment.id)}
+                          className="text-xs text-red-600 hover:text-red-700 hover:bg-red-50"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                          </svg>
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </CardBody>
+            <div className="p-4 border-t border-gray-200 dark:border-gray-700 flex justify-end">
+              <Button onClick={() => setShowDetailsModal(false)}>Close</Button>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* Assign Modal - Section-Based (Existing unchanged) */}
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
           <Card className="w-full max-w-lg">
@@ -324,9 +553,7 @@ export default function AssignmentsPage() {
                   {/* Listening Section */}
                   <div className="mb-4">
                     <div className="flex items-center gap-2 mb-2">
-                      <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400">
-                        LISTENING
-                      </span>
+                       <Badge variant="warning" size="sm">LISTENING</Badge>
                     </div>
                     <Select
                       options={[
@@ -345,9 +572,7 @@ export default function AssignmentsPage() {
                   {/* Reading Section */}
                   <div className="mb-4">
                     <div className="flex items-center gap-2 mb-2">
-                      <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400">
-                        READING
-                      </span>
+                       <Badge variant="info" size="sm">READING</Badge>
                     </div>
                     <Select
                       options={[
@@ -366,9 +591,7 @@ export default function AssignmentsPage() {
                   {/* Writing Section */}
                   <div className="mb-4">
                     <div className="flex items-center gap-2 mb-2">
-                      <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">
-                        WRITING
-                      </span>
+                       <Badge variant="success" size="sm">WRITING</Badge>
                     </div>
                     <Select
                       options={[
@@ -409,7 +632,6 @@ export default function AssignmentsPage() {
       )}
 
 
-      {/* Reassign Confirmation Modal */}
       <ConfirmationModal
         isOpen={showReassignConfirm}
         onClose={() => setShowReassignConfirm(false)}
@@ -419,6 +641,17 @@ export default function AssignmentsPage() {
         confirmText={reassignLoading ? "Reassigning..." : "Reassign Exam"}
         variant="danger"
         isLoading={reassignLoading}
+      />
+
+      <ConfirmationModal
+        isOpen={showDeleteConfirm}
+        onClose={() => setShowDeleteConfirm(false)}
+        onConfirm={handleDelete}
+        title="Delete Assignment"
+        message="Are you sure you want to delete this assignment? This action cannot be undone."
+        confirmText={deleteLoading ? "Deleting..." : "Delete Assignment"}
+        variant="danger"
+        isLoading={deleteLoading}
       />
     </div>
   );

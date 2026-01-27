@@ -8,6 +8,7 @@ import {
     ExamResult,
     ExamSection,
     LoginResponse,
+    Role,
     User
 } from '@/types';
 
@@ -78,10 +79,13 @@ class ApiClient {
   }
 
   // Users
-  async getUsers(skip?: number, take?: number): Promise<{ users: User[]; total: number }> {
+  async getUsers(skip?: number, take?: number, search?: string, role?: Role, centerId?: string): Promise<{ users: User[]; total: number }> {
     const params = new URLSearchParams();
     if (skip !== undefined) params.append('skip', skip.toString());
     if (take !== undefined) params.append('take', take.toString());
+    if (search) params.append('search', search);
+    if (role) params.append('role', role);
+    if (centerId) params.append('centerId', centerId);
     const query = params.toString() ? `?${params.toString()}` : '';
     return this.request<{ users: User[]; total: number }>(`/users${query}`);
   }
@@ -208,6 +212,12 @@ class ApiClient {
   async reassignAssignment(assignmentId: string): Promise<any> {
     return this.request(`/assignments/${assignmentId}/reassign`, {
       method: 'POST',
+    });
+  }
+
+  async deleteAssignment(assignmentId: string): Promise<any> {
+    return this.request(`/assignments/${assignmentId}`, {
+      method: 'DELETE',
     });
   }
 
