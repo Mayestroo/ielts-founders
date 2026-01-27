@@ -233,6 +233,12 @@ class ApiClient {
         activeAssignments: number;
         completedTests: number;
       };
+      growth: {
+        users: number;
+        sections: number;
+        assignments: number;
+        completedTests: number;
+      };
       activity: {
         type: 'success' | 'info' | 'warning' | 'default';
         action: string;

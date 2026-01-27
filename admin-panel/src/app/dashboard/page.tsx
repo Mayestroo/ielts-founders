@@ -32,6 +32,12 @@ export default function DashboardPage() {
       activeAssignments: number;
       completedTests: number;
     };
+    growth: {
+      users: number;
+      sections: number;
+      assignments: number;
+      completedTests: number;
+    };
     activity: {
       type: 'success' | 'info' | 'warning' | 'default';
       action: string;
@@ -55,32 +61,38 @@ export default function DashboardPage() {
     loadStats();
   }, []);
 
+  const formatGrowth = (val?: number) => {
+    if (val === undefined) return '-';
+    if (val === 0) return '0%';
+    return (val > 0 ? '+' : '') + val + '%';
+  };
+
   const stats = [
     {
       label: 'Total Users',
       value: data?.counts.totalUsers ?? '-',
-      change: '+12%', // Mock change for now or calculate if historical data exists
+      change: formatGrowth(data?.growth.users),
       icon: <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" /></svg>,
       color: 'from-blue-500 to-cyan-500',
     },
     {
       label: 'Exam Sections',
       value: data?.counts.examSections ?? '-',
-      change: '+8%',
+      change: formatGrowth(data?.growth.sections),
       icon: <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>,
       color: 'from-indigo-500 to-purple-500',
     },
     {
       label: 'Active Assignments',
       value: data?.counts.activeAssignments ?? '-',
-      change: '+23%',
+      change: formatGrowth(data?.growth.assignments),
       icon: <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" /></svg>,
       color: 'from-emerald-500 to-teal-500',
     },
     {
       label: 'Completed Tests',
       value: data?.counts.completedTests ?? '-',
-      change: '+15%',
+      change: formatGrowth(data?.growth.completedTests),
       icon: <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>,
       color: 'from-orange-500 to-amber-500',
     },

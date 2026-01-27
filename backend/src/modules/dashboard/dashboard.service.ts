@@ -19,32 +19,80 @@ export class DashboardService {
     
     const safeCenterFilter = isSuperAdmin ? {} : { centerId: centerId || 'non-existent-id' };
     
-    const [totalUsers, examSections, activeAssignments, completedTests] =
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+    const sixtyDaysAgo = new Date();
+    sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
+
+    const [
+      totalUsers, 
+      examSections, 
+      activeAssignments, 
+      completedTests,
+      newUsersLast30d,
+      newSectionsLast30d,
+      newResultsLast30d,
+      newAssignmentsLast30d,
+      newAssignmentsPrev30d
+    ] =
       await Promise.all([
-        this.prisma.user.count({
-          where: safeCenterFilter,
-        }),
-        this.prisma.examSection.count({
-          where: safeCenterFilter,
-        }),
+        this.prisma.user.count({ where: safeCenterFilter }),
+        this.prisma.examSection.count({ where: safeCenterFilter }),
         this.prisma.examAssignment.count({
           where: {
             status: { not: 'SUBMITTED' },
-            ...(isSuperAdmin
-              ? {}
-              : {
-                  student: { centerId: centerId || 'non-existent-id' },
-                }),
+            ...(isSuperAdmin ? {} : { student: { centerId: centerId || 'non-existent-id' } }),
           },
         }),
         this.prisma.examResult.count({
-          where: isSuperAdmin
-            ? {}
-            : {
-                student: { centerId: centerId || 'non-existent-id' },
-              },
+          where: isSuperAdmin ? {} : { student: { centerId: centerId || 'non-existent-id' } },
         }),
+        // Growth Metrics
+        this.prisma.user.count({
+          where: { ...safeCenterFilter, createdAt: { gte: thirtyDaysAgo } }
+        }),
+        this.prisma.examSection.count({
+          where: { ...safeCenterFilter, createdAt: { gte: thirtyDaysAgo } }
+        }),
+        this.prisma.examResult.count({
+          where: { 
+            ...(isSuperAdmin ? {} : { student: { centerId: centerId || 'non-existent-id' } }),
+            submittedAt: { gte: thirtyDaysAgo } 
+          }
+        }),
+        this.prisma.examAssignment.count({
+          where: {
+            ...(isSuperAdmin ? {} : { student: { centerId: centerId || 'non-existent-id' } }),
+            createdAt: { gte: thirtyDaysAgo }
+          }
+        }),
+        this.prisma.examAssignment.count({
+          where: {
+            ...(isSuperAdmin ? {} : { student: { centerId: centerId || 'non-existent-id' } }),
+            createdAt: { gte: sixtyDaysAgo, lt: thirtyDaysAgo }
+          }
+        })
       ]);
+
+      const calculateGrowth = (total: number, newInPeriod: number) => {
+        const prev = total - newInPeriod;
+        if (prev <= 0) return 100; // If previously 0, 100% growth
+        return Math.round((newInPeriod / prev) * 100);
+      };
+
+      const calculateTrend = (current: number, prev: number) => {
+        if (prev <= 0) return 100;
+        return Math.round(((current - prev) / prev) * 100);
+      };
+
+      const growth = {
+        users: calculateGrowth(totalUsers, newUsersLast30d),
+        sections: calculateGrowth(examSections, newSectionsLast30d),
+        // For active assignments, we compare inflow trend because 'active' is a snapshot
+        assignments: calculateTrend(newAssignmentsLast30d, newAssignmentsPrev30d),
+        completedTests: calculateGrowth(completedTests, newResultsLast30d),
+      };
 
     // Recent Activity
     const newUsers = await this.prisma.user.findMany({
@@ -119,6 +167,7 @@ export class DashboardService {
         activeAssignments,
         completedTests,
       },
+      growth,
       activity,
     };
   }
