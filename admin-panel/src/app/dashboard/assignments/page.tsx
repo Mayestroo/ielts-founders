@@ -83,6 +83,17 @@ export default function AssignmentsPage() {
     );
   }, [assignments, searchTerm, typeFilter]);
 
+  // Client-side pagination logic
+  const paginatedGroups = useMemo(() => {
+    const startIndex = (page - 1) * pageSize;
+    return groupedAssignments.slice(startIndex, startIndex + pageSize);
+  }, [groupedAssignments, page, pageSize]);
+
+  // Update total for pagination controls
+  useEffect(() => {
+    setTotal(groupedAssignments.length);
+  }, [groupedAssignments]);
+
   const handleReassign = async () => {
     if (!reassignAssignmentId) return;
     
@@ -149,14 +160,15 @@ export default function AssignmentsPage() {
   const loadData = async () => {
     setIsLoading(true);
     try {
-      const skip = (page - 1) * pageSize;
-      const [{ assignments, total }, { users: studentsData }, examsData] = await Promise.all([
-        api.getAssignments(skip, pageSize),
+      // Fetch larger batch to allow client-side grouping
+      // We ignore page/pageSize here to get "all" meaningful assignments for grouping
+      const [{ assignments }, { users: studentsData }, examsData] = await Promise.all([
+        api.getAssignments(0, 1000), 
         api.getUsers(0, 1000),
         api.getExamSections(),
       ]);
       setAssignments(assignments);
-      setTotal(total);
+      // setTotal is now derived from groupedAssignments length
       setStudents(studentsData.filter(u => u.role === 'STUDENT'));
       setExams(examsData);
     } catch (err) {
@@ -168,7 +180,7 @@ export default function AssignmentsPage() {
 
   useEffect(() => {
     loadData();
-  }, [page]);
+  }, []); // Remove page dependency as we create client-side pagination
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -290,6 +302,7 @@ export default function AssignmentsPage() {
       </Card>
 
       {/* Grouped Assignments Table */}
+
       <Card>
         <CardBody className="p-0">
           <div className="overflow-x-auto">
@@ -304,7 +317,7 @@ export default function AssignmentsPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-                {groupedAssignments.map((group) => {
+                {paginatedGroups.map((group) => {
                   const student = group.student;
                   const assignments = group.assignments;
                   const stats = {
@@ -365,7 +378,7 @@ export default function AssignmentsPage() {
                     </tr>
                   );
                 })}
-                {groupedAssignments.length === 0 && (
+                {paginatedGroups.length === 0 && (
                   <tr>
                     <td colSpan={5} className="px-6 py-12 text-center text-gray-500">
                       {searchTerm || typeFilter ? 'No assignments match your filters' : 'No assignments found'}
@@ -400,7 +413,8 @@ export default function AssignmentsPage() {
           <div className="hidden sm:flex sm:flex-1 sm:items-center sm:justify-between">
             <div>
               <p className="text-sm text-gray-700 dark:text-gray-300">
-                Showing entries for <span className="font-medium">{groupedAssignments.length}</span> students
+                Showing <span className="font-medium">{(page - 1) * pageSize + 1}</span> to <span className="font-medium">{Math.min(page * pageSize, total)}</span> of{' '}
+                <span className="font-medium">{total}</span> groups
               </p>
             </div>
             <div>

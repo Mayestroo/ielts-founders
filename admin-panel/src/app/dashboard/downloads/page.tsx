@@ -31,10 +31,8 @@ export default function DownloadsPage() {
   const loadData = async () => {
     setIsLoading(true);
     try {
-      // Fetch results based on page and pageSize.
-      const skip = (page - 1) * pageSize;
-      const { results, total } = await api.getResults(skip, pageSize);
-      setTotal(total);
+      // Fetch all results for client-side grouping
+      const { results } = await api.getResults(0, 1000);
       
       const groups: Record<string, StudentReportGroup> = {};
       
@@ -64,8 +62,9 @@ export default function DownloadsPage() {
 
   useEffect(() => {
     loadData();
-  }, [page]);
+  }, []); // Remove page dependency
 
+  /* filteredGroups is defined above */
   const filteredGroups = reportGroups.filter(group => {
     const student = group.student;
     return (
@@ -74,6 +73,14 @@ export default function DownloadsPage() {
       student.username.toLowerCase().includes(searchTerm.toLowerCase())
     );
   });
+
+  // Client-side pagination logic
+  const paginatedGroups = filteredGroups.slice((page - 1) * pageSize, page * pageSize);
+
+  // Update total for pagination controls
+  useEffect(() => {
+    setTotal(filteredGroups.length);
+  }, [filteredGroups]);
 
   const toggleSelect = (studentId: string) => {
     const next = new Set(selectedIds);
@@ -165,7 +172,7 @@ export default function DownloadsPage() {
                     type="text"
                     placeholder="Search student name or username..." 
                     value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
+                    onChange={(e) => { setSearchTerm(e.target.value); setPage(1); }}
                     className="w-full pl-10 pr-4 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
                   />
                 </div>
@@ -208,7 +215,7 @@ export default function DownloadsPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-                {filteredGroups.map((group) => {
+                {paginatedGroups.map((group) => {
                   const scores = [
                     group.results.listening?.bandScore || 0,
                     group.results.reading?.bandScore || 0,
@@ -313,12 +320,68 @@ export default function DownloadsPage() {
 
       {/* Pagination */}
       {total > pageSize && (
-        <div className="flex items-center justify-between bg-white dark:bg-gray-800 px-6 py-4 rounded-xl border border-gray-100 mt-6">
-            <p className="text-sm text-gray-500 font-medium">Showing grouped entries for <span className="text-gray-900 font-bold">{filteredGroups.length}</span> students</p>
-            <div className="flex gap-2">
-              <Button size="sm" variant="secondary" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}>Prev</Button>
-              <Button size="sm" variant="secondary" onClick={() => setPage(p => p + 1)} disabled={page * pageSize >= total}>Next</Button>
+        <div className="flex items-center justify-between bg-white dark:bg-gray-800 px-4 py-3 rounded-lg border border-gray-200 dark:border-gray-700">
+          <div className="flex flex-1 justify-between sm:hidden">
+            <Button
+              onClick={() => setPage(p => Math.max(1, p - 1))}
+              disabled={page === 1}
+              variant="secondary"
+            >
+              Previous
+            </Button>
+            <Button
+              onClick={() => setPage(p => p + 1)}
+              disabled={page * pageSize >= total}
+              variant="secondary"
+            >
+              Next
+            </Button>
+          </div>
+          <div className="hidden sm:flex sm:flex-1 sm:items-center sm:justify-between">
+            <div>
+              <p className="text-sm text-gray-700 dark:text-gray-300">
+                Showing <span className="font-medium">{(page - 1) * pageSize + 1}</span> to <span className="font-medium">{Math.min(page * pageSize, total)}</span> of{' '}
+                <span className="font-medium">{total}</span> groups
+              </p>
             </div>
+            <div>
+              <nav className="isolate inline-flex -space-x-px rounded-md shadow-xs" aria-label="Pagination">
+                <button
+                  onClick={() => setPage(p => Math.max(1, p - 1))}
+                  disabled={page === 1}
+                  className="relative inline-flex items-center rounded-l-md px-2 py-2 text-gray-400 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus:z-20 focus:outline-offset-0 disabled:opacity-50"
+                >
+                  <span className="sr-only">Previous</span>
+                  <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                    <path fillRule="evenodd" d="M12.79 5.23a.75.75 0 01-.02 1.06L8.832 10l3.938 3.71a.75.75 0 11-1.04 1.08l-4.5-4.25a.75.75 0 010-1.08l4.5-4.25a.75.75 0 011.06.02z" clipRule="evenodd" />
+                  </svg>
+                </button>
+                {[...Array(Math.ceil(total / pageSize))].map((_, i) => (
+                  <button
+                    key={i}
+                    onClick={() => setPage(i + 1)}
+                    className={`relative inline-flex items-center px-4 py-2 text-sm font-semibold ring-1 ring-inset ring-gray-300 focus:z-20 focus:outline-offset-0 ${
+                      page === i + 1
+                        ? 'z-10 bg-indigo-600 text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600'
+                        : 'text-gray-900 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
+                    }`}
+                  >
+                    {i + 1}
+                  </button>
+                ))}
+                <button
+                  onClick={() => setPage(p => p + 1)}
+                  disabled={page * pageSize >= total}
+                  className="relative inline-flex items-center rounded-r-md px-2 py-2 text-gray-400 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus:z-20 focus:outline-offset-0 disabled:opacity-50"
+                >
+                  <span className="sr-only">Next</span>
+                  <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                    <path fillRule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clipRule="evenodd" />
+                  </svg>
+                </button>
+              </nav>
+            </div>
+          </div>
         </div>
       )}
     </div>
