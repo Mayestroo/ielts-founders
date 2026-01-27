@@ -672,7 +672,7 @@ export default function ResultsPage() {
       {/* Student Specific Results Modal - MATCHING REFERENCE IMAGE */}
       {showSelectedStudentModal && selectedGroup && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <Card className="w-full max-w-5xl max-h-[90vh] flex flex-col">
+          <Card className="w-full max-w-5xl max-h-[90vh] h-auto flex flex-col">
             <CardHeader className="flex flex-row items-center justify-between">
               <div>
                 <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Exam Results</h2>
@@ -680,7 +680,7 @@ export default function ResultsPage() {
               </div>
               <button onClick={() => setShowSelectedStudentModal(false)} className="text-gray-400 hover:text-gray-500"><svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg></button>
             </CardHeader>
-            <CardBody className="p-0 overflow-y-auto flex-1 min-h-0">
+            <CardBody className="p-0 overflow-y-auto shrink min-h-0">
               <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead className="bg-[#F9FAFB] dark:bg-gray-800 border-b border-gray-100">
