@@ -1,24 +1,24 @@
 "use client";
 
 import {
-    BottomNav,
-    ExamHeader,
-    PartBanner,
-    ResizablePanel,
-    ReviewModal,
-    SettingsModal,
+  BottomNav,
+  ExamHeader,
+  PartBanner,
+  ResizablePanel,
+  ReviewModal,
+  SettingsModal,
 } from "@/components/exam";
 import { HighlightableText } from "@/components/exam/HighlightableText";
 import {
-    FillBlankQuestion,
-    FlowChartGroup,
-    MatchingGroup,
-    MCQQuestion,
-    ShortAnswerQuestion,
-    SummaryGroup,
-    TableGroup,
-    TrueFalseQuestion,
-    WritingTask,
+  FillBlankQuestion,
+  FlowChartGroup,
+  MatchingGroup,
+  MCQQuestion,
+  ShortAnswerQuestion,
+  SummaryGroup,
+  TableGroup,
+  TrueFalseQuestion,
+  WritingTask,
 } from "@/components/questions";
 import { ConfirmationModal } from "@/components/ui/ConfirmationModal";
 import { useAuth } from "@/contexts/AuthContext";
@@ -573,16 +573,34 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
 
       let groupType = `${q.questionRange}-${JSON.stringify(q.instruction)}`;
 
-      if (isMatching) groupType = "SPECIAL_MATCHING";
-      else if (isFlowChart) groupType = "SPECIAL_FLOWCHART";
-      else if (isTable) groupType = "SPECIAL_TABLE";
-      else if (isSummary) groupType = "SPECIAL_SUMMARY";
-      // If standard question (not special) and has no instruction/range, try to stick to previous group
-      else if (
+      if (isMatching || isFlowChart || isTable || isSummary) {
+        const typePrefix = isMatching
+          ? "MATCHING"
+          : isFlowChart
+          ? "FLOWCHART"
+          : isTable
+          ? "TABLE"
+          : "SUMMARY";
+        if (q.questionRange || q.instruction) {
+          groupType = `${typePrefix}-${q.questionRange}-${JSON.stringify(
+            q.instruction
+          )}`;
+        } else if (
+          currentGroup &&
+          currentGroup.type.startsWith(`${typePrefix}-`)
+        ) {
+          groupType = currentGroup.type;
+        } else {
+          groupType = `${typePrefix}-default`;
+        }
+      } else if (
         !q.instruction &&
         !q.questionRange &&
         currentGroup &&
-        !currentGroup.type.startsWith("SPECIAL_")
+        !currentGroup.type.startsWith("MATCHING-") &&
+        !currentGroup.type.startsWith("FLOWCHART-") &&
+        !currentGroup.type.startsWith("TABLE-") &&
+        !currentGroup.type.startsWith("SUMMARY-")
       ) {
         groupType = currentGroup.type;
       }
@@ -600,10 +618,10 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
 
     return groups.map((group, groupIdx) => {
       const firstQ = group.questions[0];
-      const isMatching = group.type === "SPECIAL_MATCHING";
-      const isFlowChart = group.type === "SPECIAL_FLOWCHART";
-      const isTable = group.type === "SPECIAL_TABLE";
-      const isSummary = group.type === "SPECIAL_SUMMARY";
+      const isMatching = group.type.startsWith("MATCHING-");
+      const isFlowChart = group.type.startsWith("FLOWCHART-");
+      const isTable = group.type.startsWith("TABLE-");
+      const isSummary = group.type.startsWith("SUMMARY-");
       const showHeader = isMatching || isFlowChart || isTable || isSummary;
 
       return (
