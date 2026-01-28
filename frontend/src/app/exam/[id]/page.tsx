@@ -251,18 +251,9 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
   const handleSubmit = useCallback(async () => {
     if (!assignment) return;
 
-    // For Reading and Listening, show the review modal first
-    if (
-      assignment.section?.type === "READING" ||
-      assignment.section?.type === "LISTENING"
-    ) {
-      setIsReviewModalOpen(true);
-      return;
-    }
-
-    // For Writing or other types, submit directly
-    handleFinalSubmit();
-  }, [assignment, handleFinalSubmit]);
+    // Show the review modal for all sections before final submission
+    setIsReviewModalOpen(true);
+  }, [assignment]);
 
   const handleTimerExpire = useCallback(() => {
     handleFinalSubmit();
@@ -709,7 +700,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
             />
           )}
 
-          {group.type === "SPECIAL_FLOWCHART" && (
+          {isFlowChart && (
             <FlowChartGroup
               questions={group.questions}
               answers={answers}
@@ -720,7 +711,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
             />
           )}
 
-          {group.type === "SPECIAL_TABLE" && (
+          {isTable && (
             <TableGroup
               questions={group.questions}
               answers={answers}
@@ -733,8 +724,8 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
 
           {!isMatching &&
             !isSummary &&
-            group.type !== "SPECIAL_FLOWCHART" &&
-            group.type !== "SPECIAL_TABLE" && (
+            !isFlowChart &&
+            !isTable && (
               <div className="space-y-4">
                 {group.questions.map((q) => {
                   const indexInFiltered = groupQuestions.findIndex(
@@ -764,7 +755,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
       <div className="h-screen overflow-hidden bg-white flex flex-col exam-content">
         <ExamHeader
           title={section.title}
-          remainingSeconds={assignment.remainingTime || section.duration * 60}
+          remainingSeconds={assignment.remainingTime ?? section.duration * 60}
           sectionType={section.type}
           onTimerExpire={handleTimerExpire}
           autoStart={!showIntroVideo}
@@ -946,7 +937,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
         <div className="h-16 shrink-0">
           <ExamHeader
             title={section.title}
-            remainingSeconds={assignment.remainingTime || section.duration * 60}
+            remainingSeconds={assignment.remainingTime ?? section.duration * 60}
             sectionType="WRITING"
             onTimerExpire={handleTimerExpire}
             autoStart={!showIntroVideo}
@@ -1091,7 +1082,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
       <div className="h-16 shrink-0">
         <ExamHeader
           title={section.title}
-          remainingSeconds={assignment.remainingTime || section.duration * 60}
+          remainingSeconds={assignment.remainingTime ?? section.duration * 60}
           sectionType="LISTENING"
           isAudioPlaying={isAudioPlaying}
           autoStart={!showIntroVideo && !showPlayOverlay}
