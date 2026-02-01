@@ -24,7 +24,7 @@ global.IntersectionObserver = class IntersectionObserver {
     return [];
   }
   unobserve() {}
-} as any;
+};
 
 // Mock ResizeObserver
 global.ResizeObserver = class ResizeObserver {
@@ -32,30 +32,30 @@ global.ResizeObserver = class ResizeObserver {
   disconnect() {}
   observe() {}
   unobserve() {}
-} as any;
+};
 
 // Mock scrollTo
 window.scrollTo = jest.fn();
 
 // Mock RequestAnimationFrame
-global.requestAnimationFrame = (callback: FrameRequestCallback) => {
-  return setTimeout(() => callback(performance.now()), 0) as unknown as number;
+global.requestAnimationFrame = (callback) => {
+  return setTimeout(() => callback(performance.now()), 0);
 };
 
-global.cancelAnimationFrame = (id: number) => {
+global.cancelAnimationFrame = (id) => {
   clearTimeout(id);
 };
 
 // Mock sessionStorage
 const sessionStorageMock = (() => {
-  let store: Record<string, string> = {};
+  let store = {};
 
   return {
-    getItem: (key: string) => store[key] || null,
-    setItem: (key: string, value: string) => {
+    getItem: (key) => store[key] || null,
+    setItem: (key, value) => {
       store[key] = value.toString();
     },
-    removeItem: (key: string) => {
+    removeItem: (key) => {
       delete store[key];
     },
     clear: () => {
@@ -70,14 +70,14 @@ Object.defineProperty(window, 'sessionStorage', {
 
 // Mock localStorage
 const localStorageMock = (() => {
-  let store: Record<string, string> = {};
+  let store = {};
 
   return {
-    getItem: (key: string) => store[key] || null,
-    setItem: (key: string, value: string) => {
+    getItem: (key) => store[key] || null,
+    setItem: (key, value) => {
       store[key] = value.toString();
     },
-    removeItem: (key: string) => {
+    removeItem: (key) => {
       delete store[key];
     },
     clear: () => {
