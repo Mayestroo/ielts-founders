@@ -1,4 +1,5 @@
 export * from './exams.controller';
 export * from './exams.module';
-export * from './exams.service';
-
+export * from '../exam-content';
+export * from '../exam-runtime';
+export * from '../exam-evaluation';

@@ -1,6 +1,6 @@
 'use client';
 
-import { Badge, Button, Card, CardBody, CardHeader, Modal, Select } from '@/components/ui';
+import { Badge, Button, Card, CardBody, CardHeader, Modal, Select, useToast } from '@/components/ui';
 import { api } from '@/lib/api';
 import { generateWritingDOCX } from '@/lib/generateDOCX';
 import { ExamResult, User } from '@/types';
@@ -36,6 +36,7 @@ export default function ResultsPage() {
     isOpen: false,
     bandScore: 0,
   });
+  const { error: showError } = useToast();
 
   // UX Grouping View state
   const [selectedGroup, setSelectedGroup] = useState<{ student: User; results: ExamResult[]; latestDate: string } | null>(null);
@@ -88,10 +89,19 @@ export default function ResultsPage() {
     return groupedResults.slice(startIndex, startIndex + pageSize);
   }, [groupedResults, page, pageSize]);
 
+  const totalGroups = useMemo(() => {
+    return new Set(results.map((result) => result.studentId)).size;
+  }, [results]);
+
+  const hasFilters = Boolean(searchTerm.trim() || typeFilter);
+
   // Update total for pagination controls
   useEffect(() => {
     setTotal(groupedResults.length);
   }, [groupedResults]);
+  useEffect(() => {
+    setPage(1);
+  }, [searchTerm, typeFilter]);
   const loadResults = async () => {
     setIsLoading(true);
     try {
@@ -101,6 +111,7 @@ export default function ResultsPage() {
       // setTotal(total); // Total now derived from grouped results
     } catch (err) {
       console.error('Failed to load results:', err);
+      showError('Failed to load results');
     } finally {
       setIsLoading(false);
     }
@@ -125,6 +136,7 @@ export default function ResultsPage() {
       }
     } catch (err) {
       console.error('Failed to load result details:', err);
+      showError('Failed to load result details');
     } finally {
       setDetailLoading(false);
     }
@@ -141,8 +153,9 @@ export default function ResultsPage() {
     }
   };
 
-  const handleEvaluateWithAI = async () => {
-    if (!selectedResult) return;
+  const handleEvaluateWithAI = async (resultToEvaluate?: ExamResult) => {
+    const target = resultToEvaluate ?? selectedResult;
+    if (!target) return;
     
     setAiLoading(true);
     setAiError(null);
@@ -157,25 +170,33 @@ export default function ResultsPage() {
     }, 1000);
 
     try {
-      const response = await api.evaluateWriting(selectedResult.id);
+      const response = await api.evaluateWriting(target.id);
       clearInterval(progressInterval);
       setAiProgress(100);
       setAiStatus('Evaluation complete!');
-      setAiEvaluation(response.aiEvaluation || response.feedback);
       
-      setSelectedResult(prev => prev ? {
-        ...prev,
+      const newEval = response.aiEvaluation || response.feedback;
+      setAiEvaluation(newEval);
+      
+      const updatedResult = {
+        ...target,
         score: response.score ?? response.bandScore,
         totalScore: response.totalScore ?? 9,
         bandScore: response.bandScore,
-        feedback: response.aiEvaluation || response.feedback
-      } : null);
+        feedback: newEval,
+        writingSubmission: response.writingSubmission || target.writingSubmission
+      };
+
+      if (selectedResult && selectedResult.id === target.id) {
+        setSelectedResult(updatedResult);
+      }
       
       setTimeout(() => loadResults(), 500);
       setSuccessModal({ isOpen: true, bandScore: response.bandScore });
     } catch (err) {
       clearInterval(progressInterval);
       setAiError(err instanceof Error ? err.message : 'Failed to evaluate with AI');
+      showError('AI evaluation failed');
     } finally {
       setAiLoading(false);
     }
@@ -196,22 +217,35 @@ export default function ResultsPage() {
       });
     } catch (err) {
       console.error('Failed to generate DOCX:', err);
-      alert('Failed to generate DOCX file.');
+      showError('Failed to generate DOCX file');
     } finally {
       setDocxLoading(false);
     }
   };
 
   const isAnswerCorrect = (studentAnswer: any, correctAnswer: any, type: string) => {
-    if (!studentAnswer || !correctAnswer) return false;
+    if (studentAnswer === undefined || studentAnswer === null || studentAnswer === '-') return false;
+    
+    // MCQ_MULTIPLE set-based comparison
     if (type === 'MCQ_MULTIPLE' && Array.isArray(studentAnswer) && Array.isArray(correctAnswer)) {
-       return studentAnswer.length === correctAnswer.length && studentAnswer.every((a: any) => correctAnswer.includes(a));
+      if (studentAnswer.length !== correctAnswer.length) return false;
+      const sSet = new Set(studentAnswer.map(a => String(a).toLowerCase().trim()));
+      const cSet = new Set(correctAnswer.map(a => String(a).toLowerCase().trim()));
+      if (sSet.size !== cSet.size) return false;
+      for (let a of sSet) if (!cSet.has(a)) return false;
+      return true;
     }
-    return JSON.stringify(studentAnswer) === JSON.stringify(correctAnswer) || String(studentAnswer).toLowerCase().trim() === String(correctAnswer).toLowerCase().trim();
+
+    // Single answer comparison
+    const s = String(studentAnswer).toLowerCase().trim();
+    const c = String(correctAnswer).toLowerCase().trim();
+    return s === c;
   };
 
-  const formatAnswer = (answer: any, type: string) => {
-    if (answer === undefined || answer === null || answer === '-') return '-';
+  const formatAnswer = (answer: any, type: string, isCorrectAnswer = false) => {
+    if (answer === undefined || answer === null || answer === '-' || answer === '') {
+      return isCorrectAnswer ? '(Not configured)' : '-';
+    }
     if (type === 'MCQ_MULTIPLE' && Array.isArray(answer)) return answer.map((a: any) => String(a).toUpperCase()).join(', ');
     if (type === 'MCQ_SINGLE' || type === 'TRUE_FALSE_NOT_GIVEN' || type === 'YES_NO_NOT_GIVEN') return String(answer).toUpperCase();
     if (typeof answer === 'object') return Object.entries(answer).map(([k, v]) => `${k}: ${v}`).join(', ');
@@ -228,6 +262,26 @@ export default function ResultsPage() {
     READING: 'info',
     LISTENING: 'warning',
     WRITING: 'success',
+  };
+
+  const getWritingStatusBadge = (result: ExamResult) => {
+    const submission = result.writingSubmission;
+    if (!submission) return null;
+
+    switch (submission.status) {
+      case 'QUEUED':
+        return <Badge variant="info" size="sm" className="animate-pulse">Queued</Badge>;
+      case 'PROCESSING':
+        return <Badge variant="warning" size="sm" className="animate-pulse">Evaluating...</Badge>;
+      case 'COMPLETED':
+        return <Badge variant="success" size="sm">Graded</Badge>;
+      case 'FAILED':
+        return <Badge variant="danger" size="sm">Failed</Badge>;
+      case 'MANUAL_REVIEW':
+        return <Badge variant="info" size="sm">Manual Review</Badge>;
+      default:
+        return null;
+    }
   };
 
   const renderQuestions = () => {
@@ -250,10 +304,10 @@ export default function ResultsPage() {
               onClick={handleDownloadWritingDOCX} 
               disabled={docxLoading} 
               size="sm" 
-              className="bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 shadow-sm hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200"
+              className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-sm hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-200"
             >
               {docxLoading ? (
-                <div className="animate-spin rounded-full h-4 w-4 border-2 border-gray-500 border-t-transparent mr-2" />
+                <div className="animate-spin rounded-full h-4 w-4 border-2 border-slate-500 border-t-transparent mr-2" />
               ) : (
                 <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
               )}
@@ -262,13 +316,13 @@ export default function ResultsPage() {
           </div>
 
           {writingTasks.map(task => (
-            <div key={task.id} className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden shadow-sm">
-              <div className="bg-gray-50 dark:bg-gray-700/50 px-4 py-2 border-b border-gray-200 dark:border-gray-600 flex justify-between items-center">
-                <span className="text-sm font-semibold uppercase tracking-wider text-gray-500">{task.id}</span>
-                <span className="text-xs text-gray-400">{task.response.split(/\s+/).filter(Boolean).length} words</span>
+            <div key={task.id} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm">
+              <div className="bg-slate-50 dark:bg-slate-800/60 px-4 py-2 border-b border-slate-200 dark:border-slate-700 flex justify-between items-center">
+                <span className="text-sm font-semibold uppercase tracking-wider text-slate-500">{task.id}</span>
+                <span className="text-xs text-slate-400">{task.response.split(/\s+/).filter(Boolean).length} words</span>
               </div>
               <div className="p-6">
-                <p className="whitespace-pre-wrap text-gray-800 dark:text-gray-200 leading-relaxed text-[17px]">{task.response}</p>
+                <p className="whitespace-pre-wrap text-slate-800 dark:text-slate-200 leading-relaxed text-[17px]">{task.response}</p>
               </div>
             </div>
           ))}
@@ -276,43 +330,56 @@ export default function ResultsPage() {
           {/* AI Evaluation Section */}
           <div className="border-t border-gray-200 dark:border-gray-700 pt-6">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">AI Evaluation</h3>
+              <h3 className="text-lg font-semibold text-slate-900 dark:text-white">AI Evaluation</h3>
               
             {selectedResult?.section?.type === 'WRITING' && (
-                <Button 
-                  onClick={handleEvaluateWithAI} 
-                  disabled={aiLoading}
-                  className="bg-indigo-600 hover:bg-indigo-700 text-white"
-                >
-                  {aiLoading ? (
-                    <>
-                      <div className="h-4 w-4 border-2 border-white/30 border-t-white rounded-full animate-spin mr-2" />
-                      Evaluating...
-                    </>
-                  ) : (
-                    <>
-                      <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                      </svg>
-                      {aiEvaluation ? 'Re-evaluate with AI' : 'Evaluate with AI'}
-                    </>
+                <div className="flex gap-2">
+                  {selectedResult.writingSubmission?.status === 'FAILED' && (
+                    <Button 
+                      onClick={() => handleEvaluateWithAI(selectedResult)} 
+                      disabled={aiLoading}
+                      variant="secondary"
+                      size="sm"
+                    >
+                      Retry Evaluation
+                    </Button>
                   )}
-                </Button>
+                  <Button 
+                    onClick={() => handleEvaluateWithAI(selectedResult)} 
+                    disabled={aiLoading}
+                    variant="primary"
+                    size="sm"
+                  >
+                    {aiLoading ? (
+                      <>
+                        <div className="h-3 w-3 border-2 border-white/30 border-t-white rounded-full animate-spin mr-2" />
+                        Evaluating...
+                      </>
+                    ) : (
+                      <>
+                        <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                        </svg>
+                        {aiEvaluation ? 'Re-evaluate' : 'Evaluate with AI'}
+                      </>
+                    )}
+                  </Button>
+                </div>
               )}
             </div>
 
             {aiLoading && (
               <div className="mb-6 space-y-3 animate-in fade-in duration-300">
                 <div className="flex justify-between items-center text-sm">
-                  <span className="text-indigo-600 dark:text-indigo-400 font-medium flex items-center">
-                    <div className="h-4 w-4 border-2 border-indigo-600/30 border-t-indigo-600 rounded-full animate-spin mr-2" />
+                  <span className="text-slate-600 dark:text-slate-300 font-medium flex items-center">
+                    <div className="h-4 w-4 border-2 border-slate-300 border-t-slate-600 rounded-full animate-spin mr-2" />
                     {aiStatus}
                   </span>
-                  <span className="text-gray-500 font-bold">{aiProgress}%</span>
+                  <span className="text-slate-500 font-bold">{aiProgress}%</span>
                 </div>
-                <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2 overflow-hidden">
+                <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-2 overflow-hidden">
                   <div 
-                    className="bg-indigo-600 h-full transition-all duration-500 ease-out shadow-[0_0_10px_rgba(79,70,229,0.5)]" 
+                    className="bg-slate-900 h-full transition-all duration-500 ease-out" 
                     style={{ width: `${aiProgress}%` }} 
                   />
                 </div>
@@ -331,13 +398,13 @@ export default function ResultsPage() {
                 {(aiEvaluation as any).tasks ? (
                   <div className="space-y-8">
                      {/* Overall Band Score Card */}
-                    <div className="bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800 rounded-xl p-6">
+                    <div className="bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700 rounded-xl p-6">
                       <div className="flex items-center justify-between mb-4">
                         <div>
-                          <h4 className="text-lg font-bold text-indigo-900 dark:text-indigo-100">Overall Band Score</h4>
-                          <p className="text-indigo-700 dark:text-indigo-300 text-sm">Weighted Average (Task 2 counts double)</p>
+                          <h4 className="text-lg font-bold text-slate-900 dark:text-slate-100">Overall Band Score</h4>
+                          <p className="text-slate-600 dark:text-slate-300 text-sm">Weighted Average (Task 2 counts double)</p>
                         </div>
-                        <div className="h-16 w-16 rounded-full bg-indigo-600 flex items-center justify-center text-white text-2xl font-bold shadow-lg shadow-indigo-600/20">
+                        <div className="h-16 w-16 rounded-full bg-slate-900 flex items-center justify-center text-white text-2xl font-bold shadow-sm">
                           {aiEvaluation.bandScore}
                         </div>
                       </div>
@@ -345,13 +412,13 @@ export default function ResultsPage() {
 
                     {/* Task Tabs/Sections */}
                     {Object.entries((aiEvaluation as any).tasks).map(([taskId, evalData]: [string, any]) => (
-                      <div key={taskId} className="border-t border-gray-200 dark:border-gray-700 pt-6">
-                         <h4 className="text-xl font-bold text-gray-900 dark:text-white mb-4">{taskId} Evaluation</h4>
+                      <div key={taskId} className="border-t border-slate-200 dark:border-slate-700 pt-6">
+                         <h4 className="text-xl font-bold text-slate-900 dark:text-white mb-4">{taskId} Evaluation</h4>
                          
                          {/* Individual Task Feedback */}
                          <div className="space-y-4">
-                            <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-4">
-                               <p className="text-gray-700 dark:text-gray-300 italic border-l-4 border-indigo-300 pl-4 py-1">
+                            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl p-4">
+                               <p className="text-slate-700 dark:text-slate-300 italic border-l-4 border-slate-300 pl-4 py-1">
                                  "{evalData.overallFeedback}"
                                </p>
                             </div>
@@ -363,20 +430,20 @@ export default function ResultsPage() {
                                  { label: 'Lexical Resource', data: evalData.lexicalResource },
                                  { label: 'Grammar', data: evalData.grammaticalRangeAndAccuracy },
                                ].map((criterion) => (
-                                 <div key={criterion.label} className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-4 hover:shadow-md transition-shadow">
-                                   <div className="flex justify-between items-center mb-2">
-                                     <h5 className="font-semibold text-gray-900 dark:text-white">{criterion.label}</h5>
-                                     <Badge variant={
-                                       criterion.data.score >= 7 ? 'success' : 
-                                       criterion.data.score >= 6 ? 'info' : 
-                                       'warning'
-                                     } size="sm">
-                                       Band {criterion.data.score}
-                                     </Badge>
-                                   </div>
-                                   <p className="text-sm text-gray-600 dark:text-gray-400">{criterion.data.feedback}</p>
-                                 </div>
-                               ))}
+                                 <div key={criterion.label} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl p-4 hover:shadow-md transition-shadow">
+                                    <div className="flex justify-between items-center mb-2">
+                                      <h5 className="font-semibold text-slate-900 dark:text-white">{criterion.label}</h5>
+                                      <Badge variant={
+                                        criterion.data.score >= 7 ? 'success' : 
+                                        criterion.data.score >= 6 ? 'info' : 
+                                        'warning'
+                                      } size="sm">
+                                        Band {criterion.data.score}
+                                      </Badge>
+                                    </div>
+                                    <p className="text-sm text-slate-600 dark:text-slate-400">{criterion.data.feedback}</p>
+                                  </div>
+                                ))}
                             </div>
                             
                             {/* Strengths & Improvements */}
@@ -410,17 +477,17 @@ export default function ResultsPage() {
                   </div>
                 ) : (
                   <>
-                  <div className="bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800 rounded-xl p-6">
+                  <div className="bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700 rounded-xl p-6">
                     <div className="flex items-center justify-between mb-4">
                       <div>
-                        <h4 className="text-lg font-bold text-indigo-900 dark:text-indigo-100">Estimated Band Score</h4>
-                        <p className="text-indigo-700 dark:text-indigo-300 text-sm">Based on official IELTS criteria</p>
+                        <h4 className="text-lg font-bold text-slate-900 dark:text-slate-100">Estimated Band Score</h4>
+                        <p className="text-slate-600 dark:text-slate-300 text-sm">Based on official IELTS criteria</p>
                       </div>
-                      <div className="h-16 w-16 rounded-full bg-indigo-600 flex items-center justify-center text-white text-2xl font-bold shadow-lg shadow-indigo-600/20">
+                      <div className="h-16 w-16 rounded-full bg-slate-900 flex items-center justify-center text-white text-2xl font-bold shadow-sm">
                         {aiEvaluation.bandScore}
                       </div>
                     </div>
-                    <p className="text-gray-700 dark:text-gray-300 italic border-l-4 border-indigo-300 pl-4 py-1">
+                    <p className="text-slate-700 dark:text-slate-300 italic border-l-4 border-slate-300 pl-4 py-1">
                       "{aiEvaluation.overallFeedback}"
                     </p>
                   </div>
@@ -432,9 +499,9 @@ export default function ResultsPage() {
                       { label: 'Lexical Resource', data: aiEvaluation.lexicalResource },
                       { label: 'Grammar', data: aiEvaluation.grammaticalRangeAndAccuracy },
                     ].map((criterion) => (
-                      <div key={criterion.label} className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-4 hover:shadow-md transition-shadow">
+                      <div key={criterion.label} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl p-4 hover:shadow-md transition-shadow">
                         <div className="flex justify-between items-center mb-2">
-                          <h5 className="font-semibold text-gray-900 dark:text-white">{criterion.label}</h5>
+                          <h5 className="font-semibold text-slate-900 dark:text-white">{criterion.label}</h5>
                           <Badge variant={
                             criterion.data.score >= 7 ? 'success' : 
                             criterion.data.score >= 6 ? 'info' : 
@@ -443,7 +510,7 @@ export default function ResultsPage() {
                             Band {criterion.data.score}
                           </Badge>
                         </div>
-                        <p className="text-sm text-gray-600 dark:text-gray-400">{criterion.data.feedback}</p>
+                        <p className="text-sm text-slate-600 dark:text-slate-400">{criterion.data.feedback}</p>
                       </div>
                     ))}
                   </div>
@@ -498,38 +565,90 @@ export default function ResultsPage() {
 
     (selectedResult.section.questions as any[]).forEach((question) => {
       const studentAnswer = selectedResult.answers?.[question.id];
-      if (question.type === 'MCQ_MULTIPLE' && Array.isArray(question.correctAnswer)) {
-        (question.correctAnswer as string[]).forEach((ca, i) => {
+      const points = question.points || 1;
+      
+      // Support both correctAnswer (singular) and correctAnswers (plural) field names
+      const correctAnswer = question.correctAnswer ?? question.correctAnswers;
+      
+      // Only split if we have multiple points AND multiple correct answers to map them to
+      const shouldSplit = points > 1 && (
+        (question.type === 'MCQ_MULTIPLE' && Array.isArray(correctAnswer)) ||
+        (['MATCHING','PLAN_MAP_LABELING','DIAGRAM_LABELING'].includes(question.type) && typeof correctAnswer === 'object' && !Array.isArray(correctAnswer))
+      );
+
+      if (shouldSplit) {
+        const studentAnswers = Array.isArray(studentAnswer) ? studentAnswer : (typeof studentAnswer === 'object' ? Object.values(studentAnswer) : []);
+        const correctAnswersArr = Array.isArray(correctAnswer) ? correctAnswer : Object.values(correctAnswer);
+        
+        correctAnswersArr.forEach((ca: any, i: number) => {
           questionCounter++;
-          const sa = Array.isArray(studentAnswer) ? studentAnswer[i] : undefined;
-          const correct = isAnswerCorrect(sa, ca, 'MCQ_SINGLE');
+          // For split questions, we mark as correct if the student's OVERALL set for this question contains this correct answer
+          // or if it's a direct index match for objects (Matching)
+          let isPartCorrect = false;
+          let displayStudentAnswer: string;
+          
+          if (Array.isArray(correctAnswer)) {
+             isPartCorrect = studentAnswers.some(sa => String(sa).toLowerCase().trim() === String(ca).toLowerCase().trim());
+             // Just show the student's selections
+             displayStudentAnswer = studentAnswers.length > 0 
+               ? studentAnswers.map((a: any) => String(a).toUpperCase()).join(', ')
+               : '-';
+          } else {
+             // For Matching, check by specific sub-key if possible, or fallback to index
+             const subId = Object.keys(correctAnswer)[i];
+             const subAnswer = selectedResult.answers?.[question.id]?.[subId];
+             isPartCorrect = String(subAnswer).toLowerCase().trim() === String(ca).toLowerCase().trim();
+             displayStudentAnswer = formatAnswer(subAnswer, 'MCQ_SINGLE');
+          }
+          
           items.push(
-            <div key={`${question.id}-${i}`} className={`p-4 rounded-xl border ${correct ? 'border-green-100 bg-green-50/30' : 'border-red-100 bg-red-50/30'}`}>
+            <div key={`${question.id}-${i}`} className={`p-4 rounded-xl border ${isPartCorrect ? 'border-green-100 bg-green-50/30' : 'border-red-100 bg-red-50/30'}`}>
               <div className="flex justify-between mb-2">
                 <span className="font-medium text-gray-900">Q{questionCounter}. {question.questionText}</span>
-                <Badge variant={correct ? 'success' : 'danger'} size="sm">{correct ? 'Correct' : 'Incorrect'}</Badge>
+                <Badge variant={isPartCorrect ? 'success' : 'danger'} size="sm">{isPartCorrect ? 'Correct' : 'Incorrect'}</Badge>
               </div>
               <div className="grid grid-cols-2 gap-4 text-sm mt-3">
-                 <div><p className="text-gray-500">Student:</p><p className="font-bold">{formatAnswer(sa, 'MCQ_SINGLE')}</p></div>
-                 <div><p className="text-gray-500">Correct:</p><p className="font-bold text-gray-700">{formatAnswer(ca, 'MCQ_SINGLE')}</p></div>
+                 <div>
+                    <p className="text-gray-500">Student:</p>
+                    <p className={`font-bold ${isPartCorrect ? 'text-green-700' : 'text-red-700'}`}>
+                      {Array.isArray(correctAnswer) ? displayStudentAnswer : displayStudentAnswer}
+                    </p>
+                 </div>
+                 <div>
+                    <p className="text-gray-500">Answer:</p>
+                    <p className={`font-bold text-gray-700`}>
+                      {Array.isArray(correctAnswer) ? String(ca).toUpperCase() : formatAnswer(ca, 'MCQ_SINGLE', true)}
+                    </p>
+                 </div>
               </div>
             </div>
           );
         });
+
       } else {
         questionCounter++;
-        let ca = question.correctAnswer;
-        if (['MATCHING','PLAN_MAP_LABELING','DIAGRAM_LABELING'].includes(question.type) && typeof ca === 'object' && ca !== null) { ca = ca[question.id]; }
+        let ca = correctAnswer;
+        if (['MATCHING','PLAN_MAP_LABELING','DIAGRAM_LABELING'].includes(question.type) && typeof ca === 'object' && ca !== null && !Array.isArray(ca)) { 
+           ca = ca[question.id] || ca; 
+        }
+        
         const correct = isAnswerCorrect(studentAnswer, ca, question.type);
+        const label = points > 1 ? `Q${questionCounter}-${questionCounter + points - 1}` : `Q${questionCounter}`;
+        if (points > 1) questionCounter += (points - 1);
+
+        // Format display values - handle MCQ_MULTIPLE arrays properly
+        const displayStudentAnswer = formatAnswer(studentAnswer, question.type);
+        const displayCorrectAnswer = formatAnswer(ca, question.type, true);
+
         items.push(
           <div key={question.id} className={`p-4 rounded-xl border ${correct ? 'border-green-100 bg-green-50/30' : 'border-red-100 bg-red-50/30'}`}>
             <div className="flex justify-between mb-2">
-              <span className="font-medium text-gray-900">Q{questionCounter}. {question.questionText}</span>
+              <span className="font-medium text-gray-900">{label}. {question.questionText}</span>
               <Badge variant={correct ? 'success' : 'danger'} size="sm">{correct ? 'Correct' : 'Incorrect'}</Badge>
             </div>
             <div className="grid grid-cols-2 gap-4 text-sm mt-3">
-               <div><p className="text-gray-500">Student:</p><p className={`font-bold ${correct ? 'text-green-700' : 'text-red-700'}`}>{formatAnswer(studentAnswer, question.type)}</p></div>
-               <div><p className="text-gray-500">Correct:</p><p className="font-bold text-gray-700">{formatAnswer(ca, question.type)}</p></div>
+               <div><p className="text-gray-500">Student:</p><p className={`font-bold ${correct ? 'text-green-700' : 'text-red-700'}`}>{displayStudentAnswer}</p></div>
+               <div><p className="text-gray-500">Correct:</p><p className="font-bold text-gray-700">{displayCorrectAnswer}</p></div>
             </div>
           </div>
         );
@@ -541,7 +660,7 @@ export default function ResultsPage() {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-indigo-500"></div>
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-slate-400"></div>
       </div>
     );
   }
@@ -550,8 +669,11 @@ export default function ResultsPage() {
     <div className="space-y-6">
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Exam Results</h1>
-        <p className="text-gray-500 mt-1">View student performance and scores</p>
+        <h1 className="text-2xl font-semibold text-slate-900 dark:text-white">Exam Results</h1>
+        <p className="text-slate-500 mt-1">
+          View student performance and scores
+          <span className="ml-2 text-xs text-slate-400">{total} of {totalGroups} students</span>
+        </p>
       </div>
 
       {/* Filters Bar */}
@@ -560,7 +682,7 @@ export default function ResultsPage() {
           <div className="flex flex-wrap items-center gap-4">
              <div className="flex-1 min-w-[200px]">
                 <div className="relative">
-                  <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-gray-400">
+                  <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-400">
                     <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
                   </span>
                   <input 
@@ -568,7 +690,7 @@ export default function ResultsPage() {
                     placeholder="Search student name or username..." 
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                    className="w-full pl-10 pr-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:ring-2 focus:ring-slate-300 outline-none transition-all"
                   />
                 </div>
              </div>
@@ -584,16 +706,19 @@ export default function ResultsPage() {
                  onChange={(e) => setTypeFilter(e.target.value)}
                />
              </div>
-             <Button 
-               variant="secondary" 
-               onClick={() => {
-                 setSearchTerm('');
-                 setTypeFilter('');
-               }}
-             >
-               Clear
-             </Button>
-          </div>
+              <>
+                <Button 
+                  variant="secondary" 
+                  onClick={() => {
+                    setSearchTerm('');
+                    setTypeFilter('');
+                  }}
+                  disabled={!hasFilters}
+                >
+                  Clear
+                </Button>
+              </>
+           </div>
         </CardBody>
       </Card>
 
@@ -602,30 +727,30 @@ export default function ResultsPage() {
         <CardBody className="p-0">
           <div className="overflow-x-auto">
             <table className="w-full">
-              <thead className="bg-gray-50 dark:bg-gray-800">
+              <thead className="bg-slate-50 dark:bg-slate-900/60">
                 <tr>
-                  <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Student</th>
-                  <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Completed Sections</th>
-                  <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Last Test Date</th>
-                  <th className="px-6 py-4 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Actions</th>
+                  <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Student</th>
+                  <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Completed Sections</th>
+                  <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Last Test Date</th>
+                  <th className="px-6 py-4 text-right text-xs font-semibold text-slate-500 uppercase tracking-wider">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+              <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
                 {paginatedGroups.map((group) => {
                   const student = group.student;
 
                   return (
-                    <tr key={student.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/50">
+                    <tr key={student.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-full bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center text-indigo-600 dark:text-indigo-400 font-semibold text-xs">
+                          <div className="w-8 h-8 rounded-full bg-slate-900 flex items-center justify-center text-white font-semibold text-xs">
                             {student.firstName?.[0] || student.username[0].toUpperCase()}
                           </div>
                           <div>
-                            <p className="font-medium text-gray-900 dark:text-white">
+                            <p className="font-medium text-slate-900 dark:text-white">
                               {student.firstName ? `${student.firstName} ${student.lastName || ''}` : student.username}
                             </p>
-                            <p className="text-xs text-gray-500">@{student.username}</p>
+                            <p className="text-xs text-slate-500">@{student.username}</p>
                           </div>
                         </div>
                       </td>
@@ -638,7 +763,7 @@ export default function ResultsPage() {
                           ))}
                         </div>
                       </td>
-                      <td className="px-6 py-4 text-gray-500 dark:text-gray-400 text-sm">
+                      <td className="px-6 py-4 text-slate-500 dark:text-slate-400 text-sm">
                         {new Date(group.latestDate).toLocaleDateString()}
                       </td>
                       <td className="px-6 py-4 text-right">
@@ -658,7 +783,7 @@ export default function ResultsPage() {
                 })}
                 {paginatedGroups.length === 0 && (
                    <tr>
-                     <td colSpan={4} className="px-6 py-12 text-center text-gray-500">
+                     <td colSpan={4} className="px-6 py-12 text-center text-slate-500">
                        {searchTerm || typeFilter ? 'No results match your filters' : 'No results found'}
                      </td>
                    </tr>
@@ -675,68 +800,81 @@ export default function ResultsPage() {
           <Card className="w-full max-w-5xl max-h-[90vh] h-auto flex flex-col">
             <CardHeader className="flex flex-row items-center justify-between">
               <div>
-                <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Exam Results</h2>
-                <p className="text-sm text-gray-500 mt-1">View student performance and scores for {selectedGroup.student.firstName || selectedGroup.student.username}</p>
+                <h2 className="text-xl font-semibold text-slate-900 dark:text-white">Exam Results</h2>
+                <p className="text-sm text-slate-500 mt-1">View student performance and scores for {selectedGroup.student.firstName || selectedGroup.student.username}</p>
               </div>
-              <button onClick={() => setShowSelectedStudentModal(false)} className="text-gray-400 hover:text-gray-500"><svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg></button>
+              <button onClick={() => setShowSelectedStudentModal(false)} className="text-slate-400 hover:text-slate-500"><svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg></button>
             </CardHeader>
             <CardBody className="p-0 overflow-y-auto shrink min-h-0">
               <div className="overflow-x-auto">
                 <table className="w-full">
-                  <thead className="bg-[#F9FAFB] dark:bg-gray-800 border-b border-gray-100">
+                  <thead className="bg-slate-50 dark:bg-slate-900/60 border-b border-slate-200">
                     <tr>
-                      <th className="px-8 py-5 text-left text-[11px] font-bold text-gray-400 uppercase tracking-widest">Student</th>
-                      <th className="px-8 py-5 text-left text-[11px] font-bold text-gray-400 uppercase tracking-widest">Exam Section</th>
-                      <th className="px-8 py-5 text-left text-[11px] font-bold text-gray-400 uppercase tracking-widest">Score</th>
-                      <th className="px-8 py-5 text-left text-[11px] font-bold text-gray-400 uppercase tracking-widest">Band Score</th>
-                      <th className="px-8 py-5 text-right text-[11px] font-bold text-gray-400 uppercase tracking-widest">Details</th>
+                      <th className="px-8 py-5 text-left text-[11px] font-bold text-slate-400 uppercase tracking-widest">Student</th>
+                      <th className="px-8 py-5 text-left text-[11px] font-bold text-slate-400 uppercase tracking-widest">Exam Section</th>
+                      <th className="px-8 py-5 text-left text-[11px] font-bold text-slate-400 uppercase tracking-widest">Score</th>
+                      <th className="px-8 py-5 text-left text-[11px] font-bold text-slate-400 uppercase tracking-widest">Band Score</th>
+                      <th className="px-8 py-5 text-right text-[11px] font-bold text-slate-400 uppercase tracking-widest">Details</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+                  <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
                     {selectedGroup.results.sort((a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime()).map((result) => (
-                      <tr key={result.id} className="hover:bg-gray-50/50">
+                      <tr key={result.id} className="hover:bg-slate-50/50">
                         <td className="px-8 py-6">
                            <div className="flex items-center gap-3">
-                              <div className="w-9 h-9 rounded-full bg-[#EBF1FF] flex items-center justify-center text-[#5569FF] font-bold text-sm">
+                              <div className="w-9 h-9 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-700 dark:text-slate-200 font-bold text-sm">
                                 {selectedGroup.student.firstName?.[0]?.toLowerCase() || selectedGroup.student.username[0].toLowerCase()}
                               </div>
                               <div className="flex flex-col">
-                                <span className="font-semibold text-[15px] text-gray-900">{selectedGroup.student.firstName || selectedGroup.student.username}</span>
-                                <span className="text-xs text-gray-400 font-medium tracking-tight">@{selectedGroup.student.username}</span>
+                                <span className="font-semibold text-[15px] text-slate-900 dark:text-white">{selectedGroup.student.firstName || selectedGroup.student.username}</span>
+                                <span className="text-xs text-slate-400 font-medium tracking-tight">@{selectedGroup.student.username}</span>
                               </div>
                            </div>
                         </td>
-                        <td className="px-8 py-6">
-                           <div className="flex items-center gap-3">
-                              <Badge key={result.id} variant={sectionVariants[result.section?.type || '']} size="sm">
-                                {result.section?.type}
-                              </Badge>
-                              <span className="text-[15px] font-medium text-gray-600">{result.section?.title}</span>
-                           </div>
-                        </td>
-                        <td className="px-8 py-6">
-                           <div className="text-[15px] tabular-nums">
-                              <span className="font-black text-gray-900">{result.score}</span>
-                              <span className="text-gray-300 font-medium"> / {result.totalScore}</span>
-                           </div>
-                        </td>
-                        <td className="px-8 py-6">
-                           <div className="w-8 h-8 rounded-full bg-[#EBF1FF] flex items-center justify-center text-[#5569FF] font-black text-sm">
-                              {result.bandScore}
-                           </div>
-                        </td>
-                        <td className="px-8 py-6 text-right">
+                         <td className="px-8 py-6">
+                            <div className="flex items-center gap-3">
+                               <Badge key={result.id} variant={sectionVariants[result.section?.type || '']} size="sm">
+                                 {result.section?.type}
+                               </Badge>
+                               <span className="text-[15px] font-medium text-slate-600">{result.section?.title}</span>
+                               {result.section?.type === 'WRITING' && getWritingStatusBadge(result)}
+                            </div>
+                         </td>
+                         <td className="px-8 py-6">
+                            <div className="text-[15px] tabular-nums font-medium">
+                               {result.section?.type === 'WRITING' && (!result.bandScore && result.writingSubmission?.status !== 'COMPLETED') ? (
+                                 <span className="text-slate-400 italic">Pending AI</span>
+                               ) : (
+                                 <div className="flex items-center gap-1">
+                                   <span className="font-black text-slate-900">{result.score}</span>
+                                   <span className="text-slate-300">/ {result.totalScore}</span>
+                                 </div>
+                               )}
+                            </div>
+                         </td>
+                         <td className="px-8 py-6">
+                            <div className="flex items-center gap-2">
+                               {result.section?.type === 'WRITING' && (!result.bandScore && result.writingSubmission?.status !== 'COMPLETED') ? (
+                                  <Badge variant="default" size="sm">Pending</Badge>
+                               ) : (
+                                  <Badge variant={result.bandScore && result.bandScore >= 7 ? 'success' : result.bandScore && result.bandScore >= 6 ? 'info' : 'warning'} size="sm" className="font-bold">
+                                    Band {result.bandScore ?? '-'}
+                                  </Badge>
+                               )}
+                            </div>
+                         </td>
+                         <td className="px-8 py-6 text-right">
                            <Button size="sm" variant="secondary" className="text-xs font-bold px-4" onClick={() => handleViewDetails(result.id)}>
                               View Full Breakdown
                            </Button>
-                        </td>
+                         </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
             </CardBody>
-            <div className="p-6 border-t border-gray-100 flex justify-end">
+            <div className="p-6 border-t border-slate-200 flex justify-end">
               <Button onClick={() => setShowSelectedStudentModal(false)}>Back to Summary</Button>
             </div>
           </Card>
@@ -745,24 +883,24 @@ export default function ResultsPage() {
 
       {/* Result Details Modal (Existing breakdown) */}
       <Modal isOpen={showModal} onClose={closeModal} title="Exam Result Breakdown" width="max-w-5xl">
-        <div className="max-h-[80vh] overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-gray-200">
+        <div className="max-h-[80vh] overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-slate-200">
           {detailLoading ? (
-            <div className="py-12 flex justify-center"><div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-indigo-500" /></div>
+            <div className="py-12 flex justify-center"><div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-slate-400" /></div>
           ) : selectedResult ? (
             <div className="space-y-6">
-              <div className="flex items-center justify-between pb-4 border-b border-gray-100">
+              <div className="flex items-center justify-between pb-4 border-b border-slate-200">
                 <div>
-                    <h3 className="text-lg font-bold text-gray-900">{selectedResult.section?.title}</h3>
-                    <p className="text-sm text-gray-500">Submitted on {new Date(selectedResult.submittedAt).toLocaleString()}</p>
+                    <h3 className="text-lg font-bold text-slate-900">{selectedResult.section?.title}</h3>
+                    <p className="text-sm text-slate-500">Submitted on {new Date(selectedResult.submittedAt).toLocaleString()}</p>
                 </div>
                 <div className="flex items-center gap-6">
                     <div className="text-center">
-                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Score</p>
-                      <p className="text-xl font-black text-gray-900">{selectedResult.score} <span className="text-gray-300">/ {selectedResult.totalScore}</span></p>
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Score</p>
+                      <p className="text-xl font-black text-slate-900">{selectedResult.score} <span className="text-slate-300">/ {selectedResult.totalScore}</span></p>
                     </div>
                     <div className="text-center">
-                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">IELTS Band</p>
-                      <div className="h-9 w-9 mx-auto bg-indigo-600 rounded-full flex items-center justify-center text-white font-black text-sm">{selectedResult.bandScore}</div>
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">IELTS Band</p>
+                      <div className="h-9 w-9 mx-auto bg-slate-900 rounded-full flex items-center justify-center text-white font-black text-sm">{selectedResult.bandScore}</div>
                     </div>
                 </div>
               </div>
@@ -778,11 +916,11 @@ export default function ResultsPage() {
            <div className="h-20 w-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6">
               <svg className="w-10 h-10 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>
            </div>
-           <h3 className="text-2xl font-bold text-gray-900 mb-2">Evaluation Complete</h3>
-           <p className="text-gray-500 mb-8">The AI analyzer has graded this submission.</p>
-           <div className="bg-indigo-50 rounded-2xl p-6 border border-indigo-100 mb-8">
-              <p className="text-sm text-indigo-600 font-bold uppercase tracking-widest mb-2">Assigned Band Score</p>
-              <p className="text-6xl font-black text-indigo-900">{successModal.bandScore}</p>
+           <h3 className="text-2xl font-bold text-slate-900 mb-2">Evaluation Complete</h3>
+           <p className="text-slate-500 mb-8">The AI analyzer has graded this submission.</p>
+           <div className="bg-slate-50 rounded-2xl p-6 border border-slate-200 mb-8">
+              <p className="text-sm text-slate-600 font-bold uppercase tracking-widest mb-2">Assigned Band Score</p>
+              <p className="text-6xl font-black text-slate-900">{successModal.bandScore}</p>
            </div>
            <Button onClick={() => setSuccessModal({ ...successModal, isOpen: false })} className="w-full">Sweet! Close</Button>
         </div>
@@ -791,7 +929,7 @@ export default function ResultsPage() {
       {/* Pagination (Simplified student-count based) */}
       {/* Pagination */}
       {total > pageSize && (
-        <div className="flex items-center justify-between bg-white dark:bg-gray-800 px-4 py-3 rounded-lg border border-gray-200 dark:border-gray-700">
+        <div className="flex items-center justify-between bg-white dark:bg-slate-900 px-4 py-3 rounded-lg border border-slate-200 dark:border-slate-800">
           <div className="flex flex-1 justify-between sm:hidden">
             <Button
               onClick={() => setPage(p => Math.max(1, p - 1))}
@@ -810,7 +948,7 @@ export default function ResultsPage() {
           </div>
           <div className="hidden sm:flex sm:flex-1 sm:items-center sm:justify-between">
             <div>
-              <p className="text-sm text-gray-700 dark:text-gray-300">
+              <p className="text-sm text-slate-700 dark:text-slate-300">
                 Showing <span className="font-medium">{(page - 1) * pageSize + 1}</span> to <span className="font-medium">{Math.min(page * pageSize, total)}</span> of{' '}
                 <span className="font-medium">{total}</span> groups
               </p>
@@ -820,7 +958,7 @@ export default function ResultsPage() {
                 <button
                   onClick={() => setPage(p => Math.max(1, p - 1))}
                   disabled={page === 1}
-                  className="relative inline-flex items-center rounded-l-md px-2 py-2 text-gray-400 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus:z-20 focus:outline-offset-0 disabled:opacity-50"
+                  className="relative inline-flex items-center rounded-l-md px-2 py-2 text-slate-400 ring-1 ring-inset ring-slate-200 hover:bg-slate-50 focus:z-20 focus:outline-offset-0 disabled:opacity-50"
                 >
                   <span className="sr-only">Previous</span>
                   <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
@@ -831,10 +969,10 @@ export default function ResultsPage() {
                   <button
                     key={i}
                     onClick={() => setPage(i + 1)}
-                    className={`relative inline-flex items-center px-4 py-2 text-sm font-semibold ring-1 ring-inset ring-gray-300 focus:z-20 focus:outline-offset-0 ${
+                    className={`relative inline-flex items-center px-4 py-2 text-sm font-semibold ring-1 ring-inset ring-slate-200 focus:z-20 focus:outline-offset-0 ${
                       page === i + 1
-                        ? 'z-10 bg-indigo-600 text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600'
-                        : 'text-gray-900 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
+                        ? 'z-10 bg-slate-900 text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900'
+                        : 'text-slate-900 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'
                     }`}
                   >
                     {i + 1}
@@ -843,7 +981,7 @@ export default function ResultsPage() {
                 <button
                   onClick={() => setPage(p => p + 1)}
                   disabled={page * pageSize >= total}
-                  className="relative inline-flex items-center rounded-r-md px-2 py-2 text-gray-400 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus:z-20 focus:outline-offset-0 disabled:opacity-50"
+                  className="relative inline-flex items-center rounded-r-md px-2 py-2 text-slate-400 ring-1 ring-inset ring-slate-200 hover:bg-slate-50 focus:z-20 focus:outline-offset-0 disabled:opacity-50"
                 >
                   <span className="sr-only">Next</span>
                   <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">

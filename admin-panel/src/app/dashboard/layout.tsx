@@ -194,8 +194,8 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-900">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-indigo-500"></div>
+      <div className="min-h-screen flex items-center justify-center bg-slate-950">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-slate-400"></div>
       </div>
     );
   }
@@ -210,11 +210,11 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
   );
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-950">
       {/* Sidebar */}
-      <aside className="fixed inset-y-0 left-0 w-64 bg-white dark:bg-gray-800 shadow-xl border-r border-gray-200 dark:border-gray-700">
+      <aside className="fixed inset-y-0 left-0 w-64 bg-white dark:bg-slate-900 shadow-sm border-r border-slate-200 dark:border-slate-800">
         {/* Logo */}
-        <div className="h-16 flex items-center justify-center px-6 border-b border-gray-200 dark:border-gray-700">
+          <div className="h-16 flex items-center justify-center px-6 border-b border-slate-200 dark:border-slate-800">
           {centerLogo ? (
             <Image
               src={centerLogo}
@@ -248,8 +248,8 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
                   flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-200
                   ${
                     isActive
-                      ? "bg-linear-to-r from-indigo-500 to-purple-600 text-white shadow-lg shadow-indigo-500/30"
-                      : "text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
+                      ? "bg-slate-900 text-white shadow-sm"
+                      : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
                   }
                 `}
               >
@@ -261,25 +261,25 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
         </nav>
 
         {/* User Info */}
-        <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-gray-200 dark:border-gray-700">
+        <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-slate-200 dark:border-slate-800">
           <div className="flex items-center gap-3 mb-3">
-            <div className="w-10 h-10 rounded-full bg-linear-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white font-semibold">
+            <div className="w-10 h-10 rounded-full bg-slate-900 flex items-center justify-center text-white font-semibold">
               {user.firstName?.[0] || user.username[0].toUpperCase()}
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-gray-900 dark:text-white truncate">
+              <p className="text-sm font-medium text-slate-900 dark:text-white truncate">
                 {user.firstName
                   ? `${user.firstName} ${user.lastName || ""}`
                   : user.username}
               </p>
-              <p className="text-xs text-gray-500 truncate">
+              <p className="text-xs text-slate-500 truncate">
                 {user.role.replace("_", " ")}
               </p>
             </div>
           </div>
           <button
             onClick={() => setIsLogoutModalOpen(true)}
-            className="w-full flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
+            className="w-full flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/20 rounded-lg transition-colors"
           >
             <svg
               className="w-4 h-4"
@@ -302,9 +302,9 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
       {/* Main Content */}
       <main className="ml-64 min-h-screen">
         {/* Header */}
-        <header className="sticky top-0 z-10 h-16 bg-white/80 dark:bg-gray-800/80 backdrop-blur-md border-b border-gray-200 dark:border-gray-700">
+        <header className="sticky top-0 z-10 h-16 bg-white/90 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-200 dark:border-slate-800">
           <div className="h-full px-8 flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+            <h2 className="text-lg font-semibold text-slate-900 dark:text-white">
               {pathname === "/dashboard"
                 ? "Dashboard"
                 : pathname.includes("/centers")
@@ -323,9 +323,9 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
             </h2>
             <div className="flex items-center gap-4">
               <ThemeSwitcher />
-              <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
+              <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
                 <span className="hidden sm:inline">Welcome,</span>
-                <span className="font-medium text-gray-900 dark:text-white">
+                <span className="font-medium text-slate-900 dark:text-white">
                   {user?.firstName || user?.username}
                 </span>
               </div>

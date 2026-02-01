@@ -1,14 +1,14 @@
 import {
-    Body,
-    Controller,
-    Delete,
-    Get,
-    Param,
-    Post,
-    Put,
-    Query,
-    Request,
-    UseGuards,
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Post,
+  Put,
+  Query,
+  Request,
+  UseGuards,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { Role } from '@prisma/client';
@@ -43,12 +43,25 @@ export class UsersController {
     @Query('role') role?: Role,
     @Query('centerId') centerId?: string,
   ) {
-    return this.usersService.findAll(req.user.role, req.user.centerId, skip, take, search, role, centerId);
+    return this.usersService.findAll(
+      req.user.role,
+      req.user.centerId,
+      skip,
+      take,
+      search,
+      role,
+      centerId,
+    );
   }
 
   @Get(':id')
   findOne(@Param('id') id: string, @Request() req) {
-    return this.usersService.findOne(id, req.user.id, req.user.role, req.user.centerId);
+    return this.usersService.findOne(
+      id,
+      req.user.id,
+      req.user.role,
+      req.user.centerId,
+    );
   }
 
   @Put(':id')
@@ -69,6 +82,11 @@ export class UsersController {
   @Delete(':id')
   @Roles(Role.SUPER_ADMIN, Role.CENTER_ADMIN)
   remove(@Param('id') id: string, @Request() req) {
-    return this.usersService.remove(id, req.user.id, req.user.role, req.user.centerId);
+    return this.usersService.remove(
+      id,
+      req.user.id,
+      req.user.role,
+      req.user.centerId,
+    );
   }
 }

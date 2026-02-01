@@ -1,6 +1,6 @@
 'use client';
 
-import { Badge, Button, Card, CardBody } from '@/components/ui';
+import { Badge, Button, Card, CardBody, useToast } from '@/components/ui';
 import { api } from '@/lib/api';
 import { generateBatchPDF } from '@/lib/generatePDF';
 import { ExamResult, User } from '@/types';
@@ -27,6 +27,7 @@ export default function DownloadsPage() {
   
   // Filtering State
   const [searchTerm, setSearchTerm] = useState('');
+  const { error: showError, success } = useToast();
 
   const loadData = async () => {
     setIsLoading(true);
@@ -55,6 +56,7 @@ export default function DownloadsPage() {
       setReportGroups(Object.values(groups));
     } catch (err) {
       console.error('Failed to load results for downloads:', err);
+      showError('Failed to load download data');
     } finally {
       setIsLoading(false);
     }
@@ -114,9 +116,10 @@ export default function DownloadsPage() {
         }));
 
       await generateBatchPDF(selectedReports);
+      success('Batch report generated');
     } catch (err) {
       console.error('Batch download failed:', err);
-      alert('Failed to generate batch PDF.');
+      showError('Failed to generate batch PDF');
     } finally {
       setIsDownloading(false);
     }
@@ -125,7 +128,7 @@ export default function DownloadsPage() {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-indigo-500"></div>
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-slate-400"></div>
       </div>
     );
   }
@@ -134,14 +137,13 @@ export default function DownloadsPage() {
     <div className="space-y-6">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Batch Downloads</h1>
-          <p className="text-gray-500 mt-1">Select students to download their combined IELTS reports</p>
+          <h1 className="text-2xl font-semibold text-slate-900 dark:text-white">Batch Downloads</h1>
+          <p className="text-slate-500 mt-1">Select students to download their combined IELTS reports</p>
         </div>
         
         <Button 
           onClick={handleBatchDownload} 
           disabled={selectedIds.size === 0 || isDownloading}
-          className="bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg shadow-indigo-500/30"
         >
           {isDownloading ? (
             <>
@@ -165,7 +167,7 @@ export default function DownloadsPage() {
           <div className="flex flex-wrap items-center gap-6">
              <div className="flex-1 min-w-[250px]">
                 <div className="relative">
-                  <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-gray-400">
+                  <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-400">
                     <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
                   </span>
                   <input 
@@ -173,7 +175,7 @@ export default function DownloadsPage() {
                     placeholder="Search student name or username..." 
                     value={searchTerm}
                     onChange={(e) => { setSearchTerm(e.target.value); setPage(1); }}
-                    className="w-full pl-10 pr-4 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                    className="w-full pl-10 pr-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:ring-2 focus:ring-slate-300 outline-none transition-all"
                   />
                 </div>
              </div>
@@ -183,10 +185,18 @@ export default function DownloadsPage() {
                onClick={loadData}
                className="ml-auto"
              >
-               <svg className={`w-4 h-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-               </svg>
-               Refresh
+                <svg className={`w-4 h-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                Refresh
+             </Button>
+             <Button
+               size="sm"
+               variant="ghost"
+               onClick={() => setSelectedIds(new Set())}
+               disabled={selectedIds.size === 0}
+             >
+               Clear selection
              </Button>
           </div>
         </CardBody>
@@ -196,25 +206,25 @@ export default function DownloadsPage() {
         <CardBody className="p-0">
           <div className="overflow-x-auto">
             <table className="w-full">
-              <thead className="bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
+              <thead className="bg-slate-50 dark:bg-slate-900/60 border-b border-slate-200 dark:border-slate-800">
                 <tr>
                   <th className="px-6 py-4 text-left">
                     <input 
                       type="checkbox" 
-                      className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                      className="rounded border-slate-300 text-slate-900 focus:ring-slate-300"
                       checked={selectedIds.size === filteredGroups.length && filteredGroups.length > 0}
                       onChange={toggleSelectAll}
                     />
                   </th>
-                  <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Student</th>
-                  <th className="px-6 py-4 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">Listening</th>
-                  <th className="px-6 py-4 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">Reading</th>
-                  <th className="px-6 py-4 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">Writing</th>
-                  <th className="px-6 py-4 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">Overall Band</th>
-                  <th className="px-6 py-4 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Actions</th>
+                  <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Student</th>
+                  <th className="px-6 py-4 text-center text-xs font-semibold text-slate-500 uppercase tracking-wider">Listening</th>
+                  <th className="px-6 py-4 text-center text-xs font-semibold text-slate-500 uppercase tracking-wider">Reading</th>
+                  <th className="px-6 py-4 text-center text-xs font-semibold text-slate-500 uppercase tracking-wider">Writing</th>
+                  <th className="px-6 py-4 text-center text-xs font-semibold text-slate-500 uppercase tracking-wider">Overall Band</th>
+                  <th className="px-6 py-4 text-right text-xs font-semibold text-slate-500 uppercase tracking-wider">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+              <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
                 {paginatedGroups.map((group) => {
                   const scores = [
                     group.results.listening?.bandScore || 0,
@@ -230,27 +240,27 @@ export default function DownloadsPage() {
                   return (
                     <tr 
                       key={group.student.id} 
-                      className={`hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors cursor-pointer ${selectedIds.has(group.student.id) ? 'bg-indigo-50/50 dark:bg-indigo-900/10' : ''}`}
+                      className={`hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors cursor-pointer ${selectedIds.has(group.student.id) ? 'bg-slate-100/60 dark:bg-slate-800/40' : ''}`}
                       onClick={() => toggleSelect(group.student.id)}
                     >
                       <td className="px-6 py-4" onClick={(e) => e.stopPropagation()}>
                         <input 
                           type="checkbox" 
-                          className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                          className="rounded border-slate-300 text-slate-900 focus:ring-slate-300"
                           checked={selectedIds.has(group.student.id)}
                           onChange={() => toggleSelect(group.student.id)}
                         />
                       </td>
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-full bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center text-indigo-600 dark:text-indigo-400 font-semibold text-xs text-center">
+                          <div className="w-8 h-8 rounded-full bg-slate-900 flex items-center justify-center text-white font-semibold text-xs text-center">
                             {group.student.firstName?.[0] || group.student.username[0].toUpperCase()}
                           </div>
                           <div>
-                            <p className="font-medium text-gray-900 dark:text-white">
+                            <p className="font-medium text-slate-900 dark:text-white">
                               {group.student.firstName ? `${group.student.firstName} ${group.student.lastName || ''}` : group.student.username}
                             </p>
-                            <p className="text-xs text-gray-500">@{group.student.username}</p>
+                            <p className="text-xs text-slate-500">@{group.student.username}</p>
                           </div>
                         </div>
                       </td>
@@ -260,7 +270,7 @@ export default function DownloadsPage() {
                             <span className="font-bold">{group.results.listening.bandScore}</span>
                           </Badge>
                         ) : (
-                          <span className="text-gray-300 dark:text-gray-600">-</span>
+                          <span className="text-slate-300 dark:text-slate-600">-</span>
                         )}
                       </td>
                       <td className="px-6 py-4 text-center">
@@ -269,7 +279,7 @@ export default function DownloadsPage() {
                             <span className="font-bold">{group.results.reading.bandScore}</span>
                           </Badge>
                         ) : (
-                          <span className="text-gray-300 dark:text-gray-600">-</span>
+                          <span className="text-slate-300 dark:text-slate-600">-</span>
                         )}
                       </td>
                       <td className="px-6 py-4 text-center">
@@ -278,11 +288,11 @@ export default function DownloadsPage() {
                             <span className="font-bold">{group.results.writing.bandScore}</span>
                           </Badge>
                         ) : (
-                          <span className="text-gray-300 dark:text-gray-600">-</span>
+                          <span className="text-slate-300 dark:text-slate-600">-</span>
                         )}
                       </td>
                       <td className="px-6 py-4 text-center">
-                        <div className="inline-flex items-center justify-center px-3 py-1 rounded-full bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 font-bold text-sm">
+                        <div className="inline-flex items-center justify-center px-3 py-1 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-bold text-sm">
                           {overall}
                         </div>
                       </td>
@@ -307,7 +317,7 @@ export default function DownloadsPage() {
                 })}
                 {filteredGroups.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="px-6 py-12 text-center text-gray-500">
+                    <td colSpan={7} className="px-6 py-12 text-center text-slate-500">
                       {searchTerm ? 'No students match your search' : 'No results found for report generation.'}
                     </td>
                   </tr>
@@ -320,7 +330,7 @@ export default function DownloadsPage() {
 
       {/* Pagination */}
       {total > pageSize && (
-        <div className="flex items-center justify-between bg-white dark:bg-gray-800 px-4 py-3 rounded-lg border border-gray-200 dark:border-gray-700">
+        <div className="flex items-center justify-between bg-white dark:bg-slate-900 px-4 py-3 rounded-lg border border-slate-200 dark:border-slate-800">
           <div className="flex flex-1 justify-between sm:hidden">
             <Button
               onClick={() => setPage(p => Math.max(1, p - 1))}
@@ -339,7 +349,7 @@ export default function DownloadsPage() {
           </div>
           <div className="hidden sm:flex sm:flex-1 sm:items-center sm:justify-between">
             <div>
-              <p className="text-sm text-gray-700 dark:text-gray-300">
+              <p className="text-sm text-slate-700 dark:text-slate-300">
                 Showing <span className="font-medium">{(page - 1) * pageSize + 1}</span> to <span className="font-medium">{Math.min(page * pageSize, total)}</span> of{' '}
                 <span className="font-medium">{total}</span> groups
               </p>
@@ -349,7 +359,7 @@ export default function DownloadsPage() {
                 <button
                   onClick={() => setPage(p => Math.max(1, p - 1))}
                   disabled={page === 1}
-                  className="relative inline-flex items-center rounded-l-md px-2 py-2 text-gray-400 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus:z-20 focus:outline-offset-0 disabled:opacity-50"
+                  className="relative inline-flex items-center rounded-l-md px-2 py-2 text-slate-400 ring-1 ring-inset ring-slate-200 hover:bg-slate-50 focus:z-20 focus:outline-offset-0 disabled:opacity-50"
                 >
                   <span className="sr-only">Previous</span>
                   <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
@@ -360,10 +370,10 @@ export default function DownloadsPage() {
                   <button
                     key={i}
                     onClick={() => setPage(i + 1)}
-                    className={`relative inline-flex items-center px-4 py-2 text-sm font-semibold ring-1 ring-inset ring-gray-300 focus:z-20 focus:outline-offset-0 ${
+                    className={`relative inline-flex items-center px-4 py-2 text-sm font-semibold ring-1 ring-inset ring-slate-200 focus:z-20 focus:outline-offset-0 ${
                       page === i + 1
-                        ? 'z-10 bg-indigo-600 text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600'
-                        : 'text-gray-900 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
+                        ? 'z-10 bg-slate-900 text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900'
+                        : 'text-slate-900 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'
                     }`}
                   >
                     {i + 1}
@@ -372,7 +382,7 @@ export default function DownloadsPage() {
                 <button
                   onClick={() => setPage(p => p + 1)}
                   disabled={page * pageSize >= total}
-                  className="relative inline-flex items-center rounded-r-md px-2 py-2 text-gray-400 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus:z-20 focus:outline-offset-0 disabled:opacity-50"
+                  className="relative inline-flex items-center rounded-r-md px-2 py-2 text-slate-400 ring-1 ring-inset ring-slate-200 hover:bg-slate-50 focus:z-20 focus:outline-offset-0 disabled:opacity-50"
                 >
                   <span className="sr-only">Next</span>
                   <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">

@@ -149,10 +149,36 @@ export interface ExamAssignment {
   answers?: Record<string, any>;
   highlights?: Record<string, any>;
   score?: number;
+  fullMockSessionId?: string | null;
+  fullMockSequence?: number | null;
   student?: User;
   section?: ExamSection;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface CreateFullMockForm {
+  studentId: string;
+  listeningSectionId: string;
+  readingSectionId: string;
+  writingSectionId: string;
+  breakMinutes?: number;
+}
+
+export interface WritingSubmission {
+  id: string;
+  resultId: string;
+  studentId: string;
+  sectionId: string;
+  status: "QUEUED" | "PROCESSING" | "COMPLETED" | "FAILED" | "MANUAL_REVIEW";
+  bandScore?: number;
+  evaluation?: Record<string, any>;
+  lastError?: string;
+  attempts: number;
+  maxAttempts: number;
+  queuedAt: string;
+  processingAt?: string;
+  completedAt?: string;
 }
 
 export interface ExamResult {
@@ -167,6 +193,7 @@ export interface ExamResult {
   submittedAt: string;
   student?: User;
   section?: ExamSection;
+  writingSubmission?: WritingSubmission;
 }
 
 // Form types

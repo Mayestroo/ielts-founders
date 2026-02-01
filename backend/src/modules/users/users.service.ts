@@ -1,4 +1,9 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { Role } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
@@ -20,10 +25,17 @@ export class UsersService {
     return roleHierarchy[creatorRole]?.includes(targetRole);
   }
 
-  async create(createUserDto: CreateUserDto, creatorId: string, creatorRole: Role, creatorCenterId: string | null) {
+  async create(
+    createUserDto: CreateUserDto,
+    creatorId: string,
+    creatorRole: Role,
+    creatorCenterId: string | null,
+  ) {
     // Validate role creation permissions
     if (!this.canCreateRole(creatorRole, createUserDto.role)) {
-      throw new ForbiddenException(`You cannot create users with role ${createUserDto.role}`);
+      throw new ForbiddenException(
+        `You cannot create users with role ${createUserDto.role}`,
+      );
     }
 
     // Check if username already exists
@@ -67,10 +79,10 @@ export class UsersService {
   }
 
   async findAll(
-    userRole: Role, 
-    userCenterId: string | null, 
-    skip?: number, 
-    take?: number, 
+    userRole: Role,
+    userCenterId: string | null,
+    skip?: number,
+    take?: number,
     search?: string,
     roleFilter?: Role,
     centerFilter?: string,
@@ -107,7 +119,12 @@ export class UsersService {
           {
             AND: [
               { firstName: { startsWith: parts[0], mode: 'insensitive' } },
-              { lastName: { startsWith: parts.slice(1).join(' '), mode: 'insensitive' } },
+              {
+                lastName: {
+                  startsWith: parts.slice(1).join(' '),
+                  mode: 'insensitive',
+                },
+              },
             ],
           },
           // Also allowing "LastName FirstName" if needed, but sticking to logical assumption for now or single string match fallback
@@ -138,7 +155,12 @@ export class UsersService {
     };
   }
 
-  async findOne(id: string, requesterId: string, requesterRole: Role, requesterCenterId: string | null) {
+  async findOne(
+    id: string,
+    requesterId: string,
+    requesterRole: Role,
+    requesterCenterId: string | null,
+  ) {
     const user = await this.prisma.user.findUnique({
       where: { id },
       include: { center: true },
@@ -170,7 +192,13 @@ export class UsersService {
     return result;
   }
 
-  async update(id: string, updateUserDto: UpdateUserDto, requesterId: string, requesterRole: Role, requesterCenterId: string | null) {
+  async update(
+    id: string,
+    updateUserDto: UpdateUserDto,
+    requesterId: string,
+    requesterRole: Role,
+    requesterCenterId: string | null,
+  ) {
     const user = await this.prisma.user.findUnique({ where: { id } });
 
     if (!user) {
@@ -185,7 +213,11 @@ export class UsersService {
         throw new ForbiddenException('You cannot update this user');
       }
       // Cannot change role to CENTER_ADMIN or SUPER_ADMIN
-      if (updateUserDto.role && (updateUserDto.role === Role.SUPER_ADMIN || updateUserDto.role === Role.CENTER_ADMIN)) {
+      if (
+        updateUserDto.role &&
+        (updateUserDto.role === Role.SUPER_ADMIN ||
+          updateUserDto.role === Role.CENTER_ADMIN)
+      ) {
         throw new ForbiddenException('You cannot assign this role');
       }
     } else if (requesterId !== id) {
@@ -207,7 +239,12 @@ export class UsersService {
     return result;
   }
 
-  async remove(id: string, requesterId: string, requesterRole: Role, requesterCenterId: string | null) {
+  async remove(
+    id: string,
+    requesterId: string,
+    requesterRole: Role,
+    requesterCenterId: string | null,
+  ) {
     const user = await this.prisma.user.findUnique({ where: { id } });
 
     if (!user) {
@@ -221,7 +258,10 @@ export class UsersService {
         throw new ForbiddenException('You cannot delete yourself');
       }
     } else if (requesterRole === Role.CENTER_ADMIN) {
-      if (user.centerId !== requesterCenterId || user.role === Role.CENTER_ADMIN) {
+      if (
+        user.centerId !== requesterCenterId ||
+        user.role === Role.CENTER_ADMIN
+      ) {
         throw new ForbiddenException('You cannot delete this user');
       }
     } else {

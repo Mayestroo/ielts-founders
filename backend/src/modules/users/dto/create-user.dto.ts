@@ -18,7 +18,6 @@ export class CreateUserDto {
   @IsString()
   lastName?: string;
 
-
   @IsEnum(Role)
   role: Role;
 

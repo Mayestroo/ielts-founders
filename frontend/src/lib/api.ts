@@ -7,8 +7,13 @@ import {
   ExamAssignment,
   ExamResult,
   ExamSection,
+  HeartbeatResponse,
   LoginResponse,
-  User,
+  ReconnectResponse,
+  StartExamResponse,
+  SubmitExamResponse,
+  SyncResponse,
+  User
 } from "@/types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000/api";
@@ -37,7 +42,9 @@ class ApiClient {
 
   private async request<T>(
     endpoint: string,
-    options: RequestInit = {}
+    options: RequestInit = {},
+    retries = 3,
+    backoff = 500
   ): Promise<T> {
     const token = this.getToken();
     const headers: HeadersInit = {
@@ -46,21 +53,37 @@ class ApiClient {
       ...options.headers,
     };
 
-    const response = await fetch(`${API_URL}${endpoint}`, {
-      ...options,
-      headers,
-    });
+    try {
+      const response = await fetch(`${API_URL}${endpoint}`, {
+        ...options,
+        headers,
+      });
 
-    if (!response.ok) {
-      const error = await response
-        .json()
-        .catch(() => ({ message: "Request failed" }));
-      throw new Error(
-        error.message || `HTTP error! status: ${response.status}`
-      );
+      if (!response.ok) {
+        // Retry for server-side gateway/proxy errors (502, 503, 504)
+        if (retries > 0 && [502, 503, 504].includes(response.status)) {
+          console.warn(`Server error ${response.status}, retrying in ${backoff}ms... (${retries} retries left)`);
+          await new Promise(resolve => setTimeout(resolve, backoff));
+          return this.request(endpoint, options, retries - 1, backoff * 2);
+        }
+
+        const error = await response
+          .json()
+          .catch(() => ({ message: "Request failed" }));
+        throw new Error(
+          error.message || `HTTP error! status: ${response.status}`
+        );
+      }
+
+      return response.json();
+    } catch (error) {
+      if (retries > 0 && error instanceof TypeError && error.message === 'Failed to fetch') {
+        console.warn(`Network error, retrying in ${backoff}ms... (${retries} retries left)`);
+        await new Promise(resolve => setTimeout(resolve, backoff));
+        return this.request(endpoint, options, retries - 1, backoff * 2);
+      }
+      throw error;
     }
-
-    return response.json();
   }
 
   // Auth
@@ -170,8 +193,8 @@ class ApiClient {
 
   async startExam(
     assignmentId: string
-  ): Promise<ExamAssignment & { remainingTime: number }> {
-    return this.request(`/assignments/${assignmentId}/start`, {
+  ): Promise<StartExamResponse> {
+    return this.request<StartExamResponse>(`/assignments/${assignmentId}/start`, {
       method: "POST",
     });
   }
@@ -179,8 +202,8 @@ class ApiClient {
   async submitExam(
     assignmentId: string,
     answers: Record<string, string | string[] | Record<string, string>>
-  ): Promise<{ message: string }> {
-    return this.request(`/assignments/${assignmentId}/submit`, {
+  ): Promise<SubmitExamResponse> {
+    return this.request<SubmitExamResponse>(`/assignments/${assignmentId}/submit`, {
       method: "POST",
       body: JSON.stringify({ answers }),
     });
@@ -206,6 +229,40 @@ class ApiClient {
   // Results
   async getStudentResults(studentId: string): Promise<ExamResult[]> {
     return this.request<ExamResult[]>(`/results/student/${studentId}`);
+  }
+
+  // Session Management
+  async heartbeat(
+    assignmentId: string,
+    tabId?: string
+  ): Promise<HeartbeatResponse> {
+    return this.request<HeartbeatResponse>(`/assignments/${assignmentId}/heartbeat`, {
+      method: "POST",
+      body: JSON.stringify({ tabId }),
+    });
+  }
+
+  async syncAnswers(
+    assignmentId: string,
+    answers: Record<string, any>,
+    highlights: any[] = [],
+    syncVersion = 0
+  ): Promise<SyncResponse> {
+    return this.request<SyncResponse>(`/assignments/${assignmentId}/sync`, {
+      method: "POST",
+      body: JSON.stringify({ answers, highlights, syncVersion }),
+    });
+  }
+
+  async reconnectExam(
+    assignmentId: string,
+    clientAnswers?: Record<string, any>,
+    tabId?: string
+  ): Promise<ReconnectResponse> {
+    return this.request<ReconnectResponse>(`/assignments/${assignmentId}/reconnect`, {
+      method: "POST",
+      body: JSON.stringify({ clientAnswers, tabId }),
+    });
   }
 }
 

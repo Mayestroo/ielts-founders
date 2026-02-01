@@ -14,6 +14,8 @@ PROJECT.md
 # Dependency Directories (if installed in root)
 node_modules/
 tests/
+playwright-report/
+test-results/
 
 # Environment Variables
 .env

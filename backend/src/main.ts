@@ -48,7 +48,7 @@ export async function setupApp(app: INestApplication) {
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
-  
+
   await setupApp(app);
 
   const configService = app.get(ConfigService);

@@ -170,10 +170,66 @@ export interface ExamAssignment {
   answers?: Record<string, any>;
   highlights?: Record<string, any>;
   score?: number;
+  fullMockSessionId?: string | null;
+  fullMockSequence?: number | null;
   student?: User;
   section?: ExamSection;
   createdAt: string;
   updatedAt: string;
+  remainingTime?: number;
+}
+
+export interface ExamAssignmentWithTime extends ExamAssignment {
+  remainingTime: number;
+}
+
+export interface BreakStatus {
+  status: "BREAK";
+  assignmentId: string;
+  breakEndsAt: string;
+  message: string;
+}
+
+export type StartExamResponse = ExamAssignmentWithTime | BreakStatus;
+
+export interface SubmitExamResponse {
+  message: string;
+  assignmentId?: string;
+  status?: string;
+  resultId?: string;
+  submissionId?: string;
+  gradingStatus?: string;
+  note?: string;
+  score?: number;
+  totalScore?: number;
+  bandScore?: number;
+  nextAssignmentId?: string | null;
+  breakEndsAt?: string | null;
+  fullMockSessionId?: string | null;
+  idempotent?: boolean;
+}
+
+export interface HeartbeatResponse {
+  active: boolean;
+  remainingSeconds?: number;
+  syncVersion?: number;
+  serverTime?: string;
+  reason?: string;
+}
+
+export interface SyncResponse {
+  success: boolean;
+  newVersion: number;
+  syncedAt: string;
+  mergedAnswers?: Record<string, any>;
+}
+
+export interface ReconnectResponse {
+  success: boolean;
+  reason?: string;
+  message?: string;
+  assignment?: ExamAssignmentWithTime;
+  syncVersion?: number;
 }
 
 export interface ExamResult {

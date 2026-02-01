@@ -1,8 +1,8 @@
 'use client';
 
-import Image from 'next/image';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTimer } from '@/hooks/useTimer';
+import Image from 'next/image';
 
 interface ExamHeaderProps {
   title: string;

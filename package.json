@@ -1,0 +1,12 @@
+{
+  "name": "ielts-founders-e2e",
+  "private": true,
+  "scripts": {
+    "test:e2e": "playwright test --config playwright.config.ts"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.1",
+    "@tailwindcss/postcss": "^4",
+    "tailwindcss": "^4"
+  }
+}

@@ -4,7 +4,7 @@ import { Badge, Button, Card, CardBody, ConfirmationModal, useToast } from '@/co
 import { api } from '@/lib/api';
 import { ExamSection } from '@/types';
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 type TabType = 'READING' | 'LISTENING' | 'WRITING';
 
@@ -34,6 +34,14 @@ export default function ExamSectionsPage() {
   useEffect(() => {
     loadSections();
   }, []);
+
+  const counts = useMemo(() => {
+    return {
+      LISTENING: sections.filter((section) => section.type === 'LISTENING').length,
+      READING: sections.filter((section) => section.type === 'READING').length,
+      WRITING: sections.filter((section) => section.type === 'WRITING').length,
+    };
+  }, [sections]);
 
   const handleDeleteClick = (id: string) => {
     setSectionToDelete(id);
@@ -86,7 +94,7 @@ export default function ExamSectionsPage() {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-indigo-500"></div>
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-slate-400"></div>
       </div>
     );
   }
@@ -96,8 +104,8 @@ export default function ExamSectionsPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Exam Sections</h1>
-          <p className="text-gray-500 mt-1">Create and manage IELTS exam sections</p>
+          <h1 className="text-2xl font-semibold text-slate-900 dark:text-white">Exam Sections</h1>
+          <p className="text-slate-500 mt-1">Create and manage IELTS exam sections</p>
         </div>
         <Link href={`/dashboard/exams/create?type=${activeTab}`}>
           <Button>
@@ -110,37 +118,40 @@ export default function ExamSectionsPage() {
       </div>
 
       {/* Tabs */}
-      <div className="border-b border-gray-200 dark:border-gray-700">
+      <div className="border-b border-slate-200 dark:border-slate-800">
         <div className="flex space-x-8">
           <button
             onClick={() => setActiveTab('LISTENING')}
             className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
               activeTab === 'LISTENING'
-                ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400'
-                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:hover:text-gray-300'
+                ? 'border-slate-900 text-slate-900 dark:text-white'
+                : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300 dark:hover:text-slate-300'
             }`}
           >
             Listening
+            <span className="ml-2 text-xs text-slate-400">{counts.LISTENING}</span>
           </button>
           <button
             onClick={() => setActiveTab('READING')}
             className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
               activeTab === 'READING'
-                ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400'
-                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:hover:text-gray-300'
+                ? 'border-slate-900 text-slate-900 dark:text-white'
+                : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300 dark:hover:text-slate-300'
             }`}
           >
             Reading
+            <span className="ml-2 text-xs text-slate-400">{counts.READING}</span>
           </button>
           <button
             onClick={() => setActiveTab('WRITING')}
             className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
               activeTab === 'WRITING'
-                ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400'
-                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:hover:text-gray-300'
+                ? 'border-slate-900 text-slate-900 dark:text-white'
+                : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300 dark:hover:text-slate-300'
             }`}
           >
             Writing
+            <span className="ml-2 text-xs text-slate-400">{counts.WRITING}</span>
           </button>
         </div>
       </div>
@@ -151,10 +162,10 @@ export default function ExamSectionsPage() {
           <Card key={section.id} hover>
             <CardBody className="p-6">
               <div className="flex items-start justify-between mb-4">
-                <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-white shadow-lg ${
-                  section.type === 'READING' ? 'bg-linear-to-br from-blue-500 to-cyan-500' :
-                  section.type === 'LISTENING' ? 'bg-linear-to-br from-amber-500 to-orange-500' :
-                  'bg-linear-to-br from-emerald-500 to-teal-500'
+                <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-white shadow-sm ${
+                  section.type === 'READING' ? 'bg-blue-600' :
+                  section.type === 'LISTENING' ? 'bg-amber-500' :
+                  'bg-emerald-600'
                 }`}>
                   {getTypeIcon(section.type)}
                 </div>
@@ -163,15 +174,15 @@ export default function ExamSectionsPage() {
                 </Badge>
               </div>
 
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2 line-clamp-2">
+              <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-2 line-clamp-2">
                 {section.title}
               </h3>
               
               {section.description && (
-                <p className="text-sm text-gray-500 mb-4 line-clamp-2">{section.description}</p>
+                <p className="text-sm text-slate-500 mb-4 line-clamp-2">{section.description}</p>
               )}
 
-              <div className="flex flex-wrap gap-3 text-sm text-gray-500 mb-4">
+              <div className="flex flex-wrap gap-3 text-sm text-slate-500 mb-4">
                 <span className="flex items-center gap-1">
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -186,14 +197,14 @@ export default function ExamSectionsPage() {
                 </span>
               </div>
 
-              <div className="flex items-center justify-between pt-4 border-t border-gray-100 dark:border-gray-700">
-                <p className="text-xs text-gray-400">
+              <div className="flex items-center justify-between pt-4 border-t border-slate-200 dark:border-slate-800">
+                <p className="text-xs text-slate-400">
                   by {section.teacher?.firstName || section.teacher?.username || 'Unknown'}
                 </p>
                 <div className="flex gap-2">
                   <Link href={`/dashboard/exams/${section.id}/edit`}>
                     <Button variant="ghost" size="sm">
-                      <svg className="w-4 h-4 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <svg className="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                       </svg>
                     </Button>
@@ -209,7 +220,7 @@ export default function ExamSectionsPage() {
           </Card>
         ))}
         {filteredSections.length === 0 && (
-          <div className="col-span-full py-12 flex flex-col items-center justify-center text-gray-500">
+          <div className="col-span-full py-12 flex flex-col items-center justify-center text-slate-500">
             <p>No {activeTab.toLowerCase()} sections found.</p>
             <Link href={`/dashboard/exams/create?type=${activeTab}`} className="mt-4">
               <Button variant="secondary" size="sm">Create {activeTab.toLowerCase()} section</Button>

@@ -11,9 +11,9 @@ interface CardProps {
 export function Card({ children, className = '', hover = false }: CardProps) {
   return (
     <div className={`
-      bg-white dark:bg-gray-800 rounded-xl shadow-lg 
-      border border-gray-100 dark:border-gray-700
-      ${hover ? 'transition-transform duration-200 hover:scale-[1.02] hover:shadow-xl' : ''}
+      bg-white dark:bg-slate-900/80 rounded-2xl shadow-sm 
+      border border-slate-200 dark:border-slate-800
+      ${hover ? 'transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md' : ''}
       ${className}
     `}>
       {children}
@@ -23,7 +23,7 @@ export function Card({ children, className = '', hover = false }: CardProps) {
 
 export function CardHeader({ children, className = '' }: { children: ReactNode; className?: string }) {
   return (
-    <div className={`px-6 py-4 border-b border-gray-100 dark:border-gray-700 ${className}`}>
+    <div className={`px-6 py-4 border-b border-slate-200/70 dark:border-slate-800 ${className}`}>
       {children}
     </div>
   );
@@ -39,7 +39,7 @@ export function CardBody({ children, className = '' }: { children: ReactNode; cl
 
 export function CardFooter({ children, className = '' }: { children: ReactNode; className?: string }) {
   return (
-    <div className={`px-6 py-4 border-t border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50 rounded-b-xl ${className}`}>
+    <div className={`px-6 py-4 border-t border-slate-200/70 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-900/60 rounded-b-2xl ${className}`}>
       {children}
     </div>
   );

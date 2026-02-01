@@ -1,5 +1,5 @@
 import { PrismaPg } from '@prisma/adapter-pg';
-import { AssignmentStatus, PrismaClient, Role } from '@prisma/client';
+import { AssignmentStatus, FullMockStatus, PrismaClient, Role } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import 'dotenv/config';
 import { Pool } from 'pg';
@@ -282,18 +282,49 @@ In the modern era, the advent of aerial photography and satellite imagery has tr
   console.log('✅ Writing Exam created');
 
   // 6. Assign Exams
+  await prisma.examAssignment.deleteMany({
+    where: {
+      studentId: student1.id,
+      sectionId: { in: [listeningExam.id, readingExam.id, writingExam.id] },
+    },
+  });
+
+  await prisma.fullMockSession.deleteMany({
+    where: { studentId: student1.id },
+  });
+
+  const fullMockSession = await prisma.fullMockSession.create({
+    data: {
+      studentId: student1.id,
+      centerId: center.id,
+      status: FullMockStatus.ASSIGNED,
+      breakMinutes: 2,
+      currentSequence: 1,
+    },
+  });
+
   await prisma.examAssignment.createMany({
     data: [
       {
         studentId: student1.id,
-        sectionId: readingExam.id,
+        sectionId: listeningExam.id,
         status: AssignmentStatus.ASSIGNED,
+        fullMockSessionId: fullMockSession.id,
+        fullMockSequence: 1,
       },
       {
         studentId: student1.id,
-        sectionId: listeningExam.id,
-        status: AssignmentStatus.IN_PROGRESS,
-        startTime: new Date(),
+        sectionId: readingExam.id,
+        status: AssignmentStatus.ASSIGNED,
+        fullMockSessionId: fullMockSession.id,
+        fullMockSequence: 2,
+      },
+      {
+        studentId: student1.id,
+        sectionId: writingExam.id,
+        status: AssignmentStatus.ASSIGNED,
+        fullMockSessionId: fullMockSession.id,
+        fullMockSequence: 3,
       },
       {
         studentId: student2.id,
@@ -302,11 +333,11 @@ In the modern era, the advent of aerial photography and satellite imagery has tr
         score: 6,
         startTime: new Date(Date.now() - 86400000), // yesterday
         endTime: new Date(Date.now() - 82800000),
-      }
+      },
     ],
     skipDuplicates: true,
   });
-  console.log('✅ Assignments created');
+  console.log('✅ Assignments created (including full mock)');
 
   // 7. Create Historical Results
   await prisma.examResult.createMany({

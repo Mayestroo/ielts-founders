@@ -12,7 +12,7 @@ import {
 import { api } from "@/lib/api";
 import { Center } from "@/types";
 import Image from "next/image";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 export default function CentersPage() {
   const [centers, setCenters] = useState<Center[]>([]);
@@ -29,6 +29,7 @@ export default function CentersPage() {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [centerToDelete, setCenterToDelete] = useState<string | null>(null);
+  const [searchTerm, setSearchTerm] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { success, error: showError } = useToast();
@@ -39,6 +40,7 @@ export default function CentersPage() {
       setCenters(data);
     } catch (err) {
       console.error("Failed to load centers:", err);
+      showError("Failed to load centers");
     } finally {
       setIsLoading(false);
     }
@@ -146,10 +148,16 @@ export default function CentersPage() {
     }
   };
 
+  const filteredCenters = useMemo(() => {
+    if (!searchTerm.trim()) return centers;
+    const query = searchTerm.toLowerCase();
+    return centers.filter((center) => center.name.toLowerCase().includes(query));
+  }, [centers, searchTerm]);
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-indigo-500"></div>
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-slate-400"></div>
       </div>
     );
   }
@@ -159,11 +167,12 @@ export default function CentersPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
+          <h1 className="text-2xl font-semibold text-slate-900 dark:text-white">
             Learning Centers
           </h1>
-          <p className="text-gray-500 mt-1">
+          <p className="text-slate-500 mt-1">
             Manage learning centers and their data
+            <span className="ml-2 text-xs text-slate-400">{filteredCenters.length} centers</span>
           </p>
         </div>
         <Button onClick={openCreateModal}>
@@ -184,14 +193,36 @@ export default function CentersPage() {
         </Button>
       </div>
 
+      {/* Filters */}
+      <Card>
+        <CardBody className="py-4 px-6">
+          <div className="flex flex-wrap items-center gap-4">
+            <div className="flex-1 min-w-[240px]">
+              <Input
+                placeholder="Search centers by name..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+              />
+            </div>
+            <Button
+              variant="secondary"
+              onClick={() => setSearchTerm("")}
+              disabled={!searchTerm.trim()}
+            >
+              Clear
+            </Button>
+          </div>
+        </CardBody>
+      </Card>
+
       {/* Centers Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {centers.map((center) => (
+        {filteredCenters.map((center) => (
           <Card key={center.id} hover>
             <CardBody className="p-6">
               <div className="flex items-start justify-between mb-4">
                 {center.logo ? (
-                  <div className="w-12 h-12 rounded-2xl overflow-hidden bg-gray-100 dark:bg-gray-700">
+                  <div className="w-12 h-12 rounded-2xl overflow-hidden bg-slate-100 dark:bg-slate-800">
                     <Image
                       src={center.logo}
                       alt={center.name}
@@ -201,7 +232,7 @@ export default function CentersPage() {
                     />
                   </div>
                 ) : (
-                  <div className="w-12 h-12 rounded-2xl bg-linear-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white shadow-lg">
+                  <div className="w-12 h-12 rounded-2xl bg-slate-900 flex items-center justify-center text-white shadow-sm">
                     <svg
                       className="w-6 h-6"
                       fill="none"
@@ -224,7 +255,7 @@ export default function CentersPage() {
                     onClick={() => openEditModal(center)}
                   >
                     <svg
-                      className="w-4 h-4 text-gray-500"
+                      className="w-4 h-4 text-slate-500"
                       fill="none"
                       stroke="currentColor"
                       viewBox="0 0 24 24"
@@ -258,11 +289,11 @@ export default function CentersPage() {
                   </Button>
                 </div>
               </div>
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
+              <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-2">
                 {center.name}
               </h3>
               {center.loginPassword && (
-                <p className="text-xs text-indigo-500 dark:text-indigo-400 mb-2 flex items-center gap-1">
+                <p className="text-xs text-slate-500 dark:text-slate-400 mb-2 flex items-center gap-1">
                   <svg
                     className="w-3 h-3"
                     fill="none"
@@ -279,7 +310,7 @@ export default function CentersPage() {
                   Password protected
                 </p>
               )}
-              <div className="flex gap-4 text-sm text-gray-500">
+              <div className="flex gap-4 text-sm text-slate-500">
                 <span className="flex items-center gap-1">
                   <svg
                     className="w-4 h-4"
@@ -313,15 +344,17 @@ export default function CentersPage() {
                   {center._count?.examSections || 0} exams
                 </span>
               </div>
-              <p className="text-xs text-gray-400 mt-4">
+              <p className="text-xs text-slate-400 mt-4">
                 Created {new Date(center.createdAt).toLocaleDateString()}
               </p>
             </CardBody>
           </Card>
         ))}
-        {centers.length === 0 && (
-          <div className="col-span-full text-center py-12 text-gray-500">
-            No centers found. Create your first learning center.
+        {filteredCenters.length === 0 && (
+          <div className="col-span-full text-center py-12 text-slate-500">
+            {searchTerm.trim()
+              ? "No centers match your search."
+              : "No centers found. Create your first learning center."}
           </div>
         )}
       </div>
@@ -333,12 +366,12 @@ export default function CentersPage() {
       >
         <div className="space-y-4 py-2">
           <div className="flex items-center justify-between text-sm mb-1">
-            <span className="text-gray-500">Please wait while the logo is being uploaded</span>
-            <span className="font-medium text-indigo-600">{uploadProgress}%</span>
+            <span className="text-slate-500">Please wait while the logo is being uploaded</span>
+            <span className="font-medium text-slate-900">{uploadProgress}%</span>
           </div>
-          <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2.5">
+          <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-2.5">
             <div 
-              className="bg-indigo-600 h-2.5 rounded-full transition-all duration-300" 
+              className="bg-slate-900 h-2.5 rounded-full transition-all duration-300" 
               style={{ width: `${uploadProgress}%` }}
             ></div>
           </div>
@@ -363,12 +396,12 @@ export default function CentersPage() {
 
           {/* Logo Upload */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
               Center Logo
             </label>
             <div className="flex items-center gap-4">
               <div
-                className="w-20 h-20 rounded-xl border-2 border-dashed border-gray-300 dark:border-gray-600 flex items-center justify-center overflow-hidden cursor-pointer hover:border-indigo-500 transition-colors"
+                className="w-20 h-20 rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-700 flex items-center justify-center overflow-hidden cursor-pointer hover:border-slate-400 transition-colors"
                 onClick={() => fileInputRef.current?.click()}
               >
                 {logoPreview ? (
@@ -381,7 +414,7 @@ export default function CentersPage() {
                   />
                 ) : (
                   <svg
-                    className="w-8 h-8 text-gray-400"
+                    className="w-8 h-8 text-slate-400"
                     fill="none"
                     stroke="currentColor"
                     viewBox="0 0 24 24"
@@ -416,7 +449,7 @@ export default function CentersPage() {
                     type="button"
                     variant="ghost"
                     size="sm"
-                    className="ml-2 text-red-500"
+                    className="ml-2 text-rose-500"
                     onClick={() => {
                       setLogoFile(null);
                       setLogoPreview(null);
@@ -426,7 +459,7 @@ export default function CentersPage() {
                     Remove
                   </Button>
                 )}
-                <p className="text-xs text-gray-500 mt-1">
+                <p className="text-xs text-slate-500 mt-1">
                   PNG, JPG up to 10MB
                 </p>
               </div>
@@ -448,7 +481,7 @@ export default function CentersPage() {
             onChange={(e) => setLoginPassword(e.target.value)}
             type="password"
           />
-          <p className="text-xs text-gray-500 -mt-2">
+          <p className="text-xs text-slate-500 -mt-2">
             If set, users will need this password to access the center
           </p>
 
@@ -464,7 +497,7 @@ export default function CentersPage() {
             >
               Cancel
             </Button>
-            <Button type="submit" className="flex-1" disabled={isSubmitting}>
+            <Button type="submit" className="flex-1" disabled={isSubmitting || isUploading}>
               {isSubmitting
                 ? "Saving..."
                 : editingCenter

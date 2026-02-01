@@ -29,6 +29,13 @@ enum AssignmentStatus {
   SUBMITTED
 }
 
+enum FullMockStatus {
+  ASSIGNED
+  IN_PROGRESS
+  BREAK
+  COMPLETED
+}
+
 // Models
 model Center {
   id            String   @id @default(uuid())
@@ -40,6 +47,7 @@ model Center {
 
   users        User[]
   examSections ExamSection[]
+  fullMockSessions FullMockSession[]
 }
 
 model User {
@@ -53,10 +61,12 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  center          Center?          @relation(fields: [centerId], references: [id], onDelete: SetNull)
-  createdSections ExamSection[]    @relation("TeacherSections")
-  assignments     ExamAssignment[] @relation("StudentAssignments")
-  results         ExamResult[]     @relation("StudentResults")
+  center              Center?             @relation(fields: [centerId], references: [id], onDelete: SetNull)
+  createdSections     ExamSection[]       @relation("TeacherSections")
+  assignments         ExamAssignment[]    @relation("StudentAssignments")
+  results             ExamResult[]        @relation("StudentResults")
+  writingSubmissions  WritingSubmission[] @relation("WritingSubmissions")
+  fullMockSessions    FullMockSession[]
 
   @@index([centerId])
   @@index([role])
@@ -76,10 +86,11 @@ model ExamSection {
   createdAt   DateTime        @default(now())
   updatedAt   DateTime        @updatedAt
 
-  teacher     User             @relation("TeacherSections", fields: [teacherId], references: [id], onDelete: Cascade)
-  center      Center           @relation(fields: [centerId], references: [id], onDelete: Cascade)
-  assignments ExamAssignment[]
-  results     ExamResult[]
+  teacher              User                @relation("TeacherSections", fields: [teacherId], references: [id], onDelete: Cascade)
+  center               Center              @relation(fields: [centerId], references: [id], onDelete: Cascade)
+  assignments          ExamAssignment[]
+  results              ExamResult[]
+  writingSubmissions   WritingSubmission[]
 
   @@index([teacherId])
   @@index([centerId])
@@ -96,16 +107,22 @@ model ExamAssignment {
   answers    Json?            // Student's answers
   highlights Json?            // Highlights for reading/listening sections
   score      Float?           // Calculated score
+  fullMockSessionId String?
+  fullMockSequence  Int?
   createdAt  DateTime         @default(now())
   updatedAt  DateTime         @updatedAt
 
-  student User        @relation("StudentAssignments", fields: [studentId], references: [id], onDelete: Cascade)
-  section ExamSection @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  student     User           @relation("StudentAssignments", fields: [studentId], references: [id], onDelete: Cascade)
+  section     ExamSection    @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  examSession ExamSession?
+  fullMockSession FullMockSession? @relation(fields: [fullMockSessionId], references: [id], onDelete: SetNull)
 
   @@unique([studentId, sectionId]) // One assignment per student per section
   @@index([studentId])
   @@index([sectionId])
   @@index([status])
+  @@index([fullMockSessionId])
+  @@index([fullMockSessionId, fullMockSequence])
 }
 
 model ExamResult {
@@ -120,9 +137,105 @@ model ExamResult {
   submittedAt  DateTime @default(now())
   createdAt    DateTime @default(now())
 
-  student User        @relation("StudentResults", fields: [studentId], references: [id], onDelete: Cascade)
-  section ExamSection @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  student            User               @relation("StudentResults", fields: [studentId], references: [id], onDelete: Cascade)
+  section            ExamSection        @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  writingSubmission  WritingSubmission?
 
   @@index([studentId])
   @@index([sectionId])
+}
+
+// ==== EXAM SESSION MANAGEMENT ====
+
+enum ExamSessionStatus {
+  ACTIVE
+  PAUSED       // For grace period during disconnect
+  EXPIRED      // Time ran out
+  SUBMITTED    // Successfully completed
+}
+
+model ExamSession {
+  id            String            @id @default(uuid())
+  assignmentId  String            @unique
+  studentId     String
+  startedAt     DateTime
+  endsAt        DateTime
+  lastSyncAt    DateTime          @default(now())
+  syncVersion   Int               @default(0)  // Optimistic locking
+  answers       Json?
+  highlights    Json?
+  status        ExamSessionStatus @default(ACTIVE)
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  assignment    ExamAssignment    @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+
+  @@index([studentId])
+  @@index([status])
+  @@index([endsAt])
+}
+
+model FullMockSession {
+  id              String         @id @default(uuid())
+  studentId       String
+  centerId        String
+  status          FullMockStatus @default(ASSIGNED)
+  breakMinutes    Int            @default(2)
+  currentSequence Int            @default(1)
+  breakEndsAt     DateTime?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  student     User           @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  center      Center         @relation(fields: [centerId], references: [id], onDelete: Cascade)
+  assignments ExamAssignment[]
+
+  @@index([studentId])
+  @@index([centerId])
+  @@index([status])
+}
+
+// ==== ASYNC WRITING GRADING ====
+
+enum WritingJobStatus {
+  QUEUED
+  PROCESSING
+  COMPLETED
+  FAILED
+  MANUAL_REVIEW
+}
+
+model WritingSubmission {
+  id            String           @id @default(uuid())
+  resultId      String           @unique
+  studentId     String
+  sectionId     String
+
+  // Submission data
+  task1Response String?          @db.Text
+  task2Response String?          @db.Text
+
+  // Job tracking
+  status        WritingJobStatus @default(QUEUED)
+  jobId         String?          // BullMQ job ID
+  attempts      Int              @default(0)
+  maxAttempts   Int              @default(3)
+  lastError     String?
+
+  // Results (populated by worker)
+  bandScore     Float?
+  evaluation    Json?            // Full AI evaluation
+
+  // Timestamps
+  queuedAt      DateTime         @default(now())
+  processingAt  DateTime?
+  completedAt   DateTime?
+
+  result        ExamResult       @relation(fields: [resultId], references: [id], onDelete: Cascade)
+  student       User             @relation("WritingSubmissions", fields: [studentId], references: [id], onDelete: Cascade)
+  section       ExamSection      @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+  @@index([studentId])
+  @@index([queuedAt])
 }

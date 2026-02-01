@@ -12,17 +12,30 @@ import {
     UseGuards,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
+import { Throttle } from '@nestjs/throttler';
 import { Role } from '@prisma/client';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { RolesGuard } from '../../common/guards/roles.guard';
+import { ExamSectionService } from '../exam-content/exam-section.service';
+import { ResultService } from '../exam-evaluation/result.service';
+import { WritingEvaluationService } from '../exam-evaluation/writing-evaluation.service';
+import {
+    AssignmentService,
+    AssignmentWithSection,
+} from '../exam-runtime/assignment.service';
+import { ExamSessionService } from '../exam-runtime/exam-session.service';
+import { SubmissionService } from '../exam-runtime/submission.service';
 import {
     CreateAssignmentDto,
     CreateExamSectionDto,
+    CreateFullMockDto,
+    HeartbeatDto,
+    ReconnectDto,
     SaveHighlightsDto,
     SubmitAnswersDto,
+    SyncAnswersDto,
     UpdateExamSectionDto,
 } from './dto';
-import { ExamsService } from './exams.service';
 
 interface AuthenticatedUser {
   id: string;
@@ -37,7 +50,14 @@ interface AuthenticatedRequest {
 @Controller()
 @UseGuards(AuthGuard('jwt'), RolesGuard)
 export class ExamsController {
-  constructor(private examsService: ExamsService) {}
+  constructor(
+    private examSectionService: ExamSectionService,
+    private assignmentService: AssignmentService,
+    private submissionService: SubmissionService,
+    private examSessionService: ExamSessionService,
+    private resultService: ResultService,
+    private writingEvaluationService: WritingEvaluationService,
+  ) {}
 
   // ========== EXAM SECTIONS ==========
 
@@ -48,12 +68,14 @@ export class ExamsController {
     @Request() req: AuthenticatedRequest,
   ) {
     const centerId = createSectionDto.centerId || req.user.centerId;
-    
+
     if (!centerId) {
-      throw new BadRequestException('centerId is required. Please specify a center.');
+      throw new BadRequestException(
+        'centerId is required. Please specify a center.',
+      );
     }
 
-    return this.examsService.createSection(
+    return this.examSectionService.create(
       createSectionDto,
       req.user.id,
       centerId,
@@ -63,7 +85,7 @@ export class ExamsController {
   @Get('exam-sections')
   @Roles(Role.TEACHER, Role.CENTER_ADMIN, Role.SUPER_ADMIN)
   findAllSections(@Request() req: AuthenticatedRequest) {
-    return this.examsService.findAllSections(
+    return this.examSectionService.findAll(
       req.user.role,
       req.user.centerId,
       req.user.id,
@@ -72,7 +94,7 @@ export class ExamsController {
 
   @Get('exam-sections/:id')
   findSectionById(@Param('id') id: string) {
-    return this.examsService.findSectionById(id);
+    return this.examSectionService.findById(id);
   }
 
   @Put('exam-sections/:id')
@@ -82,7 +104,7 @@ export class ExamsController {
     @Body() updateSectionDto: UpdateExamSectionDto,
     @Request() req: AuthenticatedRequest,
   ) {
-    return this.examsService.updateSection(
+    return this.examSectionService.update(
       id,
       updateSectionDto,
       req.user.id,
@@ -93,7 +115,7 @@ export class ExamsController {
   @Delete('exam-sections/:id')
   @Roles(Role.TEACHER, Role.CENTER_ADMIN, Role.SUPER_ADMIN)
   deleteSection(@Param('id') id: string, @Request() req: AuthenticatedRequest) {
-    return this.examsService.deleteSection(id, req.user.id, req.user.role);
+    return this.examSectionService.delete(id, req.user.id, req.user.role);
   }
 
   // ========== ASSIGNMENTS ==========
@@ -104,8 +126,21 @@ export class ExamsController {
     @Body() createAssignmentDto: CreateAssignmentDto,
     @Request() req: AuthenticatedRequest,
   ) {
-    return this.examsService.createAssignment(
+    return this.assignmentService.create(
       createAssignmentDto,
+      req.user.id,
+      req.user.centerId!,
+    );
+  }
+
+  @Post('assignments/full-mock')
+  @Roles(Role.TEACHER, Role.CENTER_ADMIN)
+  createFullMockAssignment(
+    @Body() createFullMockDto: CreateFullMockDto,
+    @Request() req: AuthenticatedRequest,
+  ) {
+    return this.assignmentService.createFullMock(
+      createFullMockDto,
       req.user.id,
       req.user.centerId!,
     );
@@ -118,7 +153,7 @@ export class ExamsController {
     @Query('skip') skip?: number,
     @Query('take') take?: number,
   ) {
-    return this.examsService.findAllAssignments(
+    return this.assignmentService.findAll(
       req.user.role,
       req.user.centerId,
       skip,
@@ -131,7 +166,7 @@ export class ExamsController {
     @Param('studentId') studentId: string,
     @Request() req: AuthenticatedRequest,
   ) {
-    return this.examsService.getStudentAssignments(
+    return this.assignmentService.getStudentAssignments(
       studentId,
       req.user.id,
       req.user.role,
@@ -140,7 +175,7 @@ export class ExamsController {
 
   @Get('assignments/my')
   getMyAssignments(@Request() req: AuthenticatedRequest) {
-    return this.examsService.getStudentAssignments(
+    return this.assignmentService.getStudentAssignments(
       req.user.id,
       req.user.id,
       req.user.role,
@@ -151,28 +186,25 @@ export class ExamsController {
   getAssignmentDetails(
     @Param('id') id: string,
     @Request() req: AuthenticatedRequest,
-  ) {
-    return this.examsService.getAssignmentDetails(
-      id,
-      req.user.id,
-      req.user.role,
-    );
+  ): Promise<AssignmentWithSection> {
+    return this.assignmentService.findById(id, req.user.id, req.user.role);
   }
 
   @Post('assignments/:id/start')
   @Roles(Role.STUDENT)
   startExam(@Param('id') id: string, @Request() req: AuthenticatedRequest) {
-    return this.examsService.startExam(id, req.user.id);
+    return this.assignmentService.startExam(id, req.user.id);
   }
 
   @Post('assignments/:id/submit')
   @Roles(Role.STUDENT)
+  @Throttle({ default: { ttl: 60000, limit: 5 } })
   submitAnswers(
     @Param('id') id: string,
     @Body() submitDto: SubmitAnswersDto,
     @Request() req: AuthenticatedRequest,
   ) {
-    return this.examsService.submitAnswers(id, submitDto, req.user.id);
+    return this.submissionService.submitAnswers(id, submitDto, req.user.id);
   }
 
   @Post('assignments/:id/highlight')
@@ -182,7 +214,68 @@ export class ExamsController {
     @Body() highlightsDto: SaveHighlightsDto,
     @Request() req: AuthenticatedRequest,
   ) {
-    return this.examsService.saveHighlights(id, highlightsDto, req.user.id);
+    return this.assignmentService.saveHighlights(
+      id,
+      highlightsDto.highlights,
+      req.user.id,
+    );
+  }
+
+  // ========== SESSION MANAGEMENT (Offline Resilience) ==========
+
+  @Post('assignments/:id/sync')
+  @Roles(Role.STUDENT)
+  syncAnswers(
+    @Param('id') id: string,
+    @Body() body: SyncAnswersDto,
+    @Request() req: AuthenticatedRequest,
+  ) {
+    return this.examSessionService.syncAnswers(
+      id,
+      req.user.id,
+      body.answers,
+      body.highlights || [],
+      body.syncVersion || 0,
+    );
+  }
+
+  @Post('assignments/:id/heartbeat')
+  @Roles(Role.STUDENT)
+  heartbeat(
+    @Param('id') id: string,
+    @Body() body: HeartbeatDto,
+    @Request() req: AuthenticatedRequest,
+  ) {
+    return this.examSessionService.heartbeat(id, req.user.id, body.tabId);
+  }
+
+  @Post('assignments/:id/reconnect')
+  @Roles(Role.STUDENT)
+  reconnectExam(
+    @Param('id') id: string,
+    @Body() body: ReconnectDto,
+    @Request() req: AuthenticatedRequest,
+  ) {
+    return this.examSessionService.reconnect(
+      id,
+      req.user.id,
+      body.clientAnswers || {},
+      body.tabId,
+    );
+  }
+
+  // ========== WRITING SUBMISSION STATUS ==========
+
+  @Get('writing-submissions/:id/status')
+  getWritingSubmissionStatus(
+    @Param('id') id: string,
+    @Request() req: AuthenticatedRequest,
+  ) {
+    return this.writingEvaluationService.getWritingSubmissionStatus(
+      id,
+      req.user.id,
+      req.user.role,
+    );
   }
 
   // ========== RESULTS ==========
@@ -194,7 +287,7 @@ export class ExamsController {
     @Query('skip') skip?: number,
     @Query('take') take?: number,
   ) {
-    return this.examsService.findAllResults(
+    return this.resultService.findAll(
       req.user.role,
       req.user.centerId,
       skip,
@@ -208,7 +301,7 @@ export class ExamsController {
     @Param('studentId') studentId: string,
     @Request() req: AuthenticatedRequest,
   ) {
-    return this.examsService.getStudentResults(
+    return this.resultService.getStudentResults(
       studentId,
       req.user.id,
       req.user.role,
@@ -218,7 +311,7 @@ export class ExamsController {
 
   @Get('results/:id')
   getResultById(@Param('id') id: string, @Request() req: AuthenticatedRequest) {
-    return this.examsService.getResultById(
+    return this.resultService.findById(
       id,
       req.user.id,
       req.user.role,
@@ -231,8 +324,8 @@ export class ExamsController {
   evaluateWriting(
     @Param('id') id: string,
     @Request() req: AuthenticatedRequest,
-  ) {
-    return this.examsService.evaluateWritingWithAI(
+  ): Promise<unknown> {
+    return this.writingEvaluationService.evaluateWriting(
       id,
       req.user.id,
       req.user.role,
@@ -245,7 +338,7 @@ export class ExamsController {
     @Param('id') id: string,
     @Request() req: AuthenticatedRequest,
   ) {
-    return this.examsService.reassignAssignment(id, req.user.id, req.user.role);
+    return this.assignmentService.reassign(id);
   }
 
   @Delete('assignments/:id')
@@ -254,6 +347,6 @@ export class ExamsController {
     @Param('id') id: string,
     @Request() req: AuthenticatedRequest,
   ) {
-    return this.examsService.deleteAssignment(id, req.user.id, req.user.role);
+    return this.assignmentService.delete(id);
   }
 }

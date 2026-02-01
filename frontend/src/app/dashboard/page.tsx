@@ -7,7 +7,7 @@ import { Center, ExamAssignment } from "@/types";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 export default function DashboardPage() {
   const { user, isLoading, isAuthenticated, logout } = useAuth();
@@ -16,6 +16,38 @@ export default function DashboardPage() {
   const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false);
   const [centerLogo, setCenterLogo] = useState<string | null>(null);
   const router = useRouter();
+
+  const activeAssignments = useMemo(() => {
+    const groups = new Map<string, ExamAssignment[]>();
+
+    assignments.forEach((assignment) => {
+      if (!assignment.fullMockSessionId) return;
+      const existing = groups.get(assignment.fullMockSessionId) || [];
+      existing.push(assignment);
+      groups.set(assignment.fullMockSessionId, existing);
+    });
+
+    if (groups.size === 0) {
+      return assignments;
+    }
+
+    let selected: ExamAssignment[] | null = null;
+    let latestTimestamp = 0;
+
+    groups.forEach((group) => {
+      const hasPending = group.some((item) => item.status !== "SUBMITTED");
+      if (!hasPending) return;
+      const groupLatest = Math.max(
+        ...group.map((item) => new Date(item.createdAt).getTime()),
+      );
+      if (groupLatest > latestTimestamp) {
+        latestTimestamp = groupLatest;
+        selected = group;
+      }
+    });
+
+    return selected ?? assignments;
+  }, [assignments]);
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
@@ -141,15 +173,17 @@ export default function DashboardPage() {
 
                 {(() => {
                   const orderedTypes = ["LISTENING", "READING", "WRITING"];
-                  const nextToComplete = orderedTypes.find((type) => {
-                    const a = assignments.find((a) => a.section?.type === type);
-                    return a && a.status !== "SUBMITTED";
-                  });
+                    const nextToComplete = orderedTypes.find((type) => {
+                      const a = activeAssignments.find(
+                        (a) => a.section?.type === type,
+                      );
+                      return a && a.status !== "SUBMITTED";
+                    });
 
                   return orderedTypes.map((type, idx) => {
-                    const assignment = assignments.find(
-                      (a) => a.section?.type === type
-                    );
+                      const assignment = activeAssignments.find(
+                        (a) => a.section?.type === type
+                      );
                     const isCompleted = assignment?.status === "SUBMITTED";
                     const isActive = type === nextToComplete;
                     const stepNum = idx + 1;
@@ -217,11 +251,11 @@ export default function DashboardPage() {
               <div className="flex flex-col items-center gap-6 mt-16 pt-8 border-t border-gray-50">
                 {(() => {
                   const orderedTypes = ["LISTENING", "READING", "WRITING"];
-                  const nextAssignment = orderedTypes
-                    .map((type) =>
-                      assignments.find((a) => a.section?.type === type)
-                    )
-                    .find((a) => a && a.status !== "SUBMITTED");
+                    const nextAssignment = orderedTypes
+                      .map((type) =>
+                        activeAssignments.find((a) => a.section?.type === type)
+                      )
+                      .find((a) => a && a.status !== "SUBMITTED");
 
                   if (nextAssignment) {
                     return (

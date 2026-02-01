@@ -1,12 +1,18 @@
 import { Module } from '@nestjs/common';
-import { AiModule } from '../ai';
+import { EventEmitterModule } from '@nestjs/event-emitter';
+import { ExamContentModule } from '../exam-content';
+import { ExamEvaluationModule } from '../exam-evaluation';
+import { ExamRuntimeModule } from '../exam-runtime';
 import { ExamsController } from './exams.controller';
-import { ExamsService } from './exams.service';
 
 @Module({
-  imports: [AiModule],
+  imports: [
+    EventEmitterModule.forRoot(),
+    ExamContentModule,
+    ExamRuntimeModule,
+    ExamEvaluationModule,
+  ],
   controllers: [ExamsController],
-  providers: [ExamsService],
-  exports: [ExamsService],
+  exports: [ExamContentModule, ExamRuntimeModule, ExamEvaluationModule],
 })
 export class ExamsModule {}

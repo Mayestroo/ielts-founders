@@ -1,5 +1,13 @@
 import { ExamSectionType } from '@prisma/client';
-import { IsArray, IsEnum, IsInt, IsOptional, IsString, IsUrl, Min } from 'class-validator';
+import {
+  IsArray,
+  IsEnum,
+  IsInt,
+  IsOptional,
+  IsString,
+  IsUrl,
+  Min,
+} from 'class-validator';
 
 export class CreateExamSectionDto {
   @IsString()

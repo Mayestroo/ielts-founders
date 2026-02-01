@@ -23,6 +23,7 @@ export default function UsersPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [roleFilter, setRoleFilter] = useState('');
   const [centerFilter, setCenterFilter] = useState('');
+  const hasFilters = Boolean(searchTerm.trim() || roleFilter || centerFilter);
 
   const [formData, setFormData] = useState<CreateUserForm>({
     username: '',
@@ -48,6 +49,7 @@ export default function UsersPage() {
       setTotal(total);
     } catch (err) {
       console.error('Failed to load users:', err);
+      showError('Failed to load users');
     } finally {
       setIsLoading(false);
     }
@@ -167,8 +169,8 @@ export default function UsersPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Users</h1>
-          <p className="text-gray-500 mt-1">Manage users and their roles</p>
+          <h1 className="text-2xl font-semibold text-slate-900 dark:text-white">Users</h1>
+          <p className="text-slate-500 mt-1">Manage users and their roles</p>
         </div>
         <Button onClick={() => {
           setFormData({
@@ -224,52 +226,54 @@ export default function UsersPage() {
                  />
                </div>
              )}
-             <Button 
-               variant="secondary" 
-               onClick={() => {
-                 setSearchTerm('');
-                 setRoleFilter('');
-                 setCenterFilter('');
-               }}
-             >
-               Clear
-             </Button>
-          </div>
+              <Button 
+                variant="secondary" 
+                onClick={() => {
+                  setSearchTerm('');
+                  setRoleFilter('');
+                  setCenterFilter('');
+                  setPage(1);
+                }}
+                disabled={!hasFilters}
+              >
+                Clear
+              </Button>
+           </div>
         </CardBody>
       </Card>
 
       {/* Users Table */}
       {isLoading ? (
         <div className="flex items-center justify-center h-64">
-          <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-indigo-500"></div>
+          <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-slate-400"></div>
         </div>
       ) : (
         <Card>
         <CardBody className="p-0">
           <div className="overflow-x-auto">
             <table className="w-full">
-              <thead className="bg-gray-50 dark:bg-gray-800">
+              <thead className="bg-slate-50 dark:bg-slate-900/60">
                 <tr>
-                  <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">User</th>
-                  <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Role</th>
-                  <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Center</th>
-                  <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Created</th>
-                  <th className="px-6 py-4 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Actions</th>
+                  <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">User</th>
+                  <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Role</th>
+                  <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Center</th>
+                  <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Created</th>
+                  <th className="px-6 py-4 text-right text-xs font-semibold text-slate-500 uppercase tracking-wider">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+              <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
                 {filteredUsers.map((user) => (
-                  <tr key={user.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/50">
+                  <tr key={user.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-full bg-linear-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white font-semibold">
+                        <div className="w-10 h-10 rounded-full bg-slate-900 flex items-center justify-center text-white font-semibold">
                           {user.firstName?.[0] || user.username[0].toUpperCase()}
                         </div>
                         <div>
-                          <p className="font-medium text-gray-900 dark:text-white">
+                          <p className="font-medium text-slate-900 dark:text-white">
                             {user.firstName ? `${user.firstName} ${user.lastName || ''}` : user.username}
                           </p>
-                          <p className="text-sm text-gray-500">@{user.username}</p>
+                          <p className="text-sm text-slate-500">@{user.username}</p>
                         </div>
                       </div>
                     </td>
@@ -278,10 +282,10 @@ export default function UsersPage() {
                         {user.role.replace('_', ' ')}
                       </Badge>
                     </td>
-                    <td className="px-6 py-4 text-gray-500 dark:text-gray-400">
+                    <td className="px-6 py-4 text-slate-500 dark:text-slate-400">
                       {user.center?.name || '—'}
                     </td>
-                    <td className="px-6 py-4 text-gray-500 dark:text-gray-400">
+                    <td className="px-6 py-4 text-slate-500 dark:text-slate-400">
                       {new Date(user.createdAt).toLocaleDateString()}
                     </td>
                     <td className="px-6 py-4 text-right flex justify-end gap-2">
@@ -305,7 +309,7 @@ export default function UsersPage() {
                 ))}
                 {filteredUsers.length === 0 && (
                   <tr>
-                    <td colSpan={5} className="px-6 py-12 text-center text-gray-500">
+                    <td colSpan={5} className="px-6 py-12 text-center text-slate-500">
                       {searchTerm || roleFilter || centerFilter ? 'No users match your filters' : 'No users found'}
                     </td>
                   </tr>
@@ -319,7 +323,7 @@ export default function UsersPage() {
 
       {/* Pagination */}
       {total > pageSize && (
-        <div className="flex items-center justify-between bg-white dark:bg-gray-800 px-4 py-3 rounded-lg border border-gray-200 dark:border-gray-700">
+        <div className="flex items-center justify-between bg-white dark:bg-slate-900 px-4 py-3 rounded-lg border border-slate-200 dark:border-slate-800">
           <div className="flex flex-1 justify-between sm:hidden">
             <Button
               onClick={() => setPage(p => Math.max(1, p - 1))}
@@ -338,7 +342,7 @@ export default function UsersPage() {
           </div>
           <div className="hidden sm:flex sm:flex-1 sm:items-center sm:justify-between">
             <div>
-              <p className="text-sm text-gray-700 dark:text-gray-300">
+              <p className="text-sm text-slate-700 dark:text-slate-300">
                 Showing <span className="font-medium">{(page - 1) * pageSize + 1}</span> to <span className="font-medium">{Math.min(page * pageSize, total)}</span> of{' '}
                 <span className="font-medium">{total}</span> results
               </p>
@@ -348,7 +352,7 @@ export default function UsersPage() {
                 <button
                   onClick={() => setPage(p => Math.max(1, p - 1))}
                   disabled={page === 1}
-                  className="relative inline-flex items-center rounded-l-md px-2 py-2 text-gray-400 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus:z-20 focus:outline-offset-0 disabled:opacity-50"
+                  className="relative inline-flex items-center rounded-l-md px-2 py-2 text-slate-400 ring-1 ring-inset ring-slate-200 hover:bg-slate-50 focus:z-20 focus:outline-offset-0 disabled:opacity-50"
                 >
                   <span className="sr-only">Previous</span>
                   <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
@@ -359,10 +363,10 @@ export default function UsersPage() {
                   <button
                     key={i}
                     onClick={() => setPage(i + 1)}
-                    className={`relative inline-flex items-center px-4 py-2 text-sm font-semibold ring-1 ring-inset ring-gray-300 focus:z-20 focus:outline-offset-0 ${
+                    className={`relative inline-flex items-center px-4 py-2 text-sm font-semibold ring-1 ring-inset ring-slate-200 focus:z-20 focus:outline-offset-0 ${
                       page === i + 1
-                        ? 'z-10 bg-indigo-600 text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600'
-                        : 'text-gray-900 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
+                        ? 'z-10 bg-slate-900 text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900'
+                        : 'text-slate-900 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'
                     }`}
                   >
                     {i + 1}
@@ -371,7 +375,7 @@ export default function UsersPage() {
                 <button
                   onClick={() => setPage(p => p + 1)}
                   disabled={page * pageSize >= total}
-                  className="relative inline-flex items-center rounded-r-md px-2 py-2 text-gray-400 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus:z-20 focus:outline-offset-0 disabled:opacity-50"
+                  className="relative inline-flex items-center rounded-r-md px-2 py-2 text-slate-400 ring-1 ring-inset ring-slate-200 hover:bg-slate-50 focus:z-20 focus:outline-offset-0 disabled:opacity-50"
                 >
                   <span className="sr-only">Next</span>
                   <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">

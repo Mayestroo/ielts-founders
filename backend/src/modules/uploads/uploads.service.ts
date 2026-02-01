@@ -18,7 +18,8 @@ export class UploadsService {
   }
 
   getFileUrl(filename: string): string {
-    const baseUrl = this.configService.get('BACKEND_URL') || 'http://localhost:3000';
+    const baseUrl =
+      this.configService.get('BACKEND_URL') || 'http://localhost:3000';
     return `${baseUrl}/uploads/${filename}`;
   }
 }

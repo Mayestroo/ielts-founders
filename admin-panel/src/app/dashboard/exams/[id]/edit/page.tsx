@@ -339,7 +339,7 @@ export default function EditExamPage() {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-indigo-500"></div>
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-slate-400"></div>
       </div>
     );
   }
@@ -349,18 +349,15 @@ export default function EditExamPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
+          <h1 className="text-2xl font-semibold text-slate-900 dark:text-white">
             Edit Exam Section
           </h1>
-          <p className="text-gray-500 mt-1">
-            Modify existing IELTS exam section
-          </p>
+          <p className="text-slate-500 mt-1">Modify existing IELTS exam section</p>
         </div>
         <Button
           type="button"
           variant="secondary"
           onClick={() => setIsImportModalOpen(true)}
-          className="border-black text-black hover:bg-gray-50"
         >
           Quick Import
         </Button>
@@ -379,16 +376,16 @@ export default function EditExamPage() {
       >
         <div className="space-y-4 py-2">
           <div className="flex items-center justify-between text-sm mb-1">
-            <span className="text-gray-500">Please wait while the file is being uploaded</span>
-            <span className="font-medium text-indigo-600">{uploadProgress}%</span>
+            <span className="text-slate-500">Please wait while the file is being uploaded</span>
+            <span className="font-medium text-slate-900">{uploadProgress}%</span>
           </div>
-          <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2.5">
+          <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-2.5">
             <div 
-              className="bg-indigo-600 h-2.5 rounded-full transition-all duration-300" 
+              className="bg-slate-900 h-2.5 rounded-full transition-all duration-300" 
               style={{ width: `${uploadProgress}%` }}
             ></div>
           </div>
-          <p className="text-xs text-center text-gray-400 mt-4">
+          <p className="text-xs text-center text-slate-400 mt-4">
             For large audio files, this may take a moment. Do not close this page.
           </p>
         </div>
@@ -404,7 +401,7 @@ export default function EditExamPage() {
         {/* Basic Info */}
         <Card>
           <CardHeader>
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+            <h2 className="text-lg font-semibold text-slate-900 dark:text-white">
               Basic Information
             </h2>
           </CardHeader>
@@ -469,7 +466,7 @@ export default function EditExamPage() {
 
             {formData.type === "LISTENING" && (
               <div className="space-y-2">
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
                   Audio URL / Upload
                 </label>
                 <div className="flex gap-2">
@@ -544,18 +541,18 @@ export default function EditExamPage() {
             ).map((task, idx) => (
               <Card key={task.id || idx}>
                 <CardHeader>
-                  <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+                  <h2 className="text-lg font-semibold text-slate-900 dark:text-white">
                     Task {idx + 1}
                   </h2>
                 </CardHeader>
                 <CardBody className="space-y-4">
                   <div className="space-y-2">
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
                       Task Prompt (Question Text)
                     </label>
                     <textarea
                       placeholder="Enter the task description or prompt here..."
-                      className="w-full h-32 px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white resize-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                      className="w-full h-32 px-4 py-3 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 resize-none focus:ring-2 focus:ring-slate-300 focus:border-slate-400"
                       value={task.questionText}
                       onChange={(e) =>
                         updateQuestion(task.id, {
@@ -567,7 +564,7 @@ export default function EditExamPage() {
                   </div>
                   {idx === 0 && (
                     <div className="space-y-2">
-                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                      <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
                         Image URL / Upload
                       </label>
                       <div className="flex gap-2">
@@ -635,7 +632,7 @@ export default function EditExamPage() {
             {formData.type === "READING" && (
               <Card>
                 <CardHeader className="flex items-center justify-between">
-                  <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+                  <h2 className="text-lg font-semibold text-slate-900 dark:text-white">
                     Passages
                   </h2>
                   <Button type="button" size="sm" onClick={addPassage}>
@@ -644,17 +641,17 @@ export default function EditExamPage() {
                 </CardHeader>
                 <CardBody className="space-y-4">
                   {passages.length === 0 ? (
-                    <p className="text-gray-500 text-center py-4">
+                    <p className="text-slate-500 text-center py-4">
                       No passages added. Click &quot;Add Passage&quot; to start.
                     </p>
                   ) : (
                     passages.map((passage, index) => (
                       <div
                         key={passage.id}
-                        className="p-4 rounded-lg border border-gray-200 dark:border-gray-700 space-y-3"
+                        className="p-4 rounded-lg border border-slate-200 dark:border-slate-700 space-y-3"
                       >
                         <div className="flex items-center justify-between">
-                          <h3 className="font-medium text-gray-900 dark:text-white">
+                          <h3 className="font-medium text-slate-900 dark:text-white">
                             Passage {index + 1}
                           </h3>
                           <Button
@@ -675,7 +672,7 @@ export default function EditExamPage() {
                         />
                         <textarea
                           placeholder="Paste passage content here..."
-                          className="w-full h-40 px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white resize-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                          className="w-full h-40 px-4 py-3 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 resize-none focus:ring-2 focus:ring-slate-300 focus:border-slate-400"
                           value={passage.content}
                           onChange={(e) =>
                             updatePassage(passage.id, "content", e.target.value)
@@ -691,7 +688,7 @@ export default function EditExamPage() {
             {/* Questions (Listening/Reading) */}
             <Card>
               <CardHeader className="flex items-center justify-between">
-                <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+                <h2 className="text-lg font-semibold text-slate-900 dark:text-white">
                   Questions ({questions.length})
                 </h2>
                 <Select
@@ -711,21 +708,21 @@ export default function EditExamPage() {
               </CardHeader>
               <CardBody className="space-y-4">
                 {questions.length === 0 ? (
-                  <p className="text-gray-500 text-center py-8">
+                  <p className="text-slate-500 text-center py-8">
                     No questions added. Select a question type above to start.
                   </p>
                 ) : (
                   questions.map((question, index) => (
                     <div
                       key={question.id || index}
-                      className="p-4 rounded-lg border border-gray-200 dark:border-gray-700 space-y-3"
+                      className="p-4 rounded-lg border border-slate-200 dark:border-slate-700 space-y-3"
                     >
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
-                          <span className="w-8 h-8 rounded-full bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center text-indigo-600 dark:text-indigo-400 text-sm font-medium">
+                          <span className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-700 dark:text-slate-200 text-sm font-medium">
                             {index + 1}
                           </span>
-                          <span className="text-sm font-medium text-gray-500">
+                          <span className="text-sm font-medium text-slate-500">
                             {question.type?.replace(/_/g, " ")}
                           </span>
                         </div>
@@ -753,13 +750,13 @@ export default function EditExamPage() {
                       {(question.type === "MCQ_SINGLE" ||
                         question.type === "MCQ_MULTIPLE") && (
                         <div className="space-y-2">
-                          <p className="text-sm text-gray-500">Options:</p>
+                          <p className="text-sm text-slate-500">Options:</p>
                           {(question.options || []).map((opt, i) => (
                             <div
                               key={opt.id}
                               className="flex items-center gap-2"
                             >
-                              <span className="w-6 text-gray-400 text-sm">
+                              <span className="w-6 text-slate-400 text-sm">
                                 {String.fromCharCode(65 + i)}.
                               </span>
                               <Input

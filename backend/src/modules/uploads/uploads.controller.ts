@@ -1,10 +1,10 @@
 import {
-    BadRequestException,
-    Controller,
-    Post,
-    UploadedFile,
-    UseGuards,
-    UseInterceptors
+  BadRequestException,
+  Controller,
+  Post,
+  UploadedFile,
+  UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -22,25 +22,30 @@ export class UploadsController {
 
   @Post()
   @Roles(Role.SUPER_ADMIN, Role.CENTER_ADMIN, Role.TEACHER)
-  @UseInterceptors(FileInterceptor('file', {
-    storage: diskStorage({
-      destination: './uploads',
-      filename: (req, file, cb) => {
-        const randomName = Array(32).fill(null).map(() => (Math.round(Math.random() * 16)).toString(16)).join('');
-        cb(null, `${randomName}${extname(file.originalname)}`);
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: diskStorage({
+        destination: './uploads',
+        filename: (req, file, cb) => {
+          const randomName = Array(32)
+            .fill(null)
+            .map(() => Math.round(Math.random() * 16).toString(16))
+            .join('');
+          cb(null, `${randomName}${extname(file.originalname)}`);
+        },
+      }),
+      fileFilter: (req, file, cb) => {
+        if (file.mimetype.match(/\/(jpg|jpeg|png|gif|mp3|mpeg|wav)$/)) {
+          cb(null, true);
+        } else {
+          cb(new BadRequestException('Unsupported file type'), false);
+        }
+      },
+      limits: {
+        fileSize: 200 * 1024 * 1024, // 200MB
       },
     }),
-    fileFilter: (req, file, cb) => {
-      if (file.mimetype.match(/\/(jpg|jpeg|png|gif|mp3|mpeg|wav)$/)) {
-        cb(null, true);
-      } else {
-        cb(new BadRequestException('Unsupported file type'), false);
-      }
-    },
-    limits: {
-      fileSize: 200 * 1024 * 1024, // 200MB
-    }
-  }))
+  )
   uploadFile(@UploadedFile() file: Express.Multer.File) {
     if (!file) {
       throw new BadRequestException('No file uploaded');

@@ -1,6 +1,7 @@
 import {
     Center,
     CreateAssignmentForm,
+    CreateFullMockForm,
     CreateCenterForm,
     CreateExamSectionForm,
     CreateUserForm,
@@ -181,6 +182,15 @@ class ApiClient {
 
   async createAssignment(data: CreateAssignmentForm): Promise<ExamAssignment> {
     return this.request<ExamAssignment>('/assignments', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async createFullMockAssignment(
+    data: CreateFullMockForm,
+  ): Promise<{ session: unknown; assignments: ExamAssignment[] }> {
+    return this.request('/assignments/full-mock', {
       method: 'POST',
       body: JSON.stringify(data),
     });

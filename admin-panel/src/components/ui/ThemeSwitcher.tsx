@@ -8,7 +8,7 @@ export function ThemeSwitcher() {
   return (
     <button
       onClick={toggleTheme}
-      className="relative p-2 rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+      className="relative p-2 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
       aria-label={`Switch to ${
         resolvedTheme === "dark" ? "light" : "dark"
       } mode`}
@@ -33,7 +33,7 @@ export function ThemeSwitcher() {
       </svg>
       {/* Moon icon (shown in light mode) */}
       <svg
-        className={`w-5 h-5 text-gray-700 transition-all duration-300 ${
+        className={`w-5 h-5 text-slate-700 dark:text-slate-200 transition-all duration-300 ${
           resolvedTheme === "light"
             ? "opacity-100 rotate-0"
             : "opacity-0 -rotate-90 absolute"

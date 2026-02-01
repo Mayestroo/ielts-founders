@@ -1,6 +1,6 @@
 'use client';
 
-import { Badge, Button, Card, CardBody, CardHeader, ConfirmationModal, Select } from '@/components/ui';
+import { Badge, Button, Card, CardBody, CardHeader, ConfirmationModal, Input, Select, useToast } from '@/components/ui';
 import { api } from '@/lib/api';
 import { ExamAssignment, ExamSection, User } from '@/types';
 import { useEffect, useMemo, useState } from 'react';
@@ -22,6 +22,8 @@ export default function AssignmentsPage() {
     readingSectionId: '',
     writingSectionId: '',
   });
+  const [isFullMock, setIsFullMock] = useState(false);
+  const [breakMinutes, setBreakMinutes] = useState(2);
 
   // Filtering States
   const [searchTerm, setSearchTerm] = useState('');
@@ -40,6 +42,7 @@ export default function AssignmentsPage() {
   // UX Grouping state
   const [selectedStudent, setSelectedStudent] = useState<{ student: User; assignments: ExamAssignment[] } | null>(null);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
+  const { success, error: showError } = useToast();
 
   // Group exams by type for the creation form
   const listeningExams = exams.filter(e => e.type === 'LISTENING');
@@ -89,10 +92,20 @@ export default function AssignmentsPage() {
     return groupedAssignments.slice(startIndex, startIndex + pageSize);
   }, [groupedAssignments, page, pageSize]);
 
+  const totalGroups = useMemo(() => {
+    return new Set(assignments.map((assignment) => assignment.studentId)).size;
+  }, [assignments]);
+
+  const hasFilters = Boolean(searchTerm.trim() || typeFilter);
+
   // Update total for pagination controls
   useEffect(() => {
     setTotal(groupedAssignments.length);
   }, [groupedAssignments]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [searchTerm, typeFilter]);
 
   const handleReassign = async () => {
     if (!reassignAssignmentId) return;
@@ -112,10 +125,11 @@ export default function AssignmentsPage() {
           )
         });
       }
-      
+      success('Assignment reset to assigned');
       loadData(); // Refresh list to update status
     } catch (err) {
       console.error('Failed to reassign:', err);
+      showError('Failed to reset assignment');
     } finally {
       setReassignLoading(false);
     }
@@ -142,11 +156,11 @@ export default function AssignmentsPage() {
           assignments: selectedStudent.assignments.filter(a => a.id !== deleteAssignmentId)
         });
       }
-      
+      success('Assignment deleted');
       loadData(); // Refresh list
     } catch (err) {
       console.error('Failed to delete:', err);
-      alert('Failed to delete assignment');
+      showError('Failed to delete assignment');
     } finally {
       setDeleteLoading(false);
     }
@@ -173,6 +187,7 @@ export default function AssignmentsPage() {
       setExams(examsData);
     } catch (err) {
       console.error('Failed to load data:', err);
+      showError('Failed to load assignments');
     } finally {
       setIsLoading(false);
     }
@@ -187,27 +202,51 @@ export default function AssignmentsPage() {
     setError('');
     setIsSubmitting(true);
 
-    const sectionsToAssign = [
-      formData.listeningSectionId,
-      formData.readingSectionId,
-      formData.writingSectionId,
-    ].filter(Boolean);
-
-    if (sectionsToAssign.length === 0) {
-      setError('Please select at least one exam section');
-      setIsSubmitting(false);
-      return;
-    }
-
     try {
-      const promises = sectionsToAssign.map(sectionId =>
-        api.createAssignment({ studentId: formData.studentId, sectionId })
-      );
-      
-      await Promise.all(promises);
+      if (isFullMock) {
+        if (
+          !formData.listeningSectionId ||
+          !formData.readingSectionId ||
+          !formData.writingSectionId
+        ) {
+          setError('Full mock requires listening, reading, and writing sections');
+          setIsSubmitting(false);
+          return;
+        }
+
+        const normalizedBreakMinutes = Math.max(1, Number(breakMinutes) || 2);
+        await api.createFullMockAssignment({
+          studentId: formData.studentId,
+          listeningSectionId: formData.listeningSectionId,
+          readingSectionId: formData.readingSectionId,
+          writingSectionId: formData.writingSectionId,
+          breakMinutes: normalizedBreakMinutes,
+        });
+      } else {
+        const sectionsToAssign = [
+          formData.listeningSectionId,
+          formData.readingSectionId,
+          formData.writingSectionId,
+        ].filter(Boolean);
+
+        if (sectionsToAssign.length === 0) {
+          setError('Please select at least one exam section');
+          setIsSubmitting(false);
+          return;
+        }
+
+        const promises = sectionsToAssign.map((sectionId) =>
+          api.createAssignment({ studentId: formData.studentId, sectionId }),
+        );
+
+        await Promise.all(promises);
+      }
       
       setShowModal(false);
       setFormData({ studentId: '', listeningSectionId: '', readingSectionId: '', writingSectionId: '' });
+      setIsFullMock(false);
+      setBreakMinutes(2);
+      success(isFullMock ? 'Full mock assigned' : 'Assignment created');
       loadData();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to assign exam');
@@ -237,7 +276,7 @@ export default function AssignmentsPage() {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-indigo-500"></div>
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-slate-400"></div>
       </div>
     );
   }
@@ -247,8 +286,11 @@ export default function AssignmentsPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Assignments</h1>
-          <p className="text-gray-500 mt-1">Manage exam assignments for students</p>
+          <h1 className="text-2xl font-semibold text-slate-900 dark:text-white">Assignments</h1>
+          <p className="text-slate-500 mt-1">
+            Manage exam assignments for students
+            <span className="ml-2 text-xs text-slate-400">{total} of {totalGroups} groups</span>
+          </p>
         </div>
         <Button onClick={() => setShowModal(true)}>
           <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -264,7 +306,7 @@ export default function AssignmentsPage() {
           <div className="flex flex-wrap items-center gap-4">
              <div className="flex-1 min-w-[200px]">
                 <div className="relative">
-                  <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-gray-400">
+                  <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-400">
                     <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
                   </span>
                   <input 
@@ -272,7 +314,7 @@ export default function AssignmentsPage() {
                     placeholder="Search student name or username..." 
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                    className="w-full pl-10 pr-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:ring-2 focus:ring-slate-300 outline-none transition-all"
                   />
                 </div>
              </div>
@@ -288,16 +330,17 @@ export default function AssignmentsPage() {
                  onChange={(e) => setTypeFilter(e.target.value)}
                />
              </div>
-             <Button 
-               variant="secondary" 
-               onClick={() => {
-                 setSearchTerm('');
-                 setTypeFilter('');
-               }}
-             >
-               Clear
-             </Button>
-          </div>
+              <Button 
+                variant="secondary" 
+                onClick={() => {
+                  setSearchTerm('');
+                  setTypeFilter('');
+                }}
+                disabled={!hasFilters}
+              >
+                Clear
+              </Button>
+           </div>
         </CardBody>
       </Card>
 
@@ -307,19 +350,20 @@ export default function AssignmentsPage() {
         <CardBody className="p-0">
           <div className="overflow-x-auto">
             <table className="w-full">
-              <thead className="bg-gray-50 dark:bg-gray-800">
+              <thead className="bg-slate-50 dark:bg-slate-900/60">
                 <tr>
-                  <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Student</th>
-                  <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Active Exams</th>
-                  <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Summary</th>
-                  <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Last Activity</th>
-                  <th className="px-6 py-4 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Actions</th>
+                  <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Student</th>
+                  <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Active Exams</th>
+                  <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Summary</th>
+                  <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Last Activity</th>
+                  <th className="px-6 py-4 text-right text-xs font-semibold text-slate-500 uppercase tracking-wider">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+              <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
                 {paginatedGroups.map((group) => {
                   const student = group.student;
                   const assignments = group.assignments;
+                  const hasFullMock = assignments.some((assignment) => assignment.fullMockSessionId);
                   const stats = {
                     assigned: assignments.filter(a => a.status === 'ASSIGNED').length,
                     progress: assignments.filter(a => a.status === 'IN_PROGRESS').length,
@@ -327,17 +371,22 @@ export default function AssignmentsPage() {
                   };
 
                   return (
-                    <tr key={student.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/50">
+                    <tr key={student.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-full bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center text-indigo-600 dark:text-indigo-400 font-semibold text-xs">
+                          <div className="w-8 h-8 rounded-full bg-slate-900 flex items-center justify-center text-white font-semibold text-xs">
                             {student.firstName?.[0] || student.username[0].toUpperCase()}
                           </div>
                           <div>
-                            <p className="font-medium text-gray-900 dark:text-white">
+                            <p className="font-medium text-slate-900 dark:text-white">
                               {student.firstName ? `${student.firstName} ${student.lastName || ''}` : student.username}
                             </p>
-                            <p className="text-xs text-gray-500">@{student.username}</p>
+                            <div className="flex items-center gap-2 text-xs text-slate-500">
+                              <span>@{student.username}</span>
+                              {hasFullMock && (
+                                <Badge variant="info" size="sm">Full Mock</Badge>
+                              )}
+                            </div>
                           </div>
                         </div>
                       </td>
@@ -349,7 +398,7 @@ export default function AssignmentsPage() {
                             </Badge>
                           ))}
                           {assignments.length > 3 && (
-                            <span className="text-xs text-gray-500">+{assignments.length - 3} more</span>
+                            <span className="text-xs text-slate-500">+{assignments.length - 3} more</span>
                           )}
                         </div>
                       </td>
@@ -360,7 +409,7 @@ export default function AssignmentsPage() {
                            {stats.submitted > 0 && <span className="text-emerald-600 dark:text-emerald-400">{stats.submitted} Submitted</span>}
                         </div>
                       </td>
-                      <td className="px-6 py-4 text-gray-500 dark:text-gray-400 text-sm">
+                      <td className="px-6 py-4 text-slate-500 dark:text-slate-400 text-sm">
                         {new Date(group.latestDate).toLocaleDateString()}
                       </td>
                       <td className="px-6 py-4 text-right">
@@ -380,7 +429,7 @@ export default function AssignmentsPage() {
                 })}
                 {paginatedGroups.length === 0 && (
                   <tr>
-                    <td colSpan={5} className="px-6 py-12 text-center text-gray-500">
+                    <td colSpan={5} className="px-6 py-12 text-center text-slate-500">
                       {searchTerm || typeFilter ? 'No assignments match your filters' : 'No assignments found'}
                     </td>
                   </tr>
@@ -393,7 +442,7 @@ export default function AssignmentsPage() {
 
       {/* Pagination */}
       {total > pageSize && (
-        <div className="flex items-center justify-between bg-white dark:bg-gray-800 px-4 py-3 rounded-lg border border-gray-200 dark:border-gray-700">
+        <div className="flex items-center justify-between bg-white dark:bg-slate-900 px-4 py-3 rounded-lg border border-slate-200 dark:border-slate-800">
           <div className="flex flex-1 justify-between sm:hidden">
             <Button
               onClick={() => setPage(p => Math.max(1, p - 1))}
@@ -412,7 +461,7 @@ export default function AssignmentsPage() {
           </div>
           <div className="hidden sm:flex sm:flex-1 sm:items-center sm:justify-between">
             <div>
-              <p className="text-sm text-gray-700 dark:text-gray-300">
+              <p className="text-sm text-slate-700 dark:text-slate-300">
                 Showing <span className="font-medium">{(page - 1) * pageSize + 1}</span> to <span className="font-medium">{Math.min(page * pageSize, total)}</span> of{' '}
                 <span className="font-medium">{total}</span> groups
               </p>
@@ -422,7 +471,7 @@ export default function AssignmentsPage() {
                 <button
                   onClick={() => setPage(p => Math.max(1, p - 1))}
                   disabled={page === 1}
-                  className="relative inline-flex items-center rounded-l-md px-2 py-2 text-gray-400 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus:z-20 focus:outline-offset-0 disabled:opacity-50"
+                  className="relative inline-flex items-center rounded-l-md px-2 py-2 text-slate-400 ring-1 ring-inset ring-slate-200 hover:bg-slate-50 focus:z-20 focus:outline-offset-0 disabled:opacity-50"
                 >
                   <span className="sr-only">Previous</span>
                   <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
@@ -433,10 +482,10 @@ export default function AssignmentsPage() {
                   <button
                     key={i}
                     onClick={() => setPage(i + 1)}
-                    className={`relative inline-flex items-center px-4 py-2 text-sm font-semibold ring-1 ring-inset ring-gray-300 focus:z-20 focus:outline-offset-0 ${
+                    className={`relative inline-flex items-center px-4 py-2 text-sm font-semibold ring-1 ring-inset ring-slate-200 focus:z-20 focus:outline-offset-0 ${
                       page === i + 1
-                        ? 'z-10 bg-indigo-600 text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600'
-                        : 'text-gray-900 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
+                        ? 'z-10 bg-slate-900 text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900'
+                        : 'text-slate-900 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'
                     }`}
                   >
                     {i + 1}
@@ -445,7 +494,7 @@ export default function AssignmentsPage() {
                 <button
                   onClick={() => setPage(p => p + 1)}
                   disabled={page * pageSize >= total}
-                  className="relative inline-flex items-center rounded-r-md px-2 py-2 text-gray-400 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus:z-20 focus:outline-offset-0 disabled:opacity-50"
+                  className="relative inline-flex items-center rounded-r-md px-2 py-2 text-slate-400 ring-1 ring-inset ring-slate-200 hover:bg-slate-50 focus:z-20 focus:outline-offset-0 disabled:opacity-50"
                 >
                   <span className="sr-only">Next</span>
                   <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
@@ -561,6 +610,35 @@ export default function AssignmentsPage() {
                   required
                 />
 
+                <div className="rounded-lg border border-gray-200 dark:border-gray-700 p-4">
+                  <label className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-medium text-gray-900 dark:text-gray-100">Full Mock Bundle</p>
+                      <p className="text-xs text-gray-500 dark:text-gray-400">
+                        Links sections in order and enforces a break between them.
+                      </p>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={isFullMock}
+                      onChange={(e) => setIsFullMock(e.target.checked)}
+                      className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300"
+                    />
+                  </label>
+
+                  {isFullMock && (
+                    <div className="mt-3">
+                      <Input
+                        label="Break length (minutes)"
+                        type="number"
+                        min={1}
+                        value={breakMinutes}
+                        onChange={(e) => setBreakMinutes(Number(e.target.value))}
+                      />
+                    </div>
+                  )}
+                </div>
+
                 <div className="border-t border-gray-200 dark:border-gray-700 pt-4 mt-4">
                   <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">Exam Sections</p>
                   
@@ -630,13 +708,19 @@ export default function AssignmentsPage() {
                       setShowModal(false);
                       setFormData({ studentId: '', listeningSectionId: '', readingSectionId: '', writingSectionId: '' });
                       setError('');
+                      setIsFullMock(false);
+                      setBreakMinutes(2);
                     }} 
                     className="flex-1"
                   >
                     Cancel
                   </Button>
                   <Button type="submit" className="flex-1" disabled={isSubmitting}>
-                    {isSubmitting ? 'Assigning...' : 'Assign Sections'}
+                    {isSubmitting
+                      ? 'Assigning...'
+                      : isFullMock
+                      ? 'Assign Full Mock'
+                      : 'Assign Sections'}
                   </Button>
                 </div>
               </form>
