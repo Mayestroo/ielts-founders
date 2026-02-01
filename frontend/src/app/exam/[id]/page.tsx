@@ -119,40 +119,45 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
         .then(async (data) => {
           setAssignment(data);
           
-          if (data.status === "ASSIGNED" || forceShowVideo) {
-            if (data.answers) {
-              setAnswers(data.answers as Record<string, AnswerValue>);
-            }
-            setShowIntroVideo(true);
-          } else if (data.status === "IN_PROGRESS") {
+          const storedAnswers = useExamStore.getState().answers as Record<string, AnswerValue>;
+          const sectionQuestions = (data.section?.questions || []) as Question[];
+          const filteredLocalAnswers = sectionQuestions.length
+            ? (Object.fromEntries(
+                Object.entries(storedAnswers).filter(([id]) =>
+                  sectionQuestions.some((question) => question.id === id)
+                )
+              ) as Record<string, AnswerValue>)
+            : storedAnswers;
+          const applyMergedAnswers = (serverAnswers?: Record<string, AnswerValue>) => {
+            const merged = { ...(serverAnswers || {}), ...filteredLocalAnswers };
+            setAnswers(merged);
+          };
+
+          if (data.status === "IN_PROGRESS") {
+            setShowIntroVideo(false);
             // Restore from Redis session for active exams
             try {
               const tabId = typeof window !== "undefined" ? sessionStorage.getItem('exam_tab_id') : null;
-              // Get latest local answers from persistent store to ensure we don't lose unsynced changes
-              const { useExamStore } = await import("@/store");
-              const localAnswers = useExamStore.getState().answers;
-              
               const reconnectData = await api.reconnectExam(
                 assignmentId, 
-                (localAnswers && Object.keys(localAnswers).length > 0) ? (localAnswers as Record<string, any>) : undefined, 
+                Object.keys(filteredLocalAnswers).length > 0
+                  ? (filteredLocalAnswers as Record<string, any>)
+                  : undefined,
                 tabId || undefined
               );
               
               if (reconnectData.success && reconnectData.assignment) {
                 setAssignment(reconnectData.assignment);
-                if (reconnectData.assignment.answers) {
-                  setAnswers(reconnectData.assignment.answers as Record<string, AnswerValue>);
-                }
+                applyMergedAnswers(reconnectData.assignment.answers as Record<string, AnswerValue>);
               } else {
                 // If reconnect fails, fallback to DB data
                 handleStartResponse(data as StartExamResponse);
-                if (data.answers) {
-                  setAnswers(data.answers as Record<string, AnswerValue>);
-                }
+                applyMergedAnswers(data.answers as Record<string, AnswerValue>);
               }
             } catch (err) {
               console.error("Reconnect failed during init:", err);
               handleStartResponse(data as StartExamResponse);
+              applyMergedAnswers(data.answers as Record<string, AnswerValue>);
             }
 
             if (data.section?.type === "LISTENING") {
@@ -160,6 +165,14 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
               // For now, simpler to always show it on refresh for Listening
               setShowPlayOverlay(true);
             }
+            return;
+          }
+
+          if (data.status === "ASSIGNED" || forceShowVideo) {
+            applyMergedAnswers(data.answers as Record<string, AnswerValue>);
+            setShowIntroVideo(true);
+          } else {
+            applyMergedAnswers(data.answers as Record<string, AnswerValue>);
           }
         })
         .catch((err) => {
