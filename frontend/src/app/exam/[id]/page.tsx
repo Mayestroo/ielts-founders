@@ -132,6 +132,12 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
             const merged = { ...(serverAnswers || {}), ...filteredLocalAnswers };
             setAnswers(merged);
           };
+          const applyServerAnswers = (serverAnswers?: Record<string, AnswerValue>) => {
+            setAnswers({ ...(serverAnswers || {}) });
+          };
+          const resetLocalSession = () => {
+            useExamStore.getState().resetSession(assignmentId);
+          };
 
           if (data.status === "IN_PROGRESS") {
             setShowIntroVideo(false);
@@ -168,11 +174,15 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
             return;
           }
 
+          if (data.status === "ASSIGNED") {
+            resetLocalSession();
+          }
+
           if (data.status === "ASSIGNED" || forceShowVideo) {
-            applyMergedAnswers(data.answers as Record<string, AnswerValue>);
+            applyServerAnswers(data.answers as Record<string, AnswerValue>);
             setShowIntroVideo(true);
           } else {
-            applyMergedAnswers(data.answers as Record<string, AnswerValue>);
+            applyServerAnswers(data.answers as Record<string, AnswerValue>);
           }
         })
         .catch((err) => {

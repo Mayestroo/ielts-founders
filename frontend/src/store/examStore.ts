@@ -50,6 +50,7 @@ interface ExamActions {
   
   // Reset
   reset: () => void;
+  resetSession: (assignmentId?: string) => void;
 }
 
 const initialState: Omit<ExamState, keyof ExamActions> = {
@@ -162,6 +163,14 @@ export const useExamStore = create<ExamState & ExamActions>()(
 
       reset: () => {
         set(initialState);
+      },
+      resetSession: (assignmentId?: string) => {
+        const { activeTabId } = get();
+        set({
+          ...initialState,
+          assignmentId: assignmentId ?? null,
+          activeTabId,
+        });
       },
     }),
     {

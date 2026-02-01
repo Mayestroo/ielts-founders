@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { AssignmentStatus, FullMockStatus, Prisma, Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { SessionService } from '../session/session.service';
 import { CreateAssignmentDto } from '../exams/dto/create-assignment.dto';
 import { CreateFullMockDto } from '../exams/dto/create-full-mock.dto';
 
@@ -59,7 +60,10 @@ export type StartExamResponse =
 
 @Injectable()
 export class AssignmentService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private sessionService: SessionService,
+  ) {}
 
   async create(
     createAssignmentDto: CreateAssignmentDto,
@@ -448,6 +452,8 @@ export class AssignmentService {
     if (!assignment) {
       throw new NotFoundException('Assignment not found');
     }
+
+    await this.sessionService.deleteSession(assignmentId);
 
     return this.prisma.examAssignment.update({
       where: { id: assignmentId },
