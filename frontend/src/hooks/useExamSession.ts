@@ -56,6 +56,11 @@ export function useExamSession({
   const pendingHighlightsRef = useRef<unknown[] | null>(null);
   const isSyncingRef = useRef(false);
 
+  const isAlreadySubmittedError = useCallback((error: unknown) => {
+    if (!(error instanceof Error)) return false;
+    return error.message.toLowerCase().includes('already submitted');
+  }, []);
+
   // Keep ref in sync with state
   useEffect(() => {
     isSyncingRef.current = isSyncing;
@@ -110,6 +115,12 @@ export function useExamSession({
         syncComplete(response.syncVersion);
       }
     } catch (error) {
+      if (isAlreadySubmittedError(error)) {
+        setStatus('submitted');
+        setError(null);
+        onSessionExpired?.();
+        return;
+      }
       const isNetworkError = 
         error instanceof TypeError || 
         (error instanceof Error && (
@@ -117,7 +128,7 @@ export function useExamSession({
           error.message.includes('HTTP error! status: 503') ||
           error.message.includes('HTTP error! status: 504')
         ));
-      
+    
       if (isNetworkError) {
         console.warn('Heartbeat failed due to network:', error);
         setError('Network connection unstable. Retrying...');
@@ -126,7 +137,7 @@ export function useExamSession({
         onSyncError?.(error as Error);
       }
     }
-  }, [assignmentId, enabled, isSessionActive, syncVersion, onSyncError, onSessionExpired, onTabConflict, setStatus, setTabConflict, syncComplete]);
+  }, [assignmentId, enabled, isSessionActive, syncVersion, onSyncError, onSessionExpired, onTabConflict, setError, setStatus, setTabConflict, syncComplete, isAlreadySubmittedError]);
 
   const startHeartbeat = useCallback(() => {
     if (heartbeatTimerRef.current) {
@@ -182,6 +193,12 @@ export function useExamSession({
           }
         }
       } catch (error) {
+        if (isAlreadySubmittedError(error)) {
+          setStatus('submitted');
+          setError(null);
+          onSessionExpired?.();
+          return;
+        }
         const isNetworkError = 
         error instanceof TypeError || 
         (error instanceof Error && (
@@ -203,7 +220,7 @@ export function useExamSession({
         // which will update our isSyncingRef.current via useEffect
       }
     }, SYNC_DEBOUNCE_MS);
-  }, [assignmentId, enabled, syncVersion, startSync, syncComplete, syncError, onSyncError]);
+  }, [assignmentId, enabled, syncVersion, startSync, syncComplete, syncError, onSyncError, onSessionExpired, setError, setStatus, isAlreadySubmittedError]);
 
   const reconnect = useCallback(async () => {
     if (!assignmentId) return false;
