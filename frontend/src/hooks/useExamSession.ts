@@ -22,8 +22,8 @@ interface UseExamSessionReturn {
   lastSyncAt: Date | null;
 }
 
-const HEARTBEAT_INTERVAL = 10000; // 10 seconds
-const SYNC_DEBOUNCE_MS = 1000; // Debounce sync calls
+const HEARTBEAT_INTERVAL = 30000; // 30 seconds (reduced from 10s to reduce server load)
+const SYNC_DEBOUNCE_MS = 5000; // 5 seconds (increased from 1s to batch changes)
 
 export function useExamSession({
   assignmentId,

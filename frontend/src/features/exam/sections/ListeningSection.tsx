@@ -37,6 +37,7 @@ interface ListeningSectionProps {
   isVideoAutoplayBlocked: boolean;
   onVideoAutoplayBlockedChange: (blocked: boolean) => void;
   onVideoEnded: () => void;
+  onRequestFullscreen: () => Promise<void>;
   onOpenSettings: () => void;
   onCloseSettings: () => void;
   onAudioPlay: () => void;
@@ -85,6 +86,7 @@ export function ListeningSection({
   isVideoAutoplayBlocked,
   onVideoAutoplayBlockedChange,
   onVideoEnded,
+  onRequestFullscreen,
   onOpenSettings,
   onCloseSettings,
   onAudioPlay,
@@ -227,8 +229,11 @@ export function ListeningSection({
                 </p>
 
                 <button
-                  onClick={() => {
+                  onClick={async () => {
                     if (sessionError) return;
+                    if (!document.fullscreenElement) {
+                      await onRequestFullscreen();
+                    }
                     if (audioRef.current) {
                       // Synchronize audio position if the test has already started
                       if (assignment.remainingTime !== undefined) {
@@ -311,6 +316,7 @@ export function ListeningSection({
         isAutoplayBlocked={isVideoAutoplayBlocked}
         onAutoplayBlockedChange={onVideoAutoplayBlockedChange}
         onEnded={onVideoEnded}
+        onRequestFullscreen={onRequestFullscreen}
       />
 
       <SettingsModal isOpen={isSettingsOpen} onClose={onCloseSettings} />

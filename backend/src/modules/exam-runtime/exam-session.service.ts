@@ -24,14 +24,34 @@ interface SessionData {
   highlights?: unknown[];
 }
 
+// Rate limiting for heartbeats - max 1 per 20 seconds per session
+const HEARTBEAT_RATE_LIMIT_MS = 20000;
+interface RateLimitEntry {
+  lastHeartbeat: number;
+  count: number;
+}
+
 @Injectable()
 export class ExamSessionService {
+  // In-memory rate limiter for heartbeats
+  private heartbeatRateLimits = new Map<string, RateLimitEntry>();
+
   constructor(
     private prisma: PrismaService,
     private sessionService: SessionService,
     private assignmentService: AssignmentService,
     @Inject(REDIS_CLIENT) private redis: Redis,
-  ) {}
+  ) {
+    // Clean up old rate limit entries every 5 minutes
+    setInterval(() => {
+      const now = Date.now();
+      for (const [key, entry] of this.heartbeatRateLimits.entries()) {
+        if (now - entry.lastHeartbeat > HEARTBEAT_RATE_LIMIT_MS * 3) {
+          this.heartbeatRateLimits.delete(key);
+        }
+      }
+    }, 300000);
+  }
 
   async syncAnswers(
     assignmentId: string,
@@ -81,6 +101,26 @@ export class ExamSessionService {
   }
 
   async heartbeat(assignmentId: string, studentId: string, tabId?: string) {
+    // Rate limiting check
+    const rateLimitKey = `${assignmentId}:${tabId || 'no-tab'}`;
+    const nowTimestamp = Date.now();
+    const existingLimit = this.heartbeatRateLimits.get(rateLimitKey);
+
+    if (existingLimit && nowTimestamp - existingLimit.lastHeartbeat < HEARTBEAT_RATE_LIMIT_MS) {
+      // Return cached response - still active but rate limited
+      return {
+        active: true,
+        rateLimited: true,
+        message: 'Heartbeat rate limited'
+      };
+    }
+
+    // Update rate limit tracking
+    this.heartbeatRateLimits.set(rateLimitKey, {
+      lastHeartbeat: nowTimestamp,
+      count: (existingLimit?.count || 0) + 1,
+    });
+
     const session = await this.sessionService.getSession(assignmentId);
     
     // Auto-recover session if missing but exam is valid

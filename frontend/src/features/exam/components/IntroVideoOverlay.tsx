@@ -10,6 +10,7 @@ interface IntroVideoOverlayProps {
   isAutoplayBlocked: boolean;
   onAutoplayBlockedChange: (blocked: boolean) => void;
   onEnded: () => void;
+  onRequestFullscreen?: () => Promise<void>;
 }
 
 export function IntroVideoOverlay({
@@ -20,6 +21,7 @@ export function IntroVideoOverlay({
   isAutoplayBlocked,
   onAutoplayBlockedChange,
   onEnded,
+  onRequestFullscreen,
 }: IntroVideoOverlayProps) {
   if (!isOpen || !sectionType) return null;
 
@@ -49,6 +51,9 @@ export function IntroVideoOverlay({
           <button
             onClick={() => {
               if (introVideoRef.current) {
+                if (!document.fullscreenElement) {
+                  onRequestFullscreen?.();
+                }
                 introVideoRef.current
                   .play()
                   .catch((error) => console.warn('Manual play failed:', error));

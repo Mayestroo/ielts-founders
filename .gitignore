@@ -10,6 +10,9 @@ Thumbs.db
 *.swo
 plesk.md
 PROJECT.md
+ENV_SETUP.md
+PERFORMANCE_OPTIMIZATION.md
+PRICING_AND_FEATURES.md
 
 # Dependency Directories (if installed in root)
 node_modules/

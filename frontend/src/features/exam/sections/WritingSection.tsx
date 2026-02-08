@@ -23,6 +23,7 @@ interface WritingSectionProps {
   introContainerRef: RefObject<HTMLDivElement>;
   onVideoAutoplayBlockedChange: (blocked: boolean) => void;
   onVideoEnded: () => void;
+  onRequestFullscreen: () => Promise<void>;
   onOpenSettings: () => void;
   onCloseSettings: () => void;
   onTimerExpire: () => void;
@@ -50,6 +51,7 @@ export function WritingSection({
   introContainerRef,
   onVideoAutoplayBlockedChange,
   onVideoEnded,
+  onRequestFullscreen,
   onOpenSettings,
   onCloseSettings,
   onTimerExpire,
@@ -165,6 +167,7 @@ export function WritingSection({
         isAutoplayBlocked={isVideoAutoplayBlocked}
         onAutoplayBlockedChange={onVideoAutoplayBlockedChange}
         onEnded={onVideoEnded}
+        onRequestFullscreen={onRequestFullscreen}
       />
 
       <SettingsModal isOpen={isSettingsOpen} onClose={onCloseSettings} />

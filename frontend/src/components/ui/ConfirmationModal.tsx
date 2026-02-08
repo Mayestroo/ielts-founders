@@ -10,9 +10,10 @@ interface ConfirmationModalProps {
   title: string;
   message: string;
   confirmText?: string;
-  cancelText?: string;
+  cancelText?: string | null;
   variant?: 'danger' | 'warning' | 'info' | 'primary';
   isLoading?: boolean;
+  dismissible?: boolean;
 }
 
 export function ConfirmationModal({
@@ -25,16 +26,21 @@ export function ConfirmationModal({
   cancelText = 'Cancel',
   variant = 'danger',
   isLoading = false,
+  dismissible = true,
 }: ConfirmationModalProps) {
+  const showCancel = cancelText !== null;
+
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title={title}>
+    <Modal isOpen={isOpen} onClose={onClose} title={title} dismissible={dismissible}>
       <p className="text-gray-600 mb-8">
         {message}
       </p>
       <div className="flex justify-end gap-3">
-        <Button variant="ghost" onClick={onClose} disabled={isLoading}>
-          {cancelText}
-        </Button>
+        {showCancel && (
+          <Button variant="ghost" onClick={onClose} disabled={isLoading}>
+            {cancelText}
+          </Button>
+        )}
         <Button 
           variant={variant} 
           onClick={onConfirm} 

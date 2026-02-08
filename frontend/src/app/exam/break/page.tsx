@@ -26,6 +26,33 @@ function BreakContent() {
   const [nextAssignment, setNextAssignment] = useState<ExamAssignment | null>(null);
   const [autoStarted, setAutoStarted] = useState(false);
 
+  const requestFullscreen = useCallback(async () => {
+    try {
+      const nav = navigator as Navigator & {
+        keyboard?: { lock?: (keys: string[]) => Promise<void> };
+        userActivation?: { isActive: boolean };
+      };
+
+      if (nav.userActivation && !nav.userActivation.isActive) {
+        return;
+      }
+
+      if (!document.fullscreenElement) {
+        await document.documentElement.requestFullscreen();
+      }
+
+      if (nav.keyboard?.lock) {
+        try {
+          await nav.keyboard.lock(["Escape"]);
+        } catch (lockError) {
+          console.warn("Keyboard lock failed:", lockError);
+        }
+      }
+    } catch (error) {
+      console.warn("Fullscreen request failed:", error);
+    }
+  }, []);
+
   const endsAt = useMemo(() => {
     if (!endsAtParam) return null;
     const parsed = new Date(endsAtParam);
@@ -65,10 +92,11 @@ function BreakContent() {
     return () => clearInterval(interval);
   }, [endsAt]);
 
-  const handleStart = useCallback(() => {
+  const handleStart = useCallback(async () => {
     if (!nextAssignmentId) return;
+    await requestFullscreen();
     router.push(`/exam/${nextAssignmentId}?showVideo=1`);
-  }, [nextAssignmentId, router]);
+  }, [nextAssignmentId, requestFullscreen, router]);
 
   useEffect(() => {
     if (remainingSeconds === null || remainingSeconds > 0 || autoStarted) {

@@ -7,7 +7,7 @@ import { Center, ExamAssignment } from "@/types";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type MouseEvent } from "react";
 
 export default function DashboardPage() {
   const { user, isLoading, isAuthenticated, logout } = useAuth();
@@ -16,6 +16,42 @@ export default function DashboardPage() {
   const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false);
   const [centerLogo, setCenterLogo] = useState<string | null>(null);
   const router = useRouter();
+
+  const requestFullscreen = useCallback(async () => {
+    try {
+      const nav = navigator as Navigator & {
+        keyboard?: { lock?: (keys: string[]) => Promise<void> };
+        userActivation?: { isActive: boolean };
+      };
+
+      if (nav.userActivation && !nav.userActivation.isActive) {
+        return;
+      }
+
+      if (!document.fullscreenElement) {
+        await document.documentElement.requestFullscreen();
+      }
+
+      if (nav.keyboard?.lock) {
+        try {
+          await nav.keyboard.lock(["Escape"]);
+        } catch (lockError) {
+          console.warn("Keyboard lock failed:", lockError);
+        }
+      }
+    } catch (error) {
+      console.warn("Fullscreen request failed:", error);
+    }
+  }, []);
+
+  const handleStartExamClick = useCallback(
+    async (event: MouseEvent<HTMLAnchorElement>, assignmentId: string) => {
+      event.preventDefault();
+      await requestFullscreen();
+      router.push(`/exam/${assignmentId}`);
+    },
+    [requestFullscreen, router]
+  );
 
   const activeAssignments = useMemo(() => {
     const groups = new Map<string, ExamAssignment[]>();
@@ -271,6 +307,7 @@ export default function DashboardPage() {
                         </div>
                         <Link
                           href={`/exam/${nextAssignment.id}`}
+                          onClick={(event) => handleStartExamClick(event, nextAssignment.id)}
                           className="px-20 py-5 rounded-full bg-black text-white font-bold text-lg hover:bg-gray-800 transition-all shadow-xl shadow-black/10 hover:scale-[1.02] active:scale-[0.98] group flex items-center gap-3"
                         >
                           {nextAssignment.status === "IN_PROGRESS"

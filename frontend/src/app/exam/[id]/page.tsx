@@ -12,6 +12,7 @@ import { useExamStore } from "@/store";
 import { BreakStatus, ExamAssignment, ExamSection, Question, StartExamResponse } from "@/types";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { RefObject, useCallback, useEffect, useRef, useState } from "react";
+import { ConfirmationModal } from "@/components/ui/ConfirmationModal";
 
 function ExamContent({ assignmentId }: { assignmentId: string }) {
   const { isLoading, isAuthenticated } = useAuth();
@@ -36,6 +37,9 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
   const [error, setError] = useState("");
   const [sessionError, setSessionError] = useState<{ type: string; message: string } | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(true); // Default to true to avoid flash on load until checked
+  const [showExitWarningModal, setShowExitWarningModal] = useState(false);
+  const [isExamCompleted, setIsExamCompleted] = useState(false);
+  const wasFullscreenRef = useRef<boolean>(true);
 
 
   const audioRef = useRef<HTMLAudioElement>(null) as unknown as RefObject<HTMLAudioElement>;
@@ -191,6 +195,46 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
     }
   }, [assignmentId, forceShowVideo, handleStartResponse, isAuthenticated]);
 
+  const enterFullscreen = useCallback(async () => {
+    try {
+      const userActivation = (navigator as any)?.userActivation;
+      if (userActivation && !userActivation.isActive) {
+        return;
+      }
+
+      if (!document.fullscreenElement) {
+        await document.documentElement.requestFullscreen();
+      }
+
+      // specific Logic to prevent Escape key from exiting fullscreen (Chrome/Edge only)
+      // This requires the feature policy 'keyboard-map' and secure context
+      // We re-apply this lock whenever we try to enter/re-enter fullscreen
+      const nav = navigator as any;
+      if (nav?.keyboard?.lock) {
+        try {
+          await nav.keyboard.lock(["Escape"]);
+          console.log("Keyboard lock acquired for Escape key");
+        } catch (lockErr) {
+          console.warn("Keyboard lock failed or not supported:", lockErr);
+        }
+      }
+    } catch (err) {
+      console.error("Error attempting to enable fullscreen:", err);
+    }
+  }, []);
+
+  // Attempt fullscreen on first user interaction if not already fullscreen
+  useEffect(() => {
+    const handlePointerDown = () => {
+      if (!document.fullscreenElement && (showIntroVideo || isExamStarted || assignment?.status === "ASSIGNED")) {
+        enterFullscreen();
+      }
+    };
+
+    window.addEventListener("pointerdown", handlePointerDown, { capture: true });
+    return () => window.removeEventListener("pointerdown", handlePointerDown, { capture: true });
+  }, [enterFullscreen, showIntroVideo, isExamStarted, assignment?.status]);
+
   const handleStartExam = useCallback(async () => {
     if (sessionError) return;
     if (!document.fullscreenElement) {
@@ -208,24 +252,26 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
   const handleVideoEnded = useCallback(() => {
     if (sessionError) return;
     setShowIntroVideo(false);
+
     if (assignment?.section?.type === "LISTENING") {
       setShowPlayOverlay(true);
     }
   }, [assignment?.section?.type, sessionError]);
 
-  // Auto-start exam for non-listening sections when ready
+  // Auto-start exam for all sections when ready (including listening after video ends)
   useEffect(() => {
     if (
       !showIntroVideo &&
       isFullscreen &&
       assignment?.status === "ASSIGNED" &&
-      assignment?.section?.type !== "LISTENING" &&
       !sessionError &&
-      !isLoading
+      !isLoading &&
+      // For listening, only start if play overlay is not showing
+      (assignment?.section?.type !== "LISTENING" || !showPlayOverlay)
     ) {
       handleStartExam();
     }
-  }, [showIntroVideo, isFullscreen, assignment?.status, assignment?.section?.type, sessionError, isLoading, handleStartExam]);
+  }, [showIntroVideo, isFullscreen, assignment?.status, assignment?.section?.type, sessionError, isLoading, handleStartExam, showPlayOverlay]);
 
   useEffect(() => {
     if (showIntroVideo && introVideoRef.current) {
@@ -237,15 +283,6 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
           setIsVideoAutoplayBlocked(true);
         });
       }
-
-      // Try to enter fullscreen automatically on video start if possible (usually blocked without user gesture)
-      // We'll rely on the enforcement overlay mostly
-      const container = introContainerRef.current;
-      if (container && container.requestFullscreen) {
-        container.requestFullscreen().catch(() => {
-          // Expected behavior if no user interaction
-        });
-      }
     }
   }, [showIntroVideo]);
 
@@ -253,18 +290,34 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
   useEffect(() => {
     const handleFullscreenChange = () => {
       const isFs = !!document.fullscreenElement;
+      const wasFs = wasFullscreenRef.current;
+      wasFullscreenRef.current = isFs;
       setIsFullscreen(isFs);
+      
+      // Show warning if user exits fullscreen during active exam
+      if (wasFs && !isFs && isExamStarted && !isExamCompleted && !showIntroVideo) {
+        setShowExitWarningModal(true);
+      }
     };
 
     document.addEventListener("fullscreenchange", handleFullscreenChange);
     
     // Initial check
-    setIsFullscreen(!!document.fullscreenElement);
+    const initialFullscreen = !!document.fullscreenElement;
+    wasFullscreenRef.current = initialFullscreen;
+    setIsFullscreen(initialFullscreen);
 
     return () => {
       document.removeEventListener("fullscreenchange", handleFullscreenChange);
     };
-  }, []);
+  }, [isExamStarted, isExamCompleted, showIntroVideo]);
+
+  // If fullscreen is restored, ensure the warning modal closes
+  useEffect(() => {
+    if (isFullscreen && showExitWarningModal) {
+      setShowExitWarningModal(false);
+    }
+  }, [isFullscreen, showExitWarningModal]);
 
   // Block Escape key globally
   useEffect(() => {
@@ -285,31 +338,6 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
       window.removeEventListener("keyup", handleKeyDown, { capture: true });
     };
   }, []);
-
-
-  const enterFullscreen = useCallback(async () => {
-    try {
-      if (!document.fullscreenElement) {
-        await document.documentElement.requestFullscreen();
-      }
-      
-      // specific Logic to prevent Escape key from exiting fullscreen (Chrome/Edge only)
-      // This requires the feature policy 'keyboard-map' and secure context
-      // We re-apply this lock whenever we try to enter/re-enter fullscreen
-      const nav = navigator as any;
-      if (nav?.keyboard?.lock) {
-        try {
-          await nav.keyboard.lock(["Escape"]);
-          console.log("Keyboard lock acquired for Escape key");
-        } catch (lockErr) {
-          console.warn("Keyboard lock failed or not supported:", lockErr);
-        }
-      }
-    } catch (err) {
-      console.error("Error attempting to enable fullscreen:", err);
-    }
-  }, []);
-
   // Re-acquire lock on any user interaction to be safe, if we are in fullscreen
   useEffect(() => {
     const handleInteraction = () => {
@@ -410,6 +438,15 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
       }
 
       if (submitResult.fullMockSessionId) {
+        // Exam fully completed - allow fullscreen exit
+        setIsExamCompleted(true);
+        if (document.fullscreenElement) {
+          try {
+            await document.exitFullscreen();
+          } catch (exitErr) {
+            console.warn("Failed to exit fullscreen:", exitErr);
+          }
+        }
         router.push("/dashboard");
         return;
       }
@@ -422,6 +459,15 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
       if (nextAssignment) {
         router.push(`/exam/${nextAssignment.id}?showVideo=1`);
       } else {
+        // No more assignments - allow fullscreen exit
+        setIsExamCompleted(true);
+        if (document.fullscreenElement) {
+          try {
+            await document.exitFullscreen();
+          } catch (exitErr) {
+            console.warn("Failed to exit fullscreen:", exitErr);
+          }
+        }
         router.push("/dashboard");
       }
     } catch (err) {
@@ -507,47 +553,27 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
     );
   }
 
-  const showFullscreenOverlay = assignment && (isExamStarted || assignment.status === "ASSIGNED") && !isFullscreen && !showIntroVideo;
   const timerStart = isFullscreen && isExamStarted && !showIntroVideo;
 
   return (
     <>
-      {showFullscreenOverlay && (
-        <div
-          className="fixed inset-0 z-50 bg-white flex flex-col items-center justify-center p-4 notranslate"
-          translate="no"
-        >
-          <div className="max-w-md text-center">
-            <div className="mb-6 mx-auto w-16 h-16 bg-yellow-100 rounded-full flex items-center justify-center">
-              <svg
-                className="w-8 h-8 text-yellow-600"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 4l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"
-                />
-              </svg>
-            </div>
-            <h2 className="text-2xl font-bold text-gray-900 mb-2">Fullscreen Required</h2>
-            <p className="text-gray-600 mb-8">
-              Please enable fullscreen mode to continue with your exam.
-            </p>
-            <button
-              onClick={enterFullscreen}
-              className="w-full bg-black text-white py-3 px-4 rounded-lg font-medium hover:bg-gray-900 transition-colors"
-            >
-              Enter Fullscreen
-            </button>
-          </div>
-        </div>
-      )}
+      {/* Fullscreen Exit Warning Modal */}
+      <ConfirmationModal
+        isOpen={showExitWarningModal}
+        onClose={() => setShowExitWarningModal(false)}
+        onConfirm={() => {
+          setShowExitWarningModal(false);
+          enterFullscreen();
+        }}
+        title="Warning: Exit Fullscreen?"
+        message="You are about to exit fullscreen mode. If you exit now, your exam progress may be lost and your results could be invalidated. Please stay in fullscreen to continue the exam safely."
+        confirmText="Stay in Fullscreen"
+        cancelText={null}
+        variant="danger"
+        dismissible={false}
+      />
       
-      <div className={showFullscreenOverlay ? "hidden" : "block"}>
+      <div>
         {section.type === "READING" ? (
           <ReadingSection
             assignment={assignment}
@@ -574,6 +600,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
             isVideoAutoplayBlocked={isVideoAutoplayBlocked}
             onVideoAutoplayBlockedChange={setIsVideoAutoplayBlocked}
             onVideoEnded={handleVideoEnded}
+            onRequestFullscreen={enterFullscreen}
             onTimerExpire={handleTimerExpire}
             onAnswerChange={handleAnswerChange}
             onQuestionClick={handleQuestionClick}
@@ -605,6 +632,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
             introContainerRef={introContainerRef}
             onVideoAutoplayBlockedChange={setIsVideoAutoplayBlocked}
             onVideoEnded={handleVideoEnded}
+            onRequestFullscreen={enterFullscreen}
             onOpenSettings={() => setIsSettingsOpen(true)}
             onCloseSettings={() => setIsSettingsOpen(false)}
             onTimerExpire={handleTimerExpire}
@@ -644,6 +672,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
             isVideoAutoplayBlocked={isVideoAutoplayBlocked}
             onVideoAutoplayBlockedChange={setIsVideoAutoplayBlocked}
             onVideoEnded={handleVideoEnded}
+            onRequestFullscreen={enterFullscreen}
             onOpenSettings={() => setIsSettingsOpen(true)}
             onCloseSettings={() => setIsSettingsOpen(false)}
             onAudioPlay={() => setIsAudioPlaying(true)}

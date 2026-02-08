@@ -37,6 +37,7 @@ interface ReadingSectionProps {
   timerStart?: boolean;
   onVideoAutoplayBlockedChange: (blocked: boolean) => void;
   onVideoEnded: () => void;
+  onRequestFullscreen: () => Promise<void>;
   onTimerExpire: () => void;
   onAnswerChange: (questionId: string, value: AnswerValue) => void;
   onQuestionClick: (questionId: string) => void;
@@ -78,6 +79,7 @@ export function ReadingSection({
   isVideoAutoplayBlocked,
   onVideoAutoplayBlockedChange,
   onVideoEnded,
+  onRequestFullscreen,
   onTimerExpire,
   onAnswerChange,
   onQuestionClick,
@@ -194,6 +196,7 @@ export function ReadingSection({
         isAutoplayBlocked={isVideoAutoplayBlocked}
         onAutoplayBlockedChange={onVideoAutoplayBlockedChange}
         onEnded={onVideoEnded}
+        onRequestFullscreen={onRequestFullscreen}
       />
     </div>
   );
