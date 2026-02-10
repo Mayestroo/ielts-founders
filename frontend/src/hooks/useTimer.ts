@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 interface UseTimerOptions {
   initialSeconds: number;
@@ -8,43 +8,150 @@ interface UseTimerOptions {
   autoStart?: boolean;
 }
 
+const TICK_INTERVAL_MS = 250;
+
+const toSafeSeconds = (value: number) =>
+  Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
+
 export function useTimer({ initialSeconds, onExpire, autoStart = false }: UseTimerOptions) {
-  const [seconds, setSeconds] = useState(initialSeconds);
-  const [isRunning, setIsRunning] = useState(autoStart);
+  const normalizedInitialSeconds = toSafeSeconds(initialSeconds);
+  const [seconds, setSeconds] = useState(normalizedInitialSeconds);
+  const [isRunning, setIsRunning] = useState(autoStart && normalizedInitialSeconds > 0);
+
+  const secondsRef = useRef(normalizedInitialSeconds);
+  const endAtRef = useRef<number | null>(
+    autoStart && normalizedInitialSeconds > 0
+      ? Date.now() + normalizedInitialSeconds * 1000
+      : null,
+  );
+  const autoStartRef = useRef(autoStart);
+  const onExpireRef = useRef(onExpire);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const hasExpiredRef = useRef(false);
+
+  const setSecondsValue = useCallback((nextSeconds: number) => {
+    const safeSeconds = toSafeSeconds(nextSeconds);
+    secondsRef.current = safeSeconds;
+    setSeconds((current) => (current === safeSeconds ? current : safeSeconds));
+    return safeSeconds;
+  }, []);
+
+  const getRemainingSeconds = useCallback(() => {
+    if (endAtRef.current === null) {
+      return secondsRef.current;
+    }
+
+    const remainingMs = endAtRef.current - Date.now();
+    return Math.max(0, Math.ceil(remainingMs / 1000));
+  }, []);
+
+  const stopTimer = useCallback(() => {
+    endAtRef.current = null;
+    setIsRunning(false);
+  }, []);
+
+  const runExpire = useCallback(() => {
+    if (hasExpiredRef.current) {
+      return;
+    }
+
+    hasExpiredRef.current = true;
+    stopTimer();
+    onExpireRef.current?.();
+  }, [stopTimer]);
+
+  const startFrom = useCallback((baseSeconds: number) => {
+    const safeSeconds = setSecondsValue(baseSeconds);
+
+    if (safeSeconds <= 0) {
+      runExpire();
+      return;
+    }
+
+    hasExpiredRef.current = false;
+
+    endAtRef.current = Date.now() + safeSeconds * 1000;
+    setIsRunning(true);
+  }, [runExpire, setSecondsValue]);
 
   useEffect(() => {
-    setSeconds(initialSeconds);
-  }, [initialSeconds]);
+    onExpireRef.current = onExpire;
+  }, [onExpire]);
 
   useEffect(() => {
-    setIsRunning(autoStart);
-  }, [autoStart]);
+    autoStartRef.current = autoStart;
+
+    if (autoStart) {
+      startFrom(secondsRef.current);
+      return;
+    }
+
+    if (endAtRef.current !== null) {
+      setSecondsValue(getRemainingSeconds());
+    }
+
+    stopTimer();
+  }, [autoStart, getRemainingSeconds, setSecondsValue, startFrom, stopTimer]);
 
   useEffect(() => {
-    // Check if timer expired
-    if (seconds <= 0) {
-      if (isRunning) {
-        setIsRunning(false);
-        onExpire?.();
+    const safeInitialSeconds = toSafeSeconds(initialSeconds);
+
+    if (autoStartRef.current) {
+      startFrom(safeInitialSeconds);
+      return;
+    }
+
+    hasExpiredRef.current = safeInitialSeconds <= 0;
+    setSecondsValue(safeInitialSeconds);
+    stopTimer();
+  }, [initialSeconds, setSecondsValue, startFrom, stopTimer]);
+
+  useEffect(() => {
+    if (!isRunning) {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
       }
       return;
     }
 
-    if (!isRunning) return;
+    const tick = () => {
+      const nextSeconds = setSecondsValue(getRemainingSeconds());
 
-    const interval = setInterval(() => {
-      setSeconds((prev) => Math.max(0, prev - 1));
-    }, 1000);
+      if (nextSeconds <= 0) {
+        runExpire();
+      }
+    };
 
-    return () => clearInterval(interval);
-  }, [isRunning, seconds, onExpire]);
+    tick();
+    intervalRef.current = setInterval(tick, TICK_INTERVAL_MS);
 
-  const start = useCallback(() => setIsRunning(true), []);
-  const pause = useCallback(() => setIsRunning(false), []);
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+    };
+  }, [getRemainingSeconds, isRunning, runExpire, setSecondsValue]);
+
+  const start = useCallback(() => {
+    startFrom(secondsRef.current);
+  }, [startFrom]);
+
+  const pause = useCallback(() => {
+    if (endAtRef.current !== null) {
+      setSecondsValue(getRemainingSeconds());
+    }
+
+    stopTimer();
+  }, [endAtRef, getRemainingSeconds, setSecondsValue, stopTimer]);
+
   const reset = useCallback(() => {
-    setSeconds(initialSeconds);
-    setIsRunning(false);
-  }, [initialSeconds]);
+    const safeInitialSeconds = toSafeSeconds(initialSeconds);
+    hasExpiredRef.current = safeInitialSeconds <= 0;
+    setSecondsValue(safeInitialSeconds);
+    stopTimer();
+  }, [initialSeconds, setSecondsValue, stopTimer]);
 
   const formatTime = useCallback((secs: number) => {
     const hours = Math.floor(secs / 3600);

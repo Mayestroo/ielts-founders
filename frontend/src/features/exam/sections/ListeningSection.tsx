@@ -7,7 +7,6 @@ import { IntroVideoOverlay } from '../components/IntroVideoOverlay';
 import { QuestionGroups } from '../components/QuestionGroups';
 import { ReviewAndConfirmModals } from '../components/ReviewAndConfirmModals';
 import { SessionIssueModal } from '../components/SessionIssueModal';
-import { SessionStatusBadge } from '../components/SessionStatusBadge';
 import { API_BASE_URL } from '../constants';
 import { AnswerValue, ExamPart } from '../types';
 
@@ -24,7 +23,6 @@ interface ListeningSectionProps {
   answers: Record<string, AnswerValue>;
   currentQuestionId: string;
   isSubmitting: boolean;
-  isSyncing: boolean;
   showIntroVideo: boolean;
   showPlayOverlay: boolean;
   isSettingsOpen: boolean;
@@ -74,7 +72,6 @@ export function ListeningSection({
   answers,
   currentQuestionId,
   isSubmitting,
-  isSyncing,
   showIntroVideo,
   showPlayOverlay,
   isSettingsOpen,
@@ -305,8 +302,6 @@ export function ListeningSection({
       />
 
       <SessionIssueModal sessionError={sessionError} onResolve={onSessionResolve} />
-
-      <SessionStatusBadge isSyncing={isSyncing} />
 
       <IntroVideoOverlay
         isOpen={showIntroVideo}

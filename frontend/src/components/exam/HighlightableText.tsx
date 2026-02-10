@@ -1,6 +1,5 @@
 'use client';
 
-import { ConfirmationModal } from '@/components/ui';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 interface Highlight {
@@ -70,7 +69,6 @@ export function HighlightableText({
   const [showToolbar, setShowToolbar] = useState(false);
   const [toolbarPosition, setToolbarPosition] = useState({ top: 0, left: 0 });
   const [selectionRange, setSelectionRange] = useState<{ start: number; end: number } | null>(null);
-  const [highlightToRemove, setHighlightToRemove] = useState<string | null>(null);
 
   // Hide toolbar when clicking outside
   useEffect(() => {
@@ -232,7 +230,7 @@ export function HighlightableText({
           `}
           onClick={(e) => {
              e.stopPropagation();
-             setHighlightToRemove(h.id);
+             removeHighlight(h.id);
           }}
           title="Click to remove highlight"
         >
@@ -342,20 +340,6 @@ export function HighlightableText({
       </div>
     )}
 
-    <ConfirmationModal
-        isOpen={!!highlightToRemove}
-        onClose={() => setHighlightToRemove(null)}
-        onConfirm={() => {
-          if (highlightToRemove) {
-            removeHighlight(highlightToRemove);
-            setHighlightToRemove(null);
-          }
-        }}
-        title="Remove Highlight"
-        message="Are you sure you want to remove this highlight?"
-        confirmText="Remove"
-        variant="danger"
-      />
     </>
   );
 }

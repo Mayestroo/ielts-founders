@@ -50,6 +50,48 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
 
   const isExamStarted = assignment?.status === "IN_PROGRESS";
 
+  const withComputedRemainingTime = useCallback(
+    (nextAssignment: ExamAssignment & { remainingTime?: number }) => {
+      if (typeof nextAssignment.remainingTime === "number") {
+        return nextAssignment;
+      }
+
+      if (nextAssignment.status !== "IN_PROGRESS") {
+        return nextAssignment;
+      }
+
+      let endTimestamp: number | null = null;
+
+      if (nextAssignment.endTime) {
+        const parsedEnd = new Date(nextAssignment.endTime).getTime();
+        if (Number.isFinite(parsedEnd)) {
+          endTimestamp = parsedEnd;
+        }
+      }
+
+      if (
+        endTimestamp === null &&
+        nextAssignment.startTime &&
+        typeof nextAssignment.section?.duration === "number"
+      ) {
+        const parsedStart = new Date(nextAssignment.startTime).getTime();
+        if (Number.isFinite(parsedStart)) {
+          endTimestamp = parsedStart + nextAssignment.section.duration * 60 * 1000;
+        }
+      }
+
+      if (endTimestamp === null) {
+        return nextAssignment;
+      }
+
+      return {
+        ...nextAssignment,
+        remainingTime: Math.max(0, Math.floor((endTimestamp - Date.now()) / 1000)),
+      };
+    },
+    [],
+  );
+
   // Break circular dependency with useRef
   const handleFinalSubmitRef = useRef<() => void>(() => {});
 
@@ -73,7 +115,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
     });
   }, []);
 
-  const { isSyncing, syncAnswers } = useExamSession({
+  const { syncAnswers } = useExamSession({
     assignmentId: assignment?.id || null,
     enabled: isExamStarted,
     onSyncError: handleSyncError,
@@ -101,9 +143,9 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
         redirectToBreak(breakData.assignmentId, breakData.breakEndsAt);
         return;
       }
-      setAssignment(data as ExamAssignment & { remainingTime?: number });
+      setAssignment(withComputedRemainingTime(data as ExamAssignment & { remainingTime?: number }));
     },
-    [redirectToBreak],
+    [redirectToBreak, withComputedRemainingTime],
   );
 
   useEffect(() => {
@@ -121,7 +163,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
       api
         .getAssignment(assignmentId)
         .then(async (data) => {
-          setAssignment(data);
+          setAssignment(withComputedRemainingTime(data));
           
           const storedAnswers = useExamStore.getState().answers as Record<string, AnswerValue>;
           const sectionQuestions = (data.section?.questions || []) as Question[];
@@ -157,7 +199,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
               );
               
               if (reconnectData.success && reconnectData.assignment) {
-                setAssignment(reconnectData.assignment);
+                setAssignment(withComputedRemainingTime(reconnectData.assignment));
                 applyMergedAnswers(reconnectData.assignment.answers as Record<string, AnswerValue>);
               } else {
                 // If reconnect fails, fallback to DB data
@@ -193,7 +235,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
           setError(err.message);
         });
     }
-  }, [assignmentId, forceShowVideo, handleStartResponse, isAuthenticated]);
+  }, [assignmentId, forceShowVideo, handleStartResponse, isAuthenticated, withComputedRemainingTime]);
 
   const enterFullscreen = useCallback(async () => {
     try {
@@ -590,7 +632,6 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
             currentQuestionId={currentQuestionId}
             rightPanelRef={rightPanelRef}
             isSubmitting={isSubmitting}
-            isSyncing={isSyncing}
             showIntroVideo={showIntroVideo}
             isSettingsOpen={isSettingsOpen}
             onOpenSettings={() => setIsSettingsOpen(true)}
@@ -660,7 +701,6 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
             answers={answers}
             currentQuestionId={currentQuestionId}
             isSubmitting={isSubmitting}
-            isSyncing={isSyncing}
             showIntroVideo={showIntroVideo}
             showPlayOverlay={showPlayOverlay}
             isSettingsOpen={isSettingsOpen}
