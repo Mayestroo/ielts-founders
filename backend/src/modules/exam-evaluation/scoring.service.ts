@@ -62,7 +62,10 @@ export class ScoringService {
       }
 
       // Normalize string correctAnswer to array for MCQ_MULTIPLE
-      if (question.type === 'MCQ_MULTIPLE' && typeof correctAnswer === 'string') {
+      if (
+        question.type === 'MCQ_MULTIPLE' &&
+        typeof correctAnswer === 'string'
+      ) {
         correctAnswer = [correctAnswer];
       }
 
@@ -71,7 +74,9 @@ export class ScoringService {
         Array.isArray(studentAnswer) &&
         Array.isArray(correctAnswer)
       ) {
-        const normalizedCorrect = correctAnswer.map((a: string) => String(a).toLowerCase().trim());
+        const normalizedCorrect = correctAnswer.map((a: string) =>
+          String(a).toLowerCase().trim(),
+        );
         const correctCount = studentAnswer.filter((a: string) =>
           normalizedCorrect.includes(String(a).toLowerCase().trim()),
         ).length;
@@ -107,9 +112,15 @@ export class ScoringService {
       case 'MCQ_SINGLE':
       case 'TRUE_FALSE_NOT_GIVEN':
       case 'YES_NO_NOT_GIVEN':
-        const s = Array.isArray(studentAnswer) ? studentAnswer[0] : studentAnswer;
-        const c = Array.isArray(correctAnswer) ? correctAnswer[0] : correctAnswer;
-        return String(s).toLowerCase().trim() === String(c).toLowerCase().trim();
+        const s = Array.isArray(studentAnswer)
+          ? studentAnswer[0]
+          : studentAnswer;
+        const c = Array.isArray(correctAnswer)
+          ? correctAnswer[0]
+          : correctAnswer;
+        return (
+          String(s).toLowerCase().trim() === String(c).toLowerCase().trim()
+        );
 
       case 'MCQ_MULTIPLE':
         if (!Array.isArray(studentAnswer) || !Array.isArray(correctAnswer))

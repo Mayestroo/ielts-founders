@@ -1,6 +1,7 @@
 "use client";
 
 import { HighlightableText } from "@/components/exam/HighlightableText";
+import { sanitizeHtml } from "@/lib/sanitizeHtml";
 import { Question } from "@/types";
 import { useEffect, useRef, useState } from "react";
 
@@ -125,9 +126,11 @@ export function MatchingGroup({
                     <span
                       className="text-[17px] text-gray-900 leading-snug max-w-[60%]"
                       dangerouslySetInnerHTML={{
-                        __html: cleanText
-                          .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
-                          .replace(/\n/g, "<br />"),
+                        __html: sanitizeHtml(
+                          cleanText
+                            .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
+                            .replace(/\n/g, "<br />"),
+                        ),
                       }}
                     />
                   )}

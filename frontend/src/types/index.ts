@@ -8,7 +8,7 @@ export interface Center {
   id: string;
   name: string;
   logo?: string;
-  loginPassword?: string;
+  hasLoginPassword?: boolean;
   createdAt: string;
   updatedAt: string;
   _count?: {
@@ -31,6 +31,7 @@ export interface User {
 
 export interface LoginResponse {
   access_token: string;
+  refresh_token: string;
   user: User;
 }
 
@@ -222,6 +223,10 @@ export interface SyncResponse {
   newVersion: number;
   syncedAt: string;
   mergedAnswers?: Record<string, any>;
+  message?: string;
+  serverVersion?: number;
+  action?: 'refresh';
+  degraded?: boolean;
 }
 
 export interface ReconnectResponse {

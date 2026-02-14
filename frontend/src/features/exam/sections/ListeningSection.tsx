@@ -2,13 +2,16 @@
 
 import { BottomNav, ExamHeader, PartBanner, SettingsModal } from '@/components/exam';
 import { ExamAssignment, ExamSection, Question } from '@/types';
-import { RefObject, useEffect } from 'react';
+import { RefObject, useEffect, useMemo } from 'react';
 import { IntroVideoOverlay } from '../components/IntroVideoOverlay';
 import { QuestionGroups } from '../components/QuestionGroups';
 import { ReviewAndConfirmModals } from '../components/ReviewAndConfirmModals';
 import { SessionIssueModal } from '../components/SessionIssueModal';
-import { API_BASE_URL } from '../constants';
 import { AnswerValue, ExamPart } from '../types';
+
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_URL?.replace(/\/api\/?$/, '') ||
+  'http://localhost:3000';
 
 interface ListeningSectionProps {
   assignment: ExamAssignment & { remainingTime?: number };
@@ -107,6 +110,14 @@ export function ListeningSection({
   onSessionResolve,
   timerStart,
 }: ListeningSectionProps) {
+  // Memoize audio source URL to prevent <audio> element re-mount on re-renders
+  const audioSrc = useMemo(() => {
+    if (!section.audioUrl) return '';
+    return section.audioUrl.startsWith('http')
+      ? section.audioUrl
+      : `${API_BASE_URL}${section.audioUrl.startsWith('/') ? '' : '/'}${section.audioUrl}`;
+  }, [section.audioUrl]);
+
   // Pause audio ONLY if a tab conflict occurs (anti-cheat/multi-tab prevention)
   useEffect(() => {
     if (sessionError?.type === 'tab_conflict' && audioRef.current && !audioRef.current.paused) {
@@ -141,16 +152,10 @@ export function ListeningSection({
 
       <div className="flex-1 pb-20 overflow-y-auto">
         <div className="max-w-6xl mx-auto p-2 space-y-2">
-          {section.audioUrl && (
+          {audioSrc && (
             <audio
               ref={audioRef}
-              src={
-                section.audioUrl.startsWith('http')
-                  ? section.audioUrl
-                  : `${API_BASE_URL}${section.audioUrl.startsWith('/') ? '' : '/'}${
-                      section.audioUrl
-                    }`
-              }
+              src={audioSrc}
               onPause={onAudioPause}
               onPlay={onAudioPlay}
               onError={(event) => {
@@ -160,7 +165,7 @@ export function ListeningSection({
                   'Failed to load audio source. Please check your connection or contact support.'
                 );
               }}
-              preload="auto"
+              preload="metadata"
               className="hidden"
             />
           )}

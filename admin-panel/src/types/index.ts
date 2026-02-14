@@ -8,7 +8,7 @@ export interface Center {
   id: string;
   name: string;
   logo?: string;
-  loginPassword?: string;
+  hasLoginPassword?: boolean;
   createdAt: string;
   updatedAt: string;
   _count?: {
@@ -27,6 +27,13 @@ export interface User {
   center?: Center;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface StudentSummary {
+  id: string;
+  username: string;
+  firstName?: string;
+  lastName?: string;
 }
 
 export interface LoginResponse {
@@ -139,6 +146,13 @@ export interface ExamSection {
   updatedAt: string;
 }
 
+export interface ExamSectionOption {
+  id: string;
+  title: string;
+  type: ExamSectionType;
+  duration: number;
+}
+
 export interface ExamAssignment {
   id: string;
   studentId: string;
@@ -155,6 +169,35 @@ export interface ExamAssignment {
   section?: ExamSection;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface AssignmentGroup {
+  student: StudentSummary;
+  latestDate: string;
+  hasFullMock: boolean;
+  stats: {
+    assigned: number;
+    progress: number;
+    submitted: number;
+    total: number;
+  };
+  previewAssignments: {
+    id: string;
+    status: AssignmentStatus;
+    fullMockSessionId?: string | null;
+    createdAt: string;
+    section?: {
+      id: string;
+      title: string;
+      type: ExamSectionType;
+      duration: number;
+    };
+  }[];
+}
+
+export interface GroupedAssignmentsResponse {
+  groups: AssignmentGroup[];
+  total: number;
 }
 
 export interface CreateFullMockForm {

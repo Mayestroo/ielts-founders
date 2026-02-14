@@ -1,0 +1,17 @@
+[
+  {
+    "atSeconds": 120,
+    "label": "Redis outage 30s",
+    "command": "curl -s -X POST \"http://localhost:3000/api/health/chaos\" -H \"Content-Type: application/json\" -d '{\"token\":\"local-chaos-token\",\"redisOutageMs\":30000}'"
+  },
+  {
+    "atSeconds": 300,
+    "label": "DB latency +2s for 30s",
+    "command": "curl -s -X POST \"http://localhost:3000/api/health/chaos\" -H \"Content-Type: application/json\" -d '{\"token\":\"local-chaos-token\",\"dbDelayMs\":2000,\"dbDelayDurationMs\":30000}'"
+  },
+  {
+    "atSeconds": 420,
+    "label": "HTTP 502 for 15s",
+    "command": "curl -s -X POST \"http://localhost:3000/api/health/chaos\" -H \"Content-Type: application/json\" -d '{\"token\":\"local-chaos-token\",\"http502Ms\":15000}'"
+  }
+]

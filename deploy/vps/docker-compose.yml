@@ -1,0 +1,159 @@
+name: ielts-prod
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: ielts-postgres
+    restart: unless-stopped
+    env_file:
+      - ./env/postgres.env
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis-session:
+    image: redis:7.2-alpine
+    container_name: ielts-redis-session
+    restart: unless-stopped
+    env_file:
+      - ./env/redis-session.env
+    command: ["/bin/sh", "-c", "exec redis-server /usr/local/etc/redis/redis.conf --requirepass \"$REDIS_PASSWORD\""]
+    volumes:
+      - ./redis/session.conf:/usr/local/etc/redis/redis.conf:ro
+      - redis_session_data:/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$REDIS_PASSWORD\" ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis-queue:
+    image: redis:7.2-alpine
+    container_name: ielts-redis-queue
+    restart: unless-stopped
+    env_file:
+      - ./env/redis-queue.env
+    command: ["/bin/sh", "-c", "exec redis-server /usr/local/etc/redis/redis.conf --requirepass \"$REDIS_PASSWORD\""]
+    volumes:
+      - ./redis/queue.conf:/usr/local/etc/redis/redis.conf:ro
+      - redis_queue_data:/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$REDIS_PASSWORD\" ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    image: ielts-api:${IMAGE_TAG:-latest}
+    container_name: ielts-api
+    build:
+      context: ../../backend
+      dockerfile: Dockerfile
+    env_file:
+      - ./env/api.env
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DISABLE_WRITING_QUEUE_WORKER: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis-session:
+        condition: service_healthy
+      redis-queue:
+        condition: service_healthy
+    volumes:
+      - uploads_data:/app/uploads
+    networks:
+      - internal
+    restart: unless-stopped
+
+  worker:
+    image: ielts-api:${IMAGE_TAG:-latest}
+    container_name: ielts-worker
+    env_file:
+      - ./env/api.env
+    environment:
+      NODE_ENV: production
+      DISABLE_WRITING_QUEUE_WORKER: "false"
+    command: ["node", "dist/src/worker.js"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis-queue:
+        condition: service_healthy
+    volumes:
+      - uploads_data:/app/uploads
+    networks:
+      - internal
+    restart: unless-stopped
+
+  web:
+    image: ielts-web:${IMAGE_TAG:-latest}
+    container_name: ielts-web
+    build:
+      context: ../../frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      HOSTNAME: 0.0.0.0
+    networks:
+      - internal
+    restart: unless-stopped
+
+  admin:
+    image: ielts-admin:${IMAGE_TAG:-latest}
+    container_name: ielts-admin
+    build:
+      context: ../../admin-panel
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      HOSTNAME: 0.0.0.0
+    networks:
+      - internal
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: ielts-nginx
+    restart: unless-stopped
+    depends_on:
+      - api
+      - web
+      - admin
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - /var/www/certbot:/var/www/certbot:ro
+      - uploads_data:/var/www/uploads:ro
+    networks:
+      - internal
+
+networks:
+  internal:
+
+volumes:
+  pg_data:
+  redis_session_data:
+  redis_queue_data:
+  uploads_data:

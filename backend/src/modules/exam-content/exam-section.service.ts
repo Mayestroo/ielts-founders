@@ -12,6 +12,17 @@ import { UpdateExamSectionDto } from '../exams/dto/update-exam-section.dto';
 export class ExamSectionService {
   constructor(private prisma: PrismaService) {}
 
+  private buildScopedWhere(userRole: Role, centerId: string | null) {
+    if (userRole === Role.TEACHER || userRole === Role.CENTER_ADMIN) {
+      if (!centerId) {
+        throw new ForbiddenException('Center context is required');
+      }
+      return { centerId } satisfies Prisma.ExamSectionWhereInput;
+    }
+
+    return {} satisfies Prisma.ExamSectionWhereInput;
+  }
+
   async create(
     createSectionDto: CreateExamSectionDto,
     teacherId: string,
@@ -34,17 +45,21 @@ export class ExamSectionService {
   }
 
   async findAll(userRole: Role, centerId: string | null, teacherId?: string) {
-    let where: Prisma.ExamSectionWhereInput = {};
-
-    if (userRole === Role.TEACHER && centerId) {
-      where = { centerId };
-    } else if (userRole === Role.CENTER_ADMIN && centerId) {
-      where = { centerId };
-    }
+    const where = this.buildScopedWhere(userRole, centerId);
 
     return this.prisma.examSection.findMany({
       where,
-      include: {
+      select: {
+        id: true,
+        title: true,
+        type: true,
+        description: true,
+        duration: true,
+        audioUrl: true,
+        teacherId: true,
+        centerId: true,
+        createdAt: true,
+        updatedAt: true,
         teacher: {
           select: { id: true, username: true, firstName: true, lastName: true },
         },
@@ -54,7 +69,26 @@ export class ExamSectionService {
     });
   }
 
-  async findById(id: string) {
+  async findOptions(userRole: Role, centerId: string | null) {
+    const where = this.buildScopedWhere(userRole, centerId);
+
+    return this.prisma.examSection.findMany({
+      where,
+      select: {
+        id: true,
+        title: true,
+        type: true,
+        duration: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async findById(
+    id: string,
+    requesterRole: Role,
+    requesterCenterId: string | null,
+  ) {
     const section = await this.prisma.examSection.findUnique({
       where: { id },
       include: {
@@ -69,14 +103,40 @@ export class ExamSectionService {
       throw new NotFoundException('Exam section not found');
     }
 
+    if (
+      requesterRole === Role.TEACHER ||
+      requesterRole === Role.CENTER_ADMIN ||
+      requesterRole === Role.STUDENT
+    ) {
+      if (!requesterCenterId || section.centerId !== requesterCenterId) {
+        throw new ForbiddenException('Access denied for another center');
+      }
+    }
+
     return section;
   }
 
-  async delete(id: string, userId: string, userRole: Role) {
-    const section = await this.findById(id);
+  async delete(
+    id: string,
+    userId: string,
+    userRole: Role,
+    requesterCenterId: string | null,
+  ) {
+    const section = await this.findById(id, userRole, requesterCenterId);
 
     if (userRole === Role.TEACHER && section.teacherId !== userId) {
       throw new ForbiddenException('You can only delete your own sections');
+    }
+
+    const [assignmentCount, resultCount] = await this.prisma.$transaction([
+      this.prisma.examAssignment.count({ where: { sectionId: id } }),
+      this.prisma.examResult.count({ where: { sectionId: id } }),
+    ]);
+
+    if (assignmentCount > 0 || resultCount > 0) {
+      throw new ForbiddenException(
+        'Cannot delete section with historical attempts/results',
+      );
     }
 
     await this.prisma.examSection.delete({ where: { id } });
@@ -88,17 +148,24 @@ export class ExamSectionService {
     updateSectionDto: UpdateExamSectionDto,
     userId: string,
     userRole: Role,
+    requesterCenterId: string | null,
   ) {
-    const section = await this.findById(id);
+    const section = await this.findById(id, userRole, requesterCenterId);
 
     if (userRole === Role.TEACHER && section.teacherId !== userId) {
       throw new ForbiddenException('You can only update your own sections');
     }
 
+    const { centerId, ...rest } = updateSectionDto;
+    if (centerId && userRole !== Role.SUPER_ADMIN) {
+      throw new ForbiddenException('You cannot change section center');
+    }
+
     return this.prisma.examSection.update({
       where: { id },
       data: {
-        ...updateSectionDto,
+        ...rest,
+        ...(userRole === Role.SUPER_ADMIN && centerId ? { centerId } : {}),
         questions: updateSectionDto.questions as Prisma.InputJsonValue,
         passages: updateSectionDto.passages as Prisma.InputJsonValue,
       },

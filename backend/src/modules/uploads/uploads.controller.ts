@@ -35,7 +35,7 @@ export class UploadsController {
         },
       }),
       fileFilter: (req, file, cb) => {
-        if (file.mimetype.match(/\/(jpg|jpeg|png|gif|mp3|mpeg|wav)$/)) {
+        if (file.mimetype.match(/\/(jpg|jpeg|png|gif|mp3|mpeg|wav|ogg|opus)$/i)) {
           cb(null, true);
         } else {
           cb(new BadRequestException('Unsupported file type'), false);
@@ -46,10 +46,13 @@ export class UploadsController {
       },
     }),
   )
-  uploadFile(@UploadedFile() file: Express.Multer.File) {
+  async uploadFile(@UploadedFile() file: Express.Multer.File) {
     if (!file) {
       throw new BadRequestException('No file uploaded');
     }
+
+    await this.uploadsService.validateUploadedFile(file);
+
     return {
       url: this.uploadsService.getFileUrl(file.filename),
     };

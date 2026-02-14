@@ -19,6 +19,12 @@ export class AiService {
   private readonly keys: string[];
   private currentKeyIndex = 0;
   private readonly circuitBreaker: CircuitBreakerService;
+  private readonly evaluationTimeoutMs = Number(
+    process.env.AI_EVALUATION_TIMEOUT_MS ?? 45000,
+  );
+  private readonly maxTotalAttempts = Number(
+    process.env.AI_MAX_TOTAL_ATTEMPTS ?? 12,
+  );
 
   constructor(
     @Inject('HttpClient')
@@ -176,13 +182,25 @@ export class AiService {
   ): Promise<WritingEvaluation> {
     const prompt = this.buildEvaluationPrompt(taskDescription, studentResponse);
     let lastError: any = null;
+    let totalAttempts = 0;
+    const startedAt = Date.now();
+    const deadline = startedAt + this.evaluationTimeoutMs;
 
     for (const model of this.models) {
+      if (Date.now() >= deadline || totalAttempts >= this.maxTotalAttempts) {
+        break;
+      }
+
       let attempts = 0;
       const maxAttempts = this.keys.length;
 
-      while (attempts < maxAttempts) {
+      while (
+        attempts < maxAttempts &&
+        Date.now() < deadline &&
+        totalAttempts < this.maxTotalAttempts
+      ) {
         attempts++;
+        totalAttempts++;
         const currentApiKey = this.getNextKey();
 
         try {
@@ -240,7 +258,11 @@ export class AiService {
             this.logger.warn(
               `Model ${model} rate limited (429) with key ...${currentApiKey.slice(-4)}. Rotating key...`,
             );
-            await this.delay(2000);
+            const remainingMs = deadline - Date.now();
+            if (remainingMs <= 0) {
+              break;
+            }
+            await this.delay(Math.min(2000, remainingMs));
             continue;
           }
 
@@ -251,6 +273,24 @@ export class AiService {
           break;
         }
       }
+    }
+
+    if (Date.now() >= deadline) {
+      this.logger.error(
+        `AI evaluation timed out after ${this.evaluationTimeoutMs}ms (attempts: ${totalAttempts})`,
+      );
+      throw new Error(
+        `AI evaluation timed out after ${this.evaluationTimeoutMs}ms`,
+      );
+    }
+
+    if (totalAttempts >= this.maxTotalAttempts) {
+      this.logger.error(
+        `AI evaluation exceeded max attempts (${this.maxTotalAttempts})`,
+      );
+      throw new Error(
+        `AI evaluation exceeded max attempts (${this.maxTotalAttempts})`,
+      );
     }
 
     this.logger.error('All Gemini models and keys failed.');

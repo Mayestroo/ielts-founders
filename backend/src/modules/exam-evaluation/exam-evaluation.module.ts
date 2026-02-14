@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, Provider } from '@nestjs/common';
 import { AiModule } from '../ai';
 import { PrismaModule } from '../prisma';
 import { QueueModule } from '../queue';
@@ -8,15 +8,20 @@ import { ScoringService } from './scoring.service';
 import { WritingEvaluationService } from './writing-evaluation.service';
 import { WritingGradingProcessor } from './writing-grading.processor';
 
+const examEvaluationProviders: Provider[] = [
+  ScoringService,
+  WritingEvaluationService,
+  ResultService,
+  ExamEventListener,
+];
+
+if (process.env.DISABLE_WRITING_QUEUE_WORKER !== 'true') {
+  examEvaluationProviders.push(WritingGradingProcessor);
+}
+
 @Module({
   imports: [AiModule, QueueModule, PrismaModule],
-  providers: [
-    ScoringService,
-    WritingEvaluationService,
-    ResultService,
-    ExamEventListener,
-    WritingGradingProcessor,
-  ],
+  providers: examEvaluationProviders,
   exports: [ScoringService, WritingEvaluationService, ResultService],
 })
 export class ExamEvaluationModule {}

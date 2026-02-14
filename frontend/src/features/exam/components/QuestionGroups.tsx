@@ -11,6 +11,7 @@ import {
   TableGroup,
   TrueFalseQuestion,
 } from '@/components/questions';
+import { sanitizeHtml } from '@/lib/sanitizeHtml';
 import { Question } from '@/types';
 import { AnswerValue } from '../types';
 import { getEffectivePoints } from '../utils';
@@ -212,9 +213,11 @@ export function QuestionGroups({
                 <p
                   className="text-[#30343C] text-[15px] leading-relaxed font-normal"
                   dangerouslySetInnerHTML={{
-                    __html: firstQuestion.instruction.replace(
-                      /\*\*(.*?)\*\*/g,
-                      '<strong>$1</strong>'
+                    __html: sanitizeHtml(
+                      firstQuestion.instruction.replace(
+                        /\*\*(.*?)\*\*/g,
+                        '<strong>$1</strong>',
+                      ),
                     ),
                   }}
                 />

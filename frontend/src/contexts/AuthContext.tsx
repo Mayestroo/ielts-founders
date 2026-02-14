@@ -19,18 +19,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    const token = api.getToken();
-    if (token) {
-      api.getProfile()
-        .then(setUser)
-        .catch(() => {
+    api.getProfile()
+      .then(setUser)
+      .catch((error) => {
+        // Only logout on auth errors, NOT on network/server errors
+        const msg = error.message?.toLowerCase();
+        if (msg?.includes('401') || msg?.includes('unauthorized') || msg?.includes('session expired')) {
+          console.error('Auth check failed, logging out:', error);
           api.logout();
           setUser(null);
-        })
-        .finally(() => setIsLoading(false));
-    } else {
-      setIsLoading(false);
-    }
+        } else {
+          console.warn('Profile fetch failed but keeping session (transient error):', error);
+          // Optionally could set a "disconnected" state here
+        }
+      })
+      .finally(() => setIsLoading(false));
   }, []);
 
   const login = async (username: string, password: string) => {

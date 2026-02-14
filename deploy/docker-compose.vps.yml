@@ -1,0 +1,147 @@
+name: ielts-platform
+
+services:
+  redis-session:
+    image: redis:7.4-alpine
+    command:
+      [
+        "sh",
+        "-c",
+        "exec redis-server --appendonly yes --appendfsync everysec --save 60 1000 --maxmemory-policy noeviction --requirepass \"$SESSION_REDIS_PASSWORD\"",
+      ]
+    environment:
+      SESSION_REDIS_PASSWORD: ${SESSION_REDIS_PASSWORD}
+    volumes:
+      - redis-session-data:/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "redis-cli -a \"$SESSION_REDIS_PASSWORD\" ping | grep -q PONG",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    networks:
+      - backend
+
+  redis-queue:
+    image: redis:7.4-alpine
+    command:
+      [
+        "sh",
+        "-c",
+        "exec redis-server --appendonly yes --appendfsync everysec --save 60 1000 --maxmemory-policy noeviction --requirepass \"$QUEUE_REDIS_PASSWORD\"",
+      ]
+    environment:
+      QUEUE_REDIS_PASSWORD: ${QUEUE_REDIS_PASSWORD}
+    volumes:
+      - redis-queue-data:/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "redis-cli -a \"$QUEUE_REDIS_PASSWORD\" ping | grep -q PONG",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    networks:
+      - backend
+
+  backend-api:
+    image: ielts-backend:local
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    env_file:
+      - ./backend.vps.env
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DISABLE_WRITING_QUEUE_WORKER: "true"
+      SESSION_REDIS_HOST: redis-session
+      SESSION_REDIS_PORT: 6379
+      SESSION_REDIS_TLS: "false"
+      QUEUE_REDIS_HOST: redis-queue
+      QUEUE_REDIS_PORT: 6379
+      QUEUE_REDIS_TLS: "false"
+    depends_on:
+      redis-session:
+        condition: service_healthy
+      redis-queue:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:3000:3000"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"fetch('http://127.0.0.1:3000/api/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+    networks:
+      - backend
+
+  backend-worker:
+    image: ielts-backend:local
+    env_file:
+      - ./backend.vps.env
+    command: ["npm", "run", "start:worker"]
+    environment:
+      NODE_ENV: production
+      DISABLE_WRITING_QUEUE_WORKER: "false"
+      SESSION_REDIS_HOST: redis-session
+      SESSION_REDIS_PORT: 6379
+      SESSION_REDIS_TLS: "false"
+      QUEUE_REDIS_HOST: redis-queue
+      QUEUE_REDIS_PORT: 6379
+      QUEUE_REDIS_TLS: "false"
+    depends_on:
+      redis-session:
+        condition: service_healthy
+      redis-queue:
+        condition: service_healthy
+      backend-api:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - backend
+
+  backend-migrate:
+    image: ielts-backend:local
+    env_file:
+      - ./backend.vps.env
+    command: ["npm", "run", "prisma:deploy"]
+    environment:
+      NODE_ENV: production
+      DISABLE_WRITING_QUEUE_WORKER: "true"
+      SESSION_REDIS_HOST: redis-session
+      SESSION_REDIS_PORT: 6379
+      SESSION_REDIS_TLS: "false"
+      QUEUE_REDIS_HOST: redis-queue
+      QUEUE_REDIS_PORT: 6379
+      QUEUE_REDIS_TLS: "false"
+    depends_on:
+      redis-session:
+        condition: service_healthy
+      redis-queue:
+        condition: service_healthy
+    restart: "no"
+    profiles: ["tools"]
+    networks:
+      - backend
+
+networks:
+  backend:
+    driver: bridge
+
+volumes:
+  redis-session-data:
+  redis-queue-data:

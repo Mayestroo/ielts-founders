@@ -30,6 +30,7 @@ export class WritingEvaluationService {
     resultId: string,
     requesterId: string,
     requesterRole: Role,
+    requesterCenterId: string | null,
   ) {
     const examResult = await this.prisma.examResult.findUnique({
       where: { id: resultId },
@@ -49,6 +50,13 @@ export class WritingEvaluationService {
       throw new BadRequestException(
         'AI evaluation is only available for writing sections',
       );
+    }
+
+    if (
+      requesterRole !== Role.SUPER_ADMIN &&
+      (!requesterCenterId || examResult.section.centerId !== requesterCenterId)
+    ) {
+      throw new ForbiddenException('Access denied for another center');
     }
 
     const assignment = await this.prisma.examAssignment.findUnique({
@@ -146,6 +154,7 @@ export class WritingEvaluationService {
     submissionId: string,
     userId: string,
     userRole: Role,
+    requesterCenterId: string | null,
   ) {
     const submission = await this.prisma.writingSubmission.findUnique({
       where: { id: submissionId },
@@ -159,7 +168,7 @@ export class WritingEvaluationService {
           },
         },
         section: {
-          select: { title: true },
+          select: { title: true, centerId: true },
         },
       },
     });
@@ -176,6 +185,14 @@ export class WritingEvaluationService {
 
     if (!isOwner && !isAdmin) {
       throw new ForbiddenException('Not authorized to view this submission');
+    }
+
+    if (
+      isAdmin &&
+      userRole !== Role.SUPER_ADMIN &&
+      (!requesterCenterId || submission.section.centerId !== requesterCenterId)
+    ) {
+      throw new ForbiddenException('Access denied for another center');
     }
 
     return {

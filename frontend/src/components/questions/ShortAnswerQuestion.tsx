@@ -1,4 +1,5 @@
 import { HighlightableText } from '@/components/exam/HighlightableText';
+import { sanitizeHtml } from '@/lib/sanitizeHtml';
 import { useEffect, useRef } from 'react';
 
 interface ShortAnswerProps {
@@ -59,7 +60,11 @@ export function ShortAnswerQuestion({
             <p 
               className="text-gray-900 font-medium text-base leading-relaxed"
               dangerouslySetInnerHTML={{ 
-                __html: questionText.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br />')
+                __html: sanitizeHtml(
+                  questionText
+                    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                    .replace(/\n/g, '<br />'),
+                )
               }}
             />
           )}

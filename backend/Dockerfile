@@ -1,31 +1,30 @@
-FROM node:20-alpine AS builder
+FROM node:22-bookworm-slim AS deps
 
-# Create app directory
-WORKDIR /usr/src/app
-
-# Copy application dependency manifests to the container image.
-# A wildcard is used to ensure both package.json AND package-lock.json are copied
-# where available (npm@5+)
+WORKDIR /app
 COPY package*.json ./
-COPY prisma ./prisma/
-
-# Install app dependencies
+COPY prisma ./prisma
 RUN npm ci
 
-# Copy everything else and build
+FROM deps AS build
+
+WORKDIR /app
 COPY . .
 RUN npm run prisma:generate
 RUN npm run build
+RUN npm prune --omit=dev
 
-FROM node:20-alpine AS production
+FROM node:22-bookworm-slim AS runner
 
-WORKDIR /usr/src/app
+WORKDIR /app
+ENV NODE_ENV=production
 
-COPY --from=builder /usr/src/app/node_modules ./node_modules
-COPY --from=builder /usr/src/app/package*.json ./
-COPY --from=builder /usr/src/app/dist ./dist
-COPY --from=builder /usr/src/app/prisma ./prisma
+COPY --from=build /app/package*.json ./
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/dist ./dist
+COPY --from=build /app/prisma ./prisma
+
+RUN mkdir -p /app/uploads
 
 EXPOSE 3000
 
-CMD [ "npm", "run", "start:prod" ]
+CMD ["node", "dist/src/main.js"]

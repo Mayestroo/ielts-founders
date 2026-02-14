@@ -54,6 +54,23 @@ export class UsersController {
     );
   }
 
+  @Get('students')
+  @Roles(Role.SUPER_ADMIN, Role.CENTER_ADMIN, Role.TEACHER)
+  findStudents(
+    @Request() req,
+    @Query('skip') skip?: number,
+    @Query('take') take?: number,
+    @Query('search') search?: string,
+  ) {
+    return this.usersService.findStudents(
+      req.user.role,
+      req.user.centerId,
+      skip,
+      take,
+      search,
+    );
+  }
+
   @Get(':id')
   findOne(@Param('id') id: string, @Request() req) {
     return this.usersService.findOne(

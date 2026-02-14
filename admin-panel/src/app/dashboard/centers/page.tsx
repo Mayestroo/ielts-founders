@@ -68,7 +68,7 @@ export default function CentersPage() {
   const openEditModal = (center: Center) => {
     setEditingCenter(center);
     setName(center.name);
-    setLoginPassword(center.loginPassword || "");
+    setLoginPassword("");
     setLogo(center.logo || "");
     setLogoPreview(center.logo || null);
     setLogoFile(null);
@@ -292,7 +292,7 @@ export default function CentersPage() {
               <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-2">
                 {center.name}
               </h3>
-              {center.loginPassword && (
+              {center.hasLoginPassword && (
                 <p className="text-xs text-slate-500 dark:text-slate-400 mb-2 flex items-center gap-1">
                   <svg
                     className="w-3 h-3"
@@ -476,7 +476,7 @@ export default function CentersPage() {
 
           <Input
             label="Center Login Password (Optional)"
-            placeholder="Enter password for center access"
+            placeholder={editingCenter ? "Enter new password to rotate" : "Enter password for center access"}
             value={loginPassword}
             onChange={(e) => setLoginPassword(e.target.value)}
             type="password"

@@ -2,6 +2,7 @@
 
 import { BottomNav, ExamHeader, PartBanner, ResizablePanel, SettingsModal } from '@/components/exam';
 import { WritingTask } from '@/components/questions';
+import { sanitizeHtml } from '@/lib/sanitizeHtml';
 import { ExamAssignment, ExamSection, Question } from '@/types';
 import { RefObject } from 'react';
 import { IntroVideoOverlay } from '../components/IntroVideoOverlay';
@@ -128,7 +129,9 @@ export function WritingSection({
                     key={index}
                     className={`text-black text-base ${index === 0 ? 'font-bold' : ''} mb-4`}
                     dangerouslySetInnerHTML={{
-                      __html: line.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>'),
+                      __html: sanitizeHtml(
+                        line.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>'),
+                      ),
                     }}
                   />
                 ))}

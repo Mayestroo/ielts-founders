@@ -8,6 +8,13 @@ Thumbs.db
 .vscode
 *.swp
 *.swo
+
+# Temporary local docs and notes
+task.md
+audit.md
+recheck-report.md
+cleanup-audit-report.md
+vps.md
 plesk.md
 PROJECT.md
 ENV_SETUP.md
@@ -24,3 +31,4 @@ test-results/
 .env
 .env.*
 !.env.example
+!.env.*.example

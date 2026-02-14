@@ -1,40 +1,40 @@
 import {
-    BadRequestException,
-    Body,
-    Controller,
-    Delete,
-    Get,
-    Param,
-    Post,
-    Put,
-    Query,
-    Request,
-    UseGuards,
+  BadRequestException,
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Post,
+  Put,
+  Query,
+  Request,
+  UseGuards,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { Throttle } from '@nestjs/throttler';
-import { Role } from '@prisma/client';
+import { ExamSectionType, Role } from '@prisma/client';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { ExamSectionService } from '../exam-content/exam-section.service';
 import { ResultService } from '../exam-evaluation/result.service';
 import { WritingEvaluationService } from '../exam-evaluation/writing-evaluation.service';
 import {
-    AssignmentService,
-    AssignmentWithSection,
+  AssignmentService,
+  AssignmentWithSection,
 } from '../exam-runtime/assignment.service';
 import { ExamSessionService } from '../exam-runtime/exam-session.service';
 import { SubmissionService } from '../exam-runtime/submission.service';
 import {
-    CreateAssignmentDto,
-    CreateExamSectionDto,
-    CreateFullMockDto,
-    HeartbeatDto,
-    ReconnectDto,
-    SaveHighlightsDto,
-    SubmitAnswersDto,
-    SyncAnswersDto,
-    UpdateExamSectionDto,
+  CreateAssignmentDto,
+  CreateExamSectionDto,
+  CreateFullMockDto,
+  HeartbeatDto,
+  ReconnectDto,
+  SaveHighlightsDto,
+  SubmitAnswersDto,
+  SyncAnswersDto,
+  UpdateExamSectionDto,
 } from './dto';
 
 interface AuthenticatedUser {
@@ -67,7 +67,10 @@ export class ExamsController {
     @Body() createSectionDto: CreateExamSectionDto,
     @Request() req: AuthenticatedRequest,
   ) {
-    const centerId = createSectionDto.centerId || req.user.centerId;
+    const centerId =
+      req.user.role === Role.SUPER_ADMIN
+        ? createSectionDto.centerId || req.user.centerId
+        : req.user.centerId;
 
     if (!centerId) {
       throw new BadRequestException(
@@ -92,9 +95,26 @@ export class ExamsController {
     );
   }
 
+  @Get('exam-sections/options')
+  @Roles(Role.TEACHER, Role.CENTER_ADMIN, Role.SUPER_ADMIN)
+  findSectionOptions(@Request() req: AuthenticatedRequest) {
+    return this.examSectionService.findOptions(
+      req.user.role,
+      req.user.centerId,
+    );
+  }
+
   @Get('exam-sections/:id')
-  findSectionById(@Param('id') id: string) {
-    return this.examSectionService.findById(id);
+  @Roles(Role.TEACHER, Role.CENTER_ADMIN, Role.SUPER_ADMIN)
+  findSectionById(
+    @Param('id') id: string,
+    @Request() req: AuthenticatedRequest,
+  ) {
+    return this.examSectionService.findById(
+      id,
+      req.user.role,
+      req.user.centerId,
+    );
   }
 
   @Put('exam-sections/:id')
@@ -109,13 +129,19 @@ export class ExamsController {
       updateSectionDto,
       req.user.id,
       req.user.role,
+      req.user.centerId,
     );
   }
 
   @Delete('exam-sections/:id')
   @Roles(Role.TEACHER, Role.CENTER_ADMIN, Role.SUPER_ADMIN)
   deleteSection(@Param('id') id: string, @Request() req: AuthenticatedRequest) {
-    return this.examSectionService.delete(id, req.user.id, req.user.role);
+    return this.examSectionService.delete(
+      id,
+      req.user.id,
+      req.user.role,
+      req.user.centerId,
+    );
   }
 
   // ========== ASSIGNMENTS ==========
@@ -161,6 +187,37 @@ export class ExamsController {
     );
   }
 
+  @Get('assignments/grouped')
+  @Roles(Role.TEACHER, Role.CENTER_ADMIN, Role.SUPER_ADMIN)
+  findGroupedAssignments(
+    @Request() req: AuthenticatedRequest,
+    @Query('skip') skip?: number,
+    @Query('take') take?: number,
+    @Query('search') search?: string,
+    @Query('sectionType') sectionType?: string,
+  ) {
+    let normalizedSectionType: ExamSectionType | undefined;
+    if (sectionType) {
+      if (
+        !Object.values(ExamSectionType).includes(sectionType as ExamSectionType)
+      ) {
+        throw new BadRequestException('Invalid sectionType');
+      }
+      normalizedSectionType = sectionType as ExamSectionType;
+    }
+
+    return this.assignmentService.findGrouped(
+      req.user.role,
+      req.user.centerId,
+      {
+        skip,
+        take,
+        search,
+        sectionType: normalizedSectionType,
+      },
+    );
+  }
+
   @Get('assignments/student/:studentId')
   getStudentAssignments(
     @Param('studentId') studentId: string,
@@ -170,6 +227,7 @@ export class ExamsController {
       studentId,
       req.user.id,
       req.user.role,
+      req.user.centerId,
     );
   }
 
@@ -179,6 +237,7 @@ export class ExamsController {
       req.user.id,
       req.user.id,
       req.user.role,
+      req.user.centerId,
     );
   }
 
@@ -187,11 +246,17 @@ export class ExamsController {
     @Param('id') id: string,
     @Request() req: AuthenticatedRequest,
   ): Promise<AssignmentWithSection> {
-    return this.assignmentService.findById(id, req.user.id, req.user.role);
+    return this.assignmentService.findById(
+      id,
+      req.user.id,
+      req.user.role,
+      req.user.centerId,
+    );
   }
 
   @Post('assignments/:id/start')
   @Roles(Role.STUDENT)
+  @Throttle({ default: { ttl: 60000, limit: 12 } })
   startExam(@Param('id') id: string, @Request() req: AuthenticatedRequest) {
     return this.assignmentService.startExam(id, req.user.id);
   }
@@ -209,6 +274,7 @@ export class ExamsController {
 
   @Post('assignments/:id/highlight')
   @Roles(Role.STUDENT)
+  @Throttle({ default: { ttl: 60000, limit: 60 } })
   saveHighlights(
     @Param('id') id: string,
     @Body() highlightsDto: SaveHighlightsDto,
@@ -225,6 +291,7 @@ export class ExamsController {
 
   @Post('assignments/:id/sync')
   @Roles(Role.STUDENT)
+  @Throttle({ default: { ttl: 60000, limit: 90 } })
   syncAnswers(
     @Param('id') id: string,
     @Body() body: SyncAnswersDto,
@@ -236,11 +303,13 @@ export class ExamsController {
       body.answers,
       body.highlights || [],
       body.syncVersion || 0,
+      body.tabId,
     );
   }
 
   @Post('assignments/:id/heartbeat')
   @Roles(Role.STUDENT)
+  @Throttle({ default: { ttl: 60000, limit: 30 } })
   heartbeat(
     @Param('id') id: string,
     @Body() body: HeartbeatDto,
@@ -251,6 +320,7 @@ export class ExamsController {
 
   @Post('assignments/:id/reconnect')
   @Roles(Role.STUDENT)
+  @Throttle({ default: { ttl: 60000, limit: 20 } })
   reconnectExam(
     @Param('id') id: string,
     @Body() body: ReconnectDto,
@@ -275,6 +345,7 @@ export class ExamsController {
       id,
       req.user.id,
       req.user.role,
+      req.user.centerId,
     );
   }
 
@@ -329,6 +400,7 @@ export class ExamsController {
       id,
       req.user.id,
       req.user.role,
+      req.user.centerId,
     );
   }
 
@@ -338,7 +410,11 @@ export class ExamsController {
     @Param('id') id: string,
     @Request() req: AuthenticatedRequest,
   ) {
-    return this.assignmentService.reassign(id);
+    return this.assignmentService.reassign(
+      id,
+      req.user.role,
+      req.user.centerId,
+    );
   }
 
   @Delete('assignments/:id')
@@ -347,6 +423,6 @@ export class ExamsController {
     @Param('id') id: string,
     @Request() req: AuthenticatedRequest,
   ) {
-    return this.assignmentService.delete(id);
+    return this.assignmentService.delete(id, req.user.role, req.user.centerId);
   }
 }

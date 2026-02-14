@@ -1,6 +1,7 @@
 "use client";
 
 import { HighlightableText } from "@/components/exam/HighlightableText";
+import { sanitizeHtml } from "@/lib/sanitizeHtml";
 
 interface TrueFalseProps {
   id: string;
@@ -55,9 +56,11 @@ export function TrueFalseQuestion({
           <p
             className="text-gray-900 font-medium text-base leading-relaxed"
             dangerouslySetInnerHTML={{
-              __html: questionText
-                .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
-                .replace(/\n/g, "<br />"),
+              __html: sanitizeHtml(
+                questionText
+                  .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
+                  .replace(/\n/g, "<br />"),
+              ),
             }}
           />
         )}

@@ -1,4 +1,10 @@
-import { IsNotEmpty, IsNumber, IsObject, IsOptional, IsString } from 'class-validator';
+import {
+  IsNotEmpty,
+  IsNumber,
+  IsObject,
+  IsOptional,
+  IsString,
+} from 'class-validator';
 
 export class SyncAnswersDto {
   @IsObject()
@@ -12,6 +18,10 @@ export class SyncAnswersDto {
   @IsNumber()
   @IsOptional()
   syncVersion?: number;
+
+  @IsString()
+  @IsNotEmpty()
+  tabId: string;
 }
 
 export class HeartbeatDto {

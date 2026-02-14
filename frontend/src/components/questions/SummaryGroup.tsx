@@ -1,6 +1,7 @@
 'use client';
 
 import { Question } from '@/types';
+import { sanitizeHtml } from '@/lib/sanitizeHtml';
 import { useState } from 'react';
 import { FillBlankQuestion } from './FillBlankQuestion';
 
@@ -99,7 +100,9 @@ export function SummaryGroup({
                       {/* Render text before blank */}
                       {beforeText && (
                         <span dangerouslySetInnerHTML={{
-                          __html: beforeText.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                          __html: sanitizeHtml(
+                            beforeText.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>'),
+                          )
                         }} />
                       )}
                       
@@ -156,7 +159,9 @@ export function SummaryGroup({
                       {/* Render text after blank */}
                       {afterText && (
                         <span dangerouslySetInnerHTML={{
-                          __html: afterText.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                          __html: sanitizeHtml(
+                            afterText.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>'),
+                          )
                         }} />
                       )}
                     </span>

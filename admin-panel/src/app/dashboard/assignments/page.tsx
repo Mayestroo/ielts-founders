@@ -2,15 +2,21 @@
 
 import { Badge, Button, Card, CardBody, CardHeader, ConfirmationModal, Input, Select, useToast } from '@/components/ui';
 import { api } from '@/lib/api';
-import { ExamAssignment, ExamSection, User } from '@/types';
+import {
+  AssignmentGroup,
+  ExamAssignment,
+  ExamSectionOption,
+  StudentSummary,
+} from '@/types';
 import { useEffect, useMemo, useState } from 'react';
 
 export default function AssignmentsPage() {
-  const [assignments, setAssignments] = useState<ExamAssignment[]>([]);
+  const [groups, setGroups] = useState<AssignmentGroup[]>([]);
   const [total, setTotal] = useState(0);
-  const [students, setStudents] = useState<User[]>([]);
-  const [exams, setExams] = useState<ExamSection[]>([]);
+  const [students, setStudents] = useState<StudentSummary[]>([]);
+  const [exams, setExams] = useState<ExamSectionOption[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isReferenceLoading, setIsReferenceLoading] = useState(false);
   const [page, setPage] = useState(1);
   const [pageSize] = useState(10);
   const [showModal, setShowModal] = useState(false);
@@ -27,6 +33,7 @@ export default function AssignmentsPage() {
 
   // Filtering States
   const [searchTerm, setSearchTerm] = useState('');
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
 
   const [reassignAssignmentId, setReassignAssignmentId] = useState<string | null>(null);
@@ -40,7 +47,14 @@ export default function AssignmentsPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // UX Grouping state
-  const [selectedStudent, setSelectedStudent] = useState<{ student: User; assignments: ExamAssignment[] } | null>(null);
+  const [selectedStudent, setSelectedStudent] = useState<StudentSummary | null>(null);
+  const [selectedStudentAssignments, setSelectedStudentAssignments] = useState<
+    ExamAssignment[]
+  >([]);
+  const [studentAssignmentsCache, setStudentAssignmentsCache] = useState<
+    Record<string, ExamAssignment[]>
+  >({});
+  const [isDetailsLoading, setIsDetailsLoading] = useState(false);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
   const { success, error: showError } = useToast();
 
@@ -49,63 +63,44 @@ export default function AssignmentsPage() {
   const readingExams = exams.filter(e => e.type === 'READING');
   const writingExams = exams.filter(e => e.type === 'WRITING');
 
-  // Group assignments by student for the main table
-  const groupedAssignments = useMemo(() => {
-    // Perform client-side filtering
-    const filtered = assignments.filter(assignment => {
-      const student = assignment.student!;
-      const matchesSearch = 
-        (student.firstName?.toLowerCase().includes(searchTerm.toLowerCase()) || 
-         student.lastName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-         student.username.toLowerCase().includes(searchTerm.toLowerCase()));
-      
-      const matchesType = !typeFilter || assignment.section?.type === typeFilter;
-      
-      return matchesSearch && matchesType;
-    });
-
-    const groups: Record<string, { student: User; assignments: ExamAssignment[]; latestDate: string }> = {};
-    
-    filtered.forEach((assignment) => {
-      const studentId = assignment.studentId;
-      if (!groups[studentId]) {
-        groups[studentId] = {
-          student: assignment.student!,
-          assignments: [],
-          latestDate: assignment.createdAt as string,
-        };
-      }
-      groups[studentId].assignments.push(assignment);
-      if (new Date(assignment.createdAt) > new Date(groups[studentId].latestDate)) {
-        groups[studentId].latestDate = assignment.createdAt as string;
-      }
-    });
-
-    return Object.values(groups).sort((a, b) => 
-      new Date(b.latestDate).getTime() - new Date(a.latestDate).getTime()
-    );
-  }, [assignments, searchTerm, typeFilter]);
-
-  // Client-side pagination logic
-  const paginatedGroups = useMemo(() => {
-    const startIndex = (page - 1) * pageSize;
-    return groupedAssignments.slice(startIndex, startIndex + pageSize);
-  }, [groupedAssignments, page, pageSize]);
-
-  const totalGroups = useMemo(() => {
-    return new Set(assignments.map((assignment) => assignment.studentId)).size;
-  }, [assignments]);
-
   const hasFilters = Boolean(searchTerm.trim() || typeFilter);
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const pageItems = useMemo<(number | string)[]>(() => {
+    if (totalPages <= 7) {
+      return Array.from({ length: totalPages }, (_, index) => index + 1);
+    }
 
-  // Update total for pagination controls
-  useEffect(() => {
-    setTotal(groupedAssignments.length);
-  }, [groupedAssignments]);
+    const items: (number | string)[] = [1];
+    const start = Math.max(2, page - 1);
+    const end = Math.min(totalPages - 1, page + 1);
+
+    if (start > 2) {
+      items.push('left-ellipsis');
+    }
+
+    for (let current = start; current <= end; current += 1) {
+      items.push(current);
+    }
+
+    if (end < totalPages - 1) {
+      items.push('right-ellipsis');
+    }
+
+    items.push(totalPages);
+    return items;
+  }, [page, totalPages]);
 
   useEffect(() => {
     setPage(1);
   }, [searchTerm, typeFilter]);
+
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      setDebouncedSearchTerm(searchTerm.trim());
+    }, 300);
+
+    return () => clearTimeout(timeout);
+  }, [searchTerm]);
 
   const handleReassign = async () => {
     if (!reassignAssignmentId) return;
@@ -116,17 +111,29 @@ export default function AssignmentsPage() {
       setShowReassignConfirm(false);
       setReassignAssignmentId(null);
       
-      // Update local state for the modal if open
       if (selectedStudent) {
-        setSelectedStudent({
-          ...selectedStudent,
-          assignments: selectedStudent.assignments.map(a => 
-            a.id === reassignAssignmentId ? { ...a, status: 'ASSIGNED' } : a
-          )
+        setSelectedStudentAssignments((previous) =>
+          previous.map((assignment) =>
+            assignment.id === reassignAssignmentId
+              ? { ...assignment, status: 'ASSIGNED' }
+              : assignment,
+          ),
+        );
+        setStudentAssignmentsCache((previous) => {
+          const existing = previous[selectedStudent.id];
+          if (!existing) return previous;
+          return {
+            ...previous,
+            [selectedStudent.id]: existing.map((assignment) =>
+              assignment.id === reassignAssignmentId
+                ? { ...assignment, status: 'ASSIGNED' }
+                : assignment,
+            ),
+          };
         });
       }
       success('Assignment reset to assigned');
-      loadData(); // Refresh list to update status
+      loadGroupedAssignments();
     } catch (err) {
       console.error('Failed to reassign:', err);
       showError('Failed to reset assignment');
@@ -149,15 +156,23 @@ export default function AssignmentsPage() {
       setShowDeleteConfirm(false);
       setDeleteAssignmentId(null);
       
-      // Update local state for the modal if open
       if (selectedStudent) {
-        setSelectedStudent({
-          ...selectedStudent,
-          assignments: selectedStudent.assignments.filter(a => a.id !== deleteAssignmentId)
+        setSelectedStudentAssignments((previous) =>
+          previous.filter((assignment) => assignment.id !== deleteAssignmentId),
+        );
+        setStudentAssignmentsCache((previous) => {
+          const existing = previous[selectedStudent.id];
+          if (!existing) return previous;
+          return {
+            ...previous,
+            [selectedStudent.id]: existing.filter(
+              (assignment) => assignment.id !== deleteAssignmentId,
+            ),
+          };
         });
       }
       success('Assignment deleted');
-      loadData(); // Refresh list
+      loadGroupedAssignments();
     } catch (err) {
       console.error('Failed to delete:', err);
       showError('Failed to delete assignment');
@@ -171,20 +186,48 @@ export default function AssignmentsPage() {
     setShowDeleteConfirm(true);
   };
 
-  const loadData = async () => {
+  const openStudentDetails = async (student: StudentSummary) => {
+    setSelectedStudent(student);
+    setShowDetailsModal(true);
+
+    const cachedAssignments = studentAssignmentsCache[student.id];
+    if (cachedAssignments) {
+      setSelectedStudentAssignments(cachedAssignments);
+      setIsDetailsLoading(false);
+      return;
+    }
+
+    setSelectedStudentAssignments([]);
+    setIsDetailsLoading(true);
+
+    try {
+      const assignments = await api.getStudentAssignments(student.id);
+      setSelectedStudentAssignments(assignments);
+      setStudentAssignmentsCache((previous) => ({
+        ...previous,
+        [student.id]: assignments,
+      }));
+    } catch (err) {
+      console.error('Failed to load student assignments:', err);
+      showError('Failed to load student assignment details');
+    } finally {
+      setIsDetailsLoading(false);
+    }
+  };
+
+  const loadGroupedAssignments = async () => {
     setIsLoading(true);
     try {
-      // Fetch larger batch to allow client-side grouping
-      // We ignore page/pageSize here to get "all" meaningful assignments for grouping
-      const [{ assignments }, { users: studentsData }, examsData] = await Promise.all([
-        api.getAssignments(0, 1000), 
-        api.getUsers(0, 1000),
-        api.getExamSections(),
-      ]);
-      setAssignments(assignments);
-      // setTotal is now derived from groupedAssignments length
-      setStudents(studentsData.filter(u => u.role === 'STUDENT'));
-      setExams(examsData);
+      const skip = (page - 1) * pageSize;
+      const { groups: groupedData, total: groupedTotal } =
+        await api.getGroupedAssignments(
+          skip,
+          pageSize,
+          debouncedSearchTerm || undefined,
+          typeFilter || undefined,
+        );
+      setGroups(groupedData);
+      setTotal(groupedTotal);
     } catch (err) {
       console.error('Failed to load data:', err);
       showError('Failed to load assignments');
@@ -194,8 +237,49 @@ export default function AssignmentsPage() {
   };
 
   useEffect(() => {
-    loadData();
-  }, []); // Remove page dependency as we create client-side pagination
+    if (!showModal) {
+      return;
+    }
+
+    if (students.length > 0 && exams.length > 0) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadReferenceData = async () => {
+      setIsReferenceLoading(true);
+      try {
+        const [{ users: studentsData }, examsData] = await Promise.all([
+          api.getStudents(0, 500),
+          api.getExamSectionOptions(),
+        ]);
+
+        if (cancelled) return;
+
+        setStudents(studentsData);
+        setExams(examsData);
+      } catch (err) {
+        if (cancelled) return;
+        console.error('Failed to load reference data:', err);
+        showError('Failed to load assignment metadata');
+      } finally {
+        if (!cancelled) {
+          setIsReferenceLoading(false);
+        }
+      }
+    };
+
+    loadReferenceData();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [showModal, students.length, exams.length, showError]);
+
+  useEffect(() => {
+    loadGroupedAssignments();
+  }, [page, debouncedSearchTerm, typeFilter]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -247,7 +331,7 @@ export default function AssignmentsPage() {
       setIsFullMock(false);
       setBreakMinutes(2);
       success(isFullMock ? 'Full mock assigned' : 'Assignment created');
-      loadData();
+      loadGroupedAssignments();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to assign exam');
     } finally {
@@ -289,7 +373,7 @@ export default function AssignmentsPage() {
           <h1 className="text-2xl font-semibold text-slate-900 dark:text-white">Assignments</h1>
           <p className="text-slate-500 mt-1">
             Manage exam assignments for students
-            <span className="ml-2 text-xs text-slate-400">{total} of {totalGroups} groups</span>
+            <span className="ml-2 text-xs text-slate-400">{total} groups</span>
           </p>
         </div>
         <Button onClick={() => setShowModal(true)}>
@@ -360,15 +444,11 @@ export default function AssignmentsPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                {paginatedGroups.map((group) => {
+                {groups.map((group) => {
                   const student = group.student;
-                  const assignments = group.assignments;
-                  const hasFullMock = assignments.some((assignment) => assignment.fullMockSessionId);
-                  const stats = {
-                    assigned: assignments.filter(a => a.status === 'ASSIGNED').length,
-                    progress: assignments.filter(a => a.status === 'IN_PROGRESS').length,
-                    submitted: assignments.filter(a => a.status === 'SUBMITTED').length,
-                  };
+                  const previewAssignments = group.previewAssignments;
+                  const hasFullMock = group.hasFullMock;
+                  const stats = group.stats;
 
                   return (
                     <tr key={student.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
@@ -392,13 +472,19 @@ export default function AssignmentsPage() {
                       </td>
                       <td className="px-6 py-4">
                         <div className="flex flex-wrap gap-2">
-                          {assignments.slice(0, 3).map(a => (
-                            <Badge key={a.id} variant={getSectionBadgeVariant(a.section?.type || '')} size="sm">
-                              {a.section?.type}
+                          {previewAssignments.map((assignment) => (
+                            <Badge
+                              key={assignment.id}
+                              variant={getSectionBadgeVariant(assignment.section?.type || '')}
+                              size="sm"
+                            >
+                              {assignment.section?.type}
                             </Badge>
                           ))}
-                          {assignments.length > 3 && (
-                            <span className="text-xs text-slate-500">+{assignments.length - 3} more</span>
+                          {stats.total > previewAssignments.length && (
+                            <span className="text-xs text-slate-500">
+                              +{stats.total - previewAssignments.length} more
+                            </span>
                           )}
                         </div>
                       </td>
@@ -416,10 +502,7 @@ export default function AssignmentsPage() {
                         <Button 
                           size="sm" 
                           variant="secondary" 
-                          onClick={() => {
-                            setSelectedStudent(group);
-                            setShowDetailsModal(true);
-                          }}
+                          onClick={() => openStudentDetails(student)}
                         >
                           View Details
                         </Button>
@@ -427,7 +510,7 @@ export default function AssignmentsPage() {
                     </tr>
                   );
                 })}
-                {paginatedGroups.length === 0 && (
+                {groups.length === 0 && (
                   <tr>
                     <td colSpan={5} className="px-6 py-12 text-center text-slate-500">
                       {searchTerm || typeFilter ? 'No assignments match your filters' : 'No assignments found'}
@@ -453,7 +536,7 @@ export default function AssignmentsPage() {
             </Button>
             <Button
               onClick={() => setPage(p => p + 1)}
-              disabled={page * pageSize >= total}
+              disabled={page >= totalPages}
               variant="secondary"
             >
               Next
@@ -478,22 +561,35 @@ export default function AssignmentsPage() {
                     <path fillRule="evenodd" d="M12.79 5.23a.75.75 0 01-.02 1.06L8.832 10l3.938 3.71a.75.75 0 11-1.04 1.08l-4.5-4.25a.75.75 0 010-1.08l4.5-4.25a.75.75 0 011.06.02z" clipRule="evenodd" />
                   </svg>
                 </button>
-                {[...Array(Math.ceil(total / pageSize))].map((_, i) => (
-                  <button
-                    key={i}
-                    onClick={() => setPage(i + 1)}
-                    className={`relative inline-flex items-center px-4 py-2 text-sm font-semibold ring-1 ring-inset ring-slate-200 focus:z-20 focus:outline-offset-0 ${
-                      page === i + 1
-                        ? 'z-10 bg-slate-900 text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900'
-                        : 'text-slate-900 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'
-                    }`}
-                  >
-                    {i + 1}
-                  </button>
-                ))}
+                {pageItems.map((item, index) => {
+                  if (typeof item === 'string') {
+                    return (
+                      <span
+                        key={`${item}-${index}`}
+                        className="relative inline-flex items-center px-4 py-2 text-sm font-semibold text-slate-500 ring-1 ring-inset ring-slate-200"
+                      >
+                        ...
+                      </span>
+                    );
+                  }
+
+                  return (
+                    <button
+                      key={item}
+                      onClick={() => setPage(item)}
+                      className={`relative inline-flex items-center px-4 py-2 text-sm font-semibold ring-1 ring-inset ring-slate-200 focus:z-20 focus:outline-offset-0 ${
+                        page === item
+                          ? 'z-10 bg-slate-900 text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900'
+                          : 'text-slate-900 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'
+                      }`}
+                    >
+                      {item}
+                    </button>
+                  );
+                })}
                 <button
                   onClick={() => setPage(p => p + 1)}
-                  disabled={page * pageSize >= total}
+                  disabled={page >= totalPages}
                   className="relative inline-flex items-center rounded-r-md px-2 py-2 text-slate-400 ring-1 ring-inset ring-slate-200 hover:bg-slate-50 focus:z-20 focus:outline-offset-0 disabled:opacity-50"
                 >
                   <span className="sr-only">Next</span>
@@ -514,12 +610,16 @@ export default function AssignmentsPage() {
             <CardHeader className="flex flex-row items-center justify-between">
               <div>
                 <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
-                  Assignments for {selectedStudent.student.firstName || selectedStudent.student.username}
+                  Assignments for {selectedStudent.firstName || selectedStudent.username}
                 </h2>
                 <p className="text-sm text-gray-500 mt-1">Manage individual exam assignments</p>
               </div>
               <button 
-                onClick={() => setShowDetailsModal(false)}
+                onClick={() => {
+                  setShowDetailsModal(false);
+                  setSelectedStudent(null);
+                  setSelectedStudentAssignments([]);
+                }}
                 className="text-gray-400 hover:text-gray-500 dark:hover:text-gray-300"
               >
                 <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -528,8 +628,13 @@ export default function AssignmentsPage() {
               </button>
             </CardHeader>
             <CardBody className="p-0 overflow-y-auto max-h-[60vh]">
+              {isDetailsLoading ? (
+                <div className="p-6 text-sm text-gray-500">Loading assignments...</div>
+              ) : selectedStudentAssignments.length === 0 ? (
+                <div className="p-6 text-sm text-gray-500">No assignments found for this student.</div>
+              ) : (
               <div className="divide-y divide-gray-200 dark:divide-gray-700">
-                {selectedStudent.assignments.map((assignment) => (
+                {selectedStudentAssignments.map((assignment) => (
                   <div key={assignment.id} className="p-6 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-gray-800/50">
                     <div className="space-y-1">
                       <div className="flex items-center gap-2">
@@ -576,9 +681,18 @@ export default function AssignmentsPage() {
                   </div>
                 ))}
               </div>
+              )}
             </CardBody>
             <div className="p-4 border-t border-gray-200 dark:border-gray-700 flex justify-end">
-              <Button onClick={() => setShowDetailsModal(false)}>Close</Button>
+              <Button
+                onClick={() => {
+                  setShowDetailsModal(false);
+                  setSelectedStudent(null);
+                  setSelectedStudentAssignments([]);
+                }}
+              >
+                Close
+              </Button>
             </div>
           </Card>
         </div>
@@ -597,6 +711,12 @@ export default function AssignmentsPage() {
                 {error && (
                   <div className="p-3 rounded-lg bg-red-500/20 text-red-400 text-sm">{error}</div>
                 )}
+
+                {isReferenceLoading && (
+                  <div className="p-3 rounded-lg bg-slate-100 text-slate-600 text-sm dark:bg-slate-800 dark:text-slate-300">
+                    Loading students and exam sections...
+                  </div>
+                )}
                 
                 <Select
                   label="Student"
@@ -607,6 +727,7 @@ export default function AssignmentsPage() {
                   value={formData.studentId}
                   onChange={(e) => setFormData({ ...formData, studentId: e.target.value })}
                   placeholder="Select a student"
+                  disabled={isReferenceLoading || students.length === 0}
                   required
                 />
 
@@ -622,6 +743,7 @@ export default function AssignmentsPage() {
                       type="checkbox"
                       checked={isFullMock}
                       onChange={(e) => setIsFullMock(e.target.checked)}
+                      disabled={isReferenceLoading}
                       className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300"
                     />
                   </label>
@@ -658,6 +780,7 @@ export default function AssignmentsPage() {
                       value={formData.listeningSectionId}
                       onChange={(e) => setFormData({ ...formData, listeningSectionId: e.target.value })}
                       placeholder="Select listening exam"
+                      disabled={isReferenceLoading || listeningExams.length === 0}
                     />
                   </div>
 
@@ -677,6 +800,7 @@ export default function AssignmentsPage() {
                       value={formData.readingSectionId}
                       onChange={(e) => setFormData({ ...formData, readingSectionId: e.target.value })}
                       placeholder="Select reading exam"
+                      disabled={isReferenceLoading || readingExams.length === 0}
                     />
                   </div>
 
@@ -696,6 +820,7 @@ export default function AssignmentsPage() {
                       value={formData.writingSectionId}
                       onChange={(e) => setFormData({ ...formData, writingSectionId: e.target.value })}
                       placeholder="Select writing exam"
+                      disabled={isReferenceLoading || writingExams.length === 0}
                     />
                   </div>
                 </div>
@@ -715,7 +840,16 @@ export default function AssignmentsPage() {
                   >
                     Cancel
                   </Button>
-                  <Button type="submit" className="flex-1" disabled={isSubmitting}>
+                  <Button
+                    type="submit"
+                    className="flex-1"
+                    disabled={
+                      isSubmitting ||
+                      isReferenceLoading ||
+                      students.length === 0 ||
+                      exams.length === 0
+                    }
+                  >
                     {isSubmitting
                       ? 'Assigning...'
                       : isFullMock

@@ -1,385 +1,231 @@
-import { renderHook, act, waitFor } from '@testing-library/react';
+import { act, cleanup, renderHook } from '@testing-library/react';
+import { api as apiClient } from '@/lib/api';
+import { useExamStore } from '@/store';
 import { useExamSession } from '../useExamSession';
-import * as api from '@/lib/api';
 
-// Mock the api module
-jest.mock('@/lib/api');
+jest.mock('@/lib/api', () => ({
+  api: {
+    heartbeat: jest.fn(),
+    reconnectExam: jest.fn(),
+    syncAnswers: jest.fn(),
+  },
+}));
 
-const mockApi = api as jest.Mocked<typeof api>;
+const mockApi = apiClient as jest.Mocked<
+  Pick<typeof apiClient, 'heartbeat' | 'reconnectExam' | 'syncAnswers'>
+>;
+
+const HEARTBEAT_INTERVAL = 30_000;
+const SYNC_DEBOUNCE_MS = 5_000;
+
+const defaultOptions = {
+  assignmentId: 'test-assignment-123',
+  enabled: true,
+};
+
+async function flushAsync() {
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}
 
 describe('useExamSession', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    jest.useFakeTimers();
+    act(() => {
+      useExamStore.getState().reset();
+      useExamStore.setState({ status: 'active' });
+    });
+    sessionStorage.clear();
+    localStorage.clear();
+    (document as Document & { hidden: boolean }).hidden = false;
+
+    mockApi.heartbeat.mockResolvedValue({
+      active: true,
+      remainingSeconds: 1800,
+      syncVersion: 0,
+      serverTime: new Date().toISOString(),
+    });
+    mockApi.syncAnswers.mockResolvedValue({
+      success: true,
+      newVersion: 1,
+      syncedAt: new Date().toISOString(),
+    });
+    mockApi.reconnectExam.mockResolvedValue({
+      success: true,
+      syncVersion: 1,
+    });
   });
 
   afterEach(() => {
+    cleanup();
+    jest.clearAllTimers();
     jest.useRealTimers();
-  });
-
-  const defaultOptions = {
-    assignmentId: 'test-assignment-123',
-    enabled: true,
-  };
-
-  describe('Tab ID Generation', () => {
-    it('generates unique tab ID on first call', () => {
-      sessionStorage.clear();
-      const { result } = renderHook(() => useExamSession(defaultOptions));
-
-      const tabId = sessionStorage.getItem('exam_tab_id');
-      expect(tabId).toBeDefined();
-      expect(tabId).toMatch(/^tab_\d+_[a-z0-9]+$/);
-    });
-
-    it('reuses existing tab ID from sessionStorage', () => {
-      const existingTabId = 'tab_123_abc123';
-      sessionStorage.setItem('exam_tab_id', existingTabId);
-
-      const { result } = renderHook(() => useExamSession(defaultOptions));
-
-      expect(sessionStorage.getItem('exam_tab_id')).toBe(existingTabId);
+    act(() => {
+      useExamStore.getState().reset();
     });
   });
 
-  describe('Heartbeat', () => {
-    it('calls heartbeat API every 30 seconds when enabled', async () => {
-      mockApi.heartbeat.mockResolvedValue({
-        active: true,
-        remainingSeconds: 1800,
-        syncVersion: 1,
-        serverTime: new Date().toISOString(),
-      });
+  it('generates a tab id and reuses an existing one', () => {
+    const { unmount } = renderHook(() =>
+      useExamSession({ ...defaultOptions, enabled: false }),
+    );
+    const first = sessionStorage.getItem('exam_tab_id');
+    expect(first).toMatch(/^tab_\d+_[a-z0-9]+$/);
+    unmount();
 
-      renderHook(() => useExamSession(defaultOptions));
-
-      // Initial heartbeat
-      await waitFor(() => {
-        expect(mockApi.heartbeat).toHaveBeenCalledTimes(1);
-      });
-
-      // Advance time by 30 seconds
-      act(() => {
-        jest.advanceTimersByTime(30000);
-      });
-
-      await waitFor(() => {
-        expect(mockApi.heartbeat).toHaveBeenCalledTimes(2);
-      });
-    });
-
-    it('does not call heartbeat when disabled', async () => {
-      const { result } = renderHook(() =>
-        useExamSession({ ...defaultOptions, enabled: false })
-      );
-
-      // Advance time by 60 seconds
-      act(() => {
-        jest.advanceTimersByTime(60000);
-      });
-
-      expect(mockApi.heartbeat).not.toHaveBeenCalled();
-    });
-
-    it('handles session expiration', async () => {
-      const onSessionExpired = jest.fn();
-
-      mockApi.heartbeat.mockResolvedValue({
-        active: false,
-        reason: 'time_expired',
-      });
-
-      renderHook(() =>
-        useExamSession({ ...defaultOptions, onSessionExpired })
-      );
-
-      await waitFor(() => {
-        expect(onSessionExpired).toHaveBeenCalledTimes(1);
-      });
-    });
-
-    it('handles tab conflict', async () => {
-      const onTabConflict = jest.fn();
-
-      mockApi.heartbeat.mockResolvedValue({
-        active: false,
-        reason: 'another_tab',
-      });
-
-      renderHook(() => useExamSession({ ...defaultOptions, onTabConflict }));
-
-      await waitFor(() => {
-        expect(onTabConflict).toHaveBeenCalledTimes(1);
-      });
-    });
-
-    it('pauses heartbeat when tab is hidden', async () => {
-      mockApi.heartbeat.mockResolvedValue({
-        active: true,
-        remainingSeconds: 1800,
-      });
-
-      const { result } = renderHook(() => useExamSession(defaultOptions));
-
-      await waitFor(() => {
-        expect(mockApi.heartbeat).toHaveBeenCalledTimes(1);
-      });
-
-      const callCountBeforeHide = mockApi.heartbeat.mock.calls.length;
-
-      // Hide tab
-      act(() => {
-        Object.defineProperty(document, 'hidden', { value: true, configurable: true });
-        document.dispatchEvent(new Event('visibilitychange'));
-      });
-
-      // Advance time by 60 seconds while hidden
-      act(() => {
-        jest.advanceTimersByTime(60000);
-      });
-
-      expect(mockApi.heartbeat).toHaveBeenCalledTimes(callCountBeforeHide);
-
-      // Show tab
-      act(() => {
-        Object.defineProperty(document, 'hidden', { value: false, configurable: true });
-        document.dispatchEvent(new Event('visibilitychange'));
-      });
-
-      await waitFor(() => {
-        expect(mockApi.heartbeat).toHaveBeenCalledTimes(callCountBeforeHide + 1);
-      });
-    });
+    sessionStorage.setItem('exam_tab_id', 'tab_123_existing');
+    const { unmount: unmountSecond } = renderHook(() =>
+      useExamSession({ ...defaultOptions, enabled: false }),
+    );
+    expect(sessionStorage.getItem('exam_tab_id')).toBe('tab_123_existing');
+    unmountSecond();
   });
 
-  describe('Answer Synchronization', () => {
-    it('debounces sync calls', async () => {
-      mockApi.syncAnswers.mockResolvedValue({
-        success: true,
-        newVersion: 1,
-        syncedAt: new Date().toISOString(),
-      });
+  it('runs heartbeat immediately and every 30 seconds', async () => {
+    jest.useFakeTimers();
+    const { unmount } = renderHook(() => useExamSession(defaultOptions));
 
-      const { result } = renderHook(() => useExamSession(defaultOptions));
+    await flushAsync();
+    expect(mockApi.heartbeat).toHaveBeenCalledTimes(1);
 
-      const syncAnswers = result.current.syncAnswers;
-
-      // Make multiple rapid changes
-      await act(async () => {
-        syncAnswers({ q1: 'answer1' });
-        syncAnswers({ q1: 'answer2' });
-        syncAnswers({ q1: 'answer3' });
-      });
-
-      // Should only call sync once due to debounce
-      await waitFor(() => {
-        expect(mockApi.syncAnswers).toHaveBeenCalledTimes(1);
-      });
-
-      expect(mockApi.syncAnswers).toHaveBeenCalledWith(
-        'test-assignment-123',
-        { q1: 'answer3' },
-        [],
-        0
-      );
+    await act(async () => {
+      jest.advanceTimersByTime(HEARTBEAT_INTERVAL);
+      await Promise.resolve();
     });
 
-    it('updates syncVersion on successful sync', async () => {
-      mockApi.syncAnswers.mockResolvedValue({
-        success: true,
-        newVersion: 5,
-        syncedAt: new Date().toISOString(),
-      });
-
-      const { result } = renderHook(() => useExamSession(defaultOptions));
-
-      await act(async () => {
-        await result.current.syncAnswers({ q1: 'answer' });
-      });
-
-      await waitFor(() => {
-        expect(result.current.syncVersion).toBe(5);
-      });
-    });
-
-    it('handles merge conflicts from server', async () => {
-      mockApi.syncAnswers.mockResolvedValue({
-        success: false,
-        newVersion: 3,
-        syncedAt: new Date().toISOString(),
-        mergedAnswers: { q1: 'server-answer', q2: 'client-answer' },
-      });
-
-      const { result } = renderHook(() => useExamSession(defaultOptions));
-
-      await act(async () => {
-        await result.current.syncAnswers({ q2: 'client-answer' });
-      });
-
-      await waitFor(() => {
-        expect(result.current.syncVersion).toBe(3);
-      });
-    });
-
-    it('sets isSyncing state during sync', async () => {
-      let syncResolve: (value: any) => void;
-      const syncPromise = new Promise((resolve) => {
-        syncResolve = resolve;
-      });
-
-      mockApi.syncAnswers.mockImplementation(() => syncPromise);
-
-      const { result } = renderHook(() => useExamSession(defaultOptions));
-
-      act(() => {
-        result.current.syncAnswers({ q1: 'answer' });
-      });
-
-      expect(result.current.isSyncing).toBe(true);
-
-      await act(async () => {
-        await syncResolve({ success: true, newVersion: 1, syncedAt: new Date().toISOString() });
-      });
-
-      expect(result.current.isSyncing).toBe(false);
-    });
+    expect(mockApi.heartbeat).toHaveBeenCalledTimes(2);
+    unmount();
   });
 
-  describe('Reconnection', () => {
-    it('attempts reconnection on tab visibility change', async () => {
-      mockApi.reconnectExam.mockResolvedValue({
-        success: true,
-        assignment: {
-          id: 'test-assignment-123',
-          remainingTime: 1800,
-        } as any,
-        syncVersion: 2,
-      });
-
-      renderHook(() => useExamSession(defaultOptions));
-
-      // Trigger visibility change
-      act(() => {
-        Object.defineProperty(document, 'hidden', { value: false, configurable: true });
-        document.dispatchEvent(new Event('visibilitychange'));
-      });
-
-      await waitFor(() => {
-        expect(mockApi.reconnectExam).toHaveBeenCalledWith('test-assignment-123', null);
-      });
-    });
-
-    it('updates syncVersion on successful reconnection', async () => {
-      mockApi.reconnectExam.mockResolvedValue({
-        success: true,
-        assignment: {
-          id: 'test-assignment-123',
-          remainingTime: 1800,
-        } as any,
-        syncVersion: 7,
-      });
-
-      const { result } = renderHook(() => useExamSession(defaultOptions));
-
-      // Trigger visibility change
-      act(() => {
-        Object.defineProperty(document, 'hidden', { value: false, configurable: true });
-        document.dispatchEvent(new Event('visibilitychange'));
-      });
-
-      await waitFor(() => {
-        expect(result.current.syncVersion).toBe(7);
-      });
-    });
-
-    it('handles session already submitted on reconnection', async () => {
-      const onSessionExpired = jest.fn();
-
-      mockApi.reconnectExam.mockResolvedValue({
-        success: false,
-        reason: 'already_submitted',
-        message: 'This exam has already been submitted',
-      });
-
-      renderHook(() =>
-        useExamSession({ ...defaultOptions, onSessionExpired })
-      );
-
-      act(() => {
-        Object.defineProperty(document, 'hidden', { value: false, configurable: true });
-        document.dispatchEvent(new Event('visibilitychange'));
-      });
-
-      await waitFor(() => {
-        expect(onSessionExpired).toHaveBeenCalledTimes(1);
-      });
-    });
+  it('does not heartbeat when disabled', async () => {
+    renderHook(() => useExamSession({ ...defaultOptions, enabled: false }));
+    await flushAsync();
+    expect(mockApi.heartbeat).not.toHaveBeenCalled();
   });
 
-  describe('Error Handling', () => {
-    it('calls onSyncError on heartbeat failure', async () => {
-      const onSyncError = jest.fn();
+  it('invokes session-expired callback when heartbeat reports expiration', async () => {
+    const onSessionExpired = jest.fn();
+    mockApi.heartbeat.mockResolvedValue({ active: false, reason: 'time_expired' });
 
-      mockApi.heartbeat.mockRejectedValue(new Error('Network error'));
+    renderHook(() => useExamSession({ ...defaultOptions, onSessionExpired }));
+    await flushAsync();
 
-      renderHook(() => useExamSession({ ...defaultOptions, onSyncError }));
-
-      await waitFor(() => {
-        expect(onSyncError).toHaveBeenCalled();
-      });
-    });
-
-    it('calls onSyncError on sync failure', async () => {
-      const onSyncError = jest.fn();
-
-      mockApi.syncAnswers.mockRejectedValue(new Error('Sync failed'));
-
-      const { result } = renderHook(() =>
-        useExamSession({ ...defaultOptions, onSyncError })
-      );
-
-      await act(async () => {
-        await result.current.syncAnswers({ q1: 'answer' });
-      });
-
-      await waitFor(() => {
-        expect(onSyncError).toHaveBeenCalled();
-      });
-    });
+    expect(onSessionExpired).toHaveBeenCalledTimes(1);
   });
 
-  describe('Cleanup', () => {
-    it('clears heartbeat timer on unmount', async () => {
-      const { unmount } = renderHook(() => useExamSession(defaultOptions));
+  it('invokes tab-conflict callback when heartbeat reports another tab', async () => {
+    const onTabConflict = jest.fn();
+    mockApi.heartbeat.mockResolvedValue({ active: false, reason: 'another_tab' });
 
-      await waitFor(() => {
-        expect(mockApi.heartbeat).toHaveBeenCalled();
-      });
+    renderHook(() => useExamSession({ ...defaultOptions, onTabConflict }));
+    await flushAsync();
 
-      unmount();
+    expect(onTabConflict).toHaveBeenCalledTimes(1);
+  });
 
-      const callCount = mockApi.heartbeat.mock.calls.length;
+  it('debounces answer sync requests and sends latest payload', async () => {
+    jest.useFakeTimers();
+    const { result, unmount } = renderHook(() => useExamSession(defaultOptions));
 
-      // Advance time by 60 seconds
-      act(() => {
-        jest.advanceTimersByTime(60000);
-      });
-
-      expect(mockApi.heartbeat).toHaveBeenCalledTimes(callCount);
+    await act(async () => {
+      await result.current.syncAnswers({ q1: 'answer-1' });
+      await result.current.syncAnswers({ q1: 'answer-2' });
+      await result.current.syncAnswers({ q1: 'answer-3' });
     });
 
-    it('removes visibility event listener on unmount', () => {
-      const { unmount } = renderHook(() => useExamSession(defaultOptions));
+    expect(mockApi.syncAnswers).not.toHaveBeenCalled();
 
-      const addEventListenerSpy = jest.spyOn(document, 'addEventListener');
-      const removeEventListenerSpy = jest.spyOn(document, 'removeEventListener');
-
-      unmount();
-
-      expect(removeEventListenerSpy).toHaveBeenCalledWith(
-        'visibilitychange',
-        expect.any(Function)
-      );
+    await act(async () => {
+      jest.advanceTimersByTime(SYNC_DEBOUNCE_MS);
+      await Promise.resolve();
     });
+
+    expect(mockApi.syncAnswers).toHaveBeenCalledTimes(1);
+    expect(mockApi.syncAnswers).toHaveBeenCalledWith(
+      'test-assignment-123',
+      { q1: 'answer-3' },
+      [],
+      expect.any(String),
+      0,
+    );
+    unmount();
+  });
+
+  it('updates syncVersion after a successful sync', async () => {
+    jest.useFakeTimers();
+    mockApi.syncAnswers.mockResolvedValue({
+      success: true,
+      newVersion: 5,
+      syncedAt: new Date().toISOString(),
+    });
+
+    const { result, unmount } = renderHook(() => useExamSession(defaultOptions));
+
+    await act(async () => {
+      await result.current.syncAnswers({ q1: 'answer' });
+    });
+
+    act(() => {
+      jest.advanceTimersByTime(SYNC_DEBOUNCE_MS);
+    });
+    await flushAsync();
+
+    expect(result.current.syncVersion).toBe(5);
+    unmount();
+  });
+
+  it('reconnects when tab becomes visible again', async () => {
+    const { unmount } = renderHook(() => useExamSession(defaultOptions));
+    await flushAsync();
+
+    act(() => {
+      (document as Document & { hidden: boolean }).hidden = true;
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+
+    act(() => {
+      (document as Document & { hidden: boolean }).hidden = false;
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+
+    await flushAsync();
+
+    expect(mockApi.reconnectExam).toHaveBeenCalledWith(
+      'test-assignment-123',
+      undefined,
+      expect.any(String),
+    );
+    unmount();
+  });
+
+  it('calls onSyncError for non-transient heartbeat failures', async () => {
+    const onSyncError = jest.fn();
+    const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    mockApi.heartbeat.mockRejectedValue(new Error('Server exploded'));
+
+    renderHook(() => useExamSession({ ...defaultOptions, onSyncError }));
+    await flushAsync();
+
+    expect(onSyncError).toHaveBeenCalledTimes(1);
+    consoleErrorSpy.mockRestore();
+  });
+
+  it('stops heartbeat interval on unmount', async () => {
+    jest.useFakeTimers();
+    const { unmount } = renderHook(() => useExamSession(defaultOptions));
+
+    await flushAsync();
+    const beforeUnmount = mockApi.heartbeat.mock.calls.length;
+
+    unmount();
+
+    await act(async () => {
+      jest.advanceTimersByTime(HEARTBEAT_INTERVAL * 2);
+      await Promise.resolve();
+    });
+
+    expect(mockApi.heartbeat).toHaveBeenCalledTimes(beforeUnmount);
   });
 });

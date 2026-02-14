@@ -9,14 +9,59 @@ export const WRITING_GRADING_QUEUE = 'writing-grading';
     BullModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: (configService: ConfigService) => {
-        const host = configService.get<string>('REDIS_HOST') || 'localhost';
-        const port = configService.get<number>('REDIS_PORT') || 6379;
-        const password = configService.get<string>('REDIS_PASSWORD');
-        const db = configService.get<number>('REDIS_DB') || 0;
-        const tlsEnabled = configService.get<string>('REDIS_TLS') === 'true';
+        const redisUrl =
+          configService.get<string>('QUEUE_REDIS_URL') ||
+          configService.get<string>('REDIS_URL');
+
+        let host =
+          configService.get<string>('QUEUE_REDIS_HOST') ||
+          configService.get<string>('REDIS_HOST') ||
+          'localhost';
+        let port =
+          configService.get<number>('QUEUE_REDIS_PORT') ||
+          configService.get<number>('REDIS_PORT') ||
+          6379;
+        let password =
+          configService.get<string>('QUEUE_REDIS_PASSWORD') ||
+          configService.get<string>('REDIS_PASSWORD');
+        let db =
+          configService.get<number>('QUEUE_REDIS_DB') ||
+          configService.get<number>('REDIS_DB') ||
+          0;
+
+        if (redisUrl) {
+          try {
+            const parsed = new URL(redisUrl);
+            host = parsed.hostname || host;
+            port = parsed.port
+              ? Number(parsed.port)
+              : parsed.protocol === 'rediss:'
+                ? 6380
+                : 6379;
+
+            const pathname = parsed.pathname.replace('/', '');
+            if (pathname) {
+              const parsedDb = Number(pathname);
+              if (Number.isFinite(parsedDb)) {
+                db = parsedDb;
+              }
+            }
+
+            if (parsed.password) {
+              password = decodeURIComponent(parsed.password);
+            }
+          } catch {
+            // Ignore invalid URL and use host/port fallback.
+          }
+        }
+
+        const tlsFlag =
+          configService.get<string>('QUEUE_REDIS_TLS') ||
+          configService.get<string>('REDIS_TLS') ||
+          'false';
 
         // Check if using Upstash (requires TLS)
-        const useTLS = tlsEnabled || host.includes('upstash.io');
+        const useTLS = tlsFlag === 'true' || host.includes('upstash.io');
 
         return {
           connection: {

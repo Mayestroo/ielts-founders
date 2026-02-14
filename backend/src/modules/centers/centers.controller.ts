@@ -6,6 +6,7 @@ import {
   Param,
   Post,
   Put,
+  Request,
   UseGuards,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
@@ -34,8 +35,8 @@ export class CentersController {
 
   @Get(':id')
   @Roles(Role.SUPER_ADMIN, Role.CENTER_ADMIN, Role.TEACHER, Role.STUDENT)
-  findOne(@Param('id') id: string) {
-    return this.centersService.findOne(id);
+  findOne(@Param('id') id: string, @Request() req) {
+    return this.centersService.findOne(id, req.user.role, req.user.centerId);
   }
 
   @Put(':id')

@@ -8,8 +8,11 @@ import {
     ExamAssignment,
     ExamResult,
     ExamSection,
+    ExamSectionOption,
+    GroupedAssignmentsResponse,
     LoginResponse,
     Role,
+    StudentSummary,
     User
 } from '@/types';
 
@@ -20,21 +23,10 @@ class ApiClient {
 
   setToken(token: string | null) {
     this.token = token;
-    if (typeof window !== 'undefined') {
-      if (token) {
-        localStorage.setItem('token', token);
-      } else {
-        localStorage.removeItem('token');
-      }
-    }
   }
 
   getToken(): string | null {
-    if (this.token) return this.token;
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('token');
-    }
-    return null;
+    return this.token;
   }
 
   private async request<T>(
@@ -51,6 +43,7 @@ class ApiClient {
     const response = await fetch(`${API_URL}${endpoint}`, {
       ...options,
       headers,
+      credentials: 'include',
     });
 
     if (!response.ok) {
@@ -77,6 +70,15 @@ class ApiClient {
 
   logout() {
     this.setToken(null);
+
+    if (typeof window !== 'undefined') {
+      void Promise.resolve(
+        fetch(`${API_URL}/auth/logout`, {
+          method: 'POST',
+          credentials: 'include',
+        }),
+      ).catch(() => undefined);
+    }
   }
 
   // Users
@@ -91,8 +93,17 @@ class ApiClient {
     return this.request<{ users: User[]; total: number }>(`/users${query}`);
   }
 
-  async getUser(id: string): Promise<User> {
-    return this.request<User>(`/users/${id}`);
+  async getStudents(
+    skip?: number,
+    take?: number,
+    search?: string,
+  ): Promise<{ users: StudentSummary[]; total: number }> {
+    const params = new URLSearchParams();
+    if (skip !== undefined) params.append('skip', skip.toString());
+    if (take !== undefined) params.append('take', take.toString());
+    if (search?.trim()) params.append('search', search.trim());
+    const query = params.toString() ? `?${params.toString()}` : '';
+    return this.request<{ users: StudentSummary[]; total: number }>(`/users/students${query}`);
   }
 
   async createUser(data: CreateUserForm): Promise<User> {
@@ -149,6 +160,10 @@ class ApiClient {
     return this.request<ExamSection>(`/exam-sections/${id}`);
   }
 
+  async getExamSectionOptions(): Promise<ExamSectionOption[]> {
+    return this.request<ExamSectionOption[]>('/exam-sections/options');
+  }
+
   async createExamSection(data: CreateExamSectionForm): Promise<ExamSection> {
     return this.request<ExamSection>('/exam-sections', {
       method: 'POST',
@@ -168,12 +183,19 @@ class ApiClient {
   }
 
   // Assignments
-  async getAssignments(skip?: number, take?: number): Promise<{ assignments: ExamAssignment[]; total: number }> {
+  async getGroupedAssignments(
+    skip?: number,
+    take?: number,
+    search?: string,
+    sectionType?: string,
+  ): Promise<GroupedAssignmentsResponse> {
     const params = new URLSearchParams();
     if (skip !== undefined) params.append('skip', skip.toString());
     if (take !== undefined) params.append('take', take.toString());
+    if (search?.trim()) params.append('search', search.trim());
+    if (sectionType) params.append('sectionType', sectionType);
     const query = params.toString() ? `?${params.toString()}` : '';
-    return this.request<{ assignments: ExamAssignment[]; total: number }>(`/assignments${query}`);
+    return this.request<GroupedAssignmentsResponse>(`/assignments/grouped${query}`);
   }
 
   async getStudentAssignments(studentId: string): Promise<ExamAssignment[]> {
@@ -205,10 +227,6 @@ class ApiClient {
     return this.request<{ results: ExamResult[]; total: number }>(`/results${query}`);
   }
 
-  async getStudentResults(studentId: string): Promise<ExamResult[]> {
-    return this.request<ExamResult[]>(`/results/student/${studentId}`);
-  }
-
   async getResult(id: string): Promise<ExamResult> {
     return this.request<ExamResult>(`/results/${id}`);
   }
@@ -229,10 +247,6 @@ class ApiClient {
     return this.request(`/assignments/${assignmentId}`, {
       method: 'DELETE',
     });
-  }
-
-  async getStudentReportData(studentId: string): Promise<ExamResult[]> {
-    return this.request<ExamResult[]>(`/results/student/${studentId}`);
   }
 
   async getDashboardStats() {
@@ -271,6 +285,7 @@ class ApiClient {
       const token = this.getToken();
 
       xhr.open('POST', `${API_URL}/uploads`, true);
+      xhr.withCredentials = true;
       if (token) {
         xhr.setRequestHeader('Authorization', `Bearer ${token}`);
       }

@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Role } from '@prisma/client';
+import { Prisma, Role } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateUserDto } from './dto/create-user.dto';
@@ -13,6 +13,31 @@ import { UpdateUserDto } from './dto/update-user.dto';
 @Injectable()
 export class UsersService {
   constructor(private prisma: PrismaService) {}
+
+  private sanitizeCenter(center: any) {
+    if (!center) {
+      return center;
+    }
+
+    const { loginPassword, ...safeCenter } = center;
+    return {
+      ...safeCenter,
+      hasLoginPassword: Boolean(loginPassword),
+    };
+  }
+
+  private sanitizeUser(user: any) {
+    if (!user) {
+      return user;
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { password, center, ...safeUser } = user;
+    return {
+      ...safeUser,
+      ...(center !== undefined ? { center: this.sanitizeCenter(center) } : {}),
+    };
+  }
 
   // Role hierarchy validation
   private canCreateRole(creatorRole: Role, targetRole: Role): boolean {
@@ -74,8 +99,7 @@ export class UsersService {
       include: { center: true },
     });
 
-    const { password: _, ...result } = user;
-    return result;
+    return this.sanitizeUser(user);
   }
 
   async findAll(
@@ -150,9 +174,97 @@ export class UsersService {
     ]);
 
     return {
-      users: users.map(({ password: _, ...user }) => user),
+      users: users.map((user) => this.sanitizeUser(user)),
       total,
     };
+  }
+
+  async findStudents(
+    requesterRole: Role,
+    requesterCenterId: string | null,
+    skip?: number,
+    take?: number,
+    search?: string,
+  ) {
+    if (
+      requesterRole !== Role.SUPER_ADMIN &&
+      requesterRole !== Role.CENTER_ADMIN &&
+      requesterRole !== Role.TEACHER
+    ) {
+      throw new ForbiddenException(
+        'You do not have permission to list students',
+      );
+    }
+
+    if (
+      (requesterRole === Role.CENTER_ADMIN || requesterRole === Role.TEACHER) &&
+      !requesterCenterId
+    ) {
+      throw new ForbiddenException('Center context is required');
+    }
+
+    const where: Prisma.UserWhereInput = {
+      role: Role.STUDENT,
+    };
+
+    if (
+      (requesterRole === Role.CENTER_ADMIN || requesterRole === Role.TEACHER) &&
+      requesterCenterId
+    ) {
+      where.centerId = requesterCenterId;
+    }
+
+    if (search?.trim()) {
+      const normalized = search.trim();
+      const parts = normalized.split(/\s+/);
+
+      if (parts.length > 1) {
+        where.OR = [
+          {
+            AND: [
+              { firstName: { startsWith: parts[0], mode: 'insensitive' } },
+              {
+                lastName: {
+                  startsWith: parts.slice(1).join(' '),
+                  mode: 'insensitive',
+                },
+              },
+            ],
+          },
+          { username: { startsWith: normalized, mode: 'insensitive' } },
+        ];
+      } else {
+        where.OR = [
+          { firstName: { startsWith: normalized, mode: 'insensitive' } },
+          { lastName: { startsWith: normalized, mode: 'insensitive' } },
+          { username: { startsWith: normalized, mode: 'insensitive' } },
+        ];
+      }
+    }
+
+    const skipValue = Number(skip ?? 0);
+    const takeValue = Number(take ?? 100);
+
+    const [users, total] = await Promise.all([
+      this.prisma.user.findMany({
+        where,
+        select: {
+          id: true,
+          username: true,
+          firstName: true,
+          lastName: true,
+        },
+        orderBy: [{ firstName: 'asc' }, { username: 'asc' }],
+        skip: Number.isFinite(skipValue) && skipValue > 0 ? skipValue : 0,
+        take:
+          Number.isFinite(takeValue) && takeValue > 0
+            ? Math.min(Math.floor(takeValue), 1000)
+            : 100,
+      }),
+      this.prisma.user.count({ where }),
+    ]);
+
+    return { users, total };
   }
 
   async findOne(
@@ -188,8 +300,7 @@ export class UsersService {
       throw new ForbiddenException('You cannot view this user');
     }
 
-    const { password: _, ...result } = user;
-    return result;
+    return this.sanitizeUser(user);
   }
 
   async update(
@@ -212,6 +323,12 @@ export class UsersService {
       if (user.centerId !== requesterCenterId) {
         throw new ForbiddenException('You cannot update this user');
       }
+      if (user.role === Role.SUPER_ADMIN) {
+        throw new ForbiddenException('You cannot update this user');
+      }
+      if (user.role === Role.CENTER_ADMIN && requesterId !== id) {
+        throw new ForbiddenException('You cannot update another center admin');
+      }
       // Cannot change role to CENTER_ADMIN or SUPER_ADMIN
       if (
         updateUserDto.role &&
@@ -224,19 +341,43 @@ export class UsersService {
       throw new ForbiddenException('You cannot update this user');
     }
 
+    if (requesterRole === Role.STUDENT || requesterRole === Role.TEACHER) {
+      if (updateUserDto.role || updateUserDto.centerId) {
+        throw new ForbiddenException('You cannot change role or center');
+      }
+    }
+
+    if (
+      requesterRole === Role.CENTER_ADMIN &&
+      updateUserDto.centerId &&
+      updateUserDto.centerId !== requesterCenterId
+    ) {
+      throw new ForbiddenException('You cannot move users to another center');
+    }
+
+    if (
+      requesterRole !== Role.SUPER_ADMIN &&
+      updateUserDto.role === Role.SUPER_ADMIN
+    ) {
+      throw new ForbiddenException('You cannot assign this role');
+    }
+
     // Hash password if provided
     if (updateUserDto.password) {
       updateUserDto.password = await bcrypt.hash(updateUserDto.password, 10);
     }
 
+    const updateData: Prisma.UserUpdateInput = {
+      ...updateUserDto,
+    };
+
     const updatedUser = await this.prisma.user.update({
       where: { id },
-      data: updateUserDto,
+      data: updateData,
       include: { center: true },
     });
 
-    const { password: _, ...result } = updatedUser;
-    return result;
+    return this.sanitizeUser(updatedUser);
   }
 
   async remove(

@@ -1,26 +1,27 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
-import { SessionModule } from '../../src/modules/session/session.module';
-import { SessionService } from '../../src/modules/session/session.module';
-import { PrismaService } from '../../src/modules/prisma/prisma.service';
-import { REDIS_CLIENT } from '../../src/modules/redis/redis.module';
+import { ConfigModule } from '@nestjs/config';
+import { SessionModule } from '../session.module';
+import { SessionService } from '../session.service';
+import { REDIS_CLIENT } from '../../redis/redis.module';
 import Redis from 'ioredis';
 
-describe('Session Management Integration Tests', () => {
+const describeRedisIntegration =
+  process.env.RUN_REDIS_INTEGRATION_TESTS === 'true' ? describe : describe.skip;
+
+describeRedisIntegration('Session Management Integration Tests', () => {
   let app: INestApplication;
   let sessionService: SessionService;
   let redis: Redis;
-  let prisma: PrismaService;
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
-      imports: [SessionModule],
+      imports: [ConfigModule.forRoot({ isGlobal: true }), SessionModule],
     }).compile();
 
     app = moduleFixture.createNestApplication();
     sessionService = moduleFixture.get<SessionService>(SessionService);
     redis = moduleFixture.get<Redis>(REDIS_CLIENT);
-    prisma = moduleFixture.get<PrismaService>(PrismaService);
 
     await app.init();
   });

@@ -1,15 +1,19 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { APP_GUARD } from '@nestjs/core';
 import { ServeStaticModule } from '@nestjs/serve-static';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { join } from 'path';
+import { SmartThrottlerGuard } from './common/guards/smart-throttler.guard';
 import { AuthModule } from './modules/auth';
 import { CentersModule } from './modules/centers';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { ExamsModule } from './modules/exams';
+import { HealthModule } from './modules/health/health.module';
 import { PrismaModule } from './modules/prisma';
 import { QueueModule } from './modules/queue';
 import { RedisModule } from './modules/redis';
+import { RuntimeFaultModule } from './modules/runtime-fault/runtime-fault.module';
 import { SessionModule } from './modules/session';
 import { UploadsModule } from './modules/uploads/uploads.module';
 import { UsersModule } from './modules/users';
@@ -23,12 +27,14 @@ import { UsersModule } from './modules/users';
       throttlers: [
         {
           ttl: 60000, // 1 minute
-          limit: 10, // 10 requests per minute
+          limit: 120, // baseline per-minute budget
         },
       ],
     }),
+    RuntimeFaultModule,
     RedisModule,
     PrismaModule,
+    HealthModule,
     QueueModule,
     SessionModule,
     AuthModule,
@@ -41,6 +47,12 @@ import { UsersModule } from './modules/users';
       rootPath: join(process.cwd(), 'uploads'),
       serveRoot: '/uploads',
     }),
+  ],
+  providers: [
+    {
+      provide: APP_GUARD,
+      useClass: SmartThrottlerGuard,
+    },
   ],
 })
 export class AppModule {}

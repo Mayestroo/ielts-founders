@@ -3,19 +3,21 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { AssignmentStatus, FullMockStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { SessionService } from '../session/session.service';
-import { AssignmentService } from './assignment.service';
 import { ScoringService } from '../exam-evaluation/scoring.service';
 import { SubmitAnswersDto } from '../exams/dto/submit-answers.dto';
 import {
   ExamSubmittedEvent,
   WritingSubmittedEvent,
 } from '../exam-events/exam.events';
+
+const SUBMIT_GRACE_PERIOD_MS = 60_000;
 
 interface QuestionItem {
   id: string;
@@ -41,10 +43,11 @@ interface AssignmentWithSection {
 
 @Injectable()
 export class SubmissionService {
+  private readonly logger = new Logger(SubmissionService.name);
+
   constructor(
     private prisma: PrismaService,
     private scoringService: ScoringService,
-    private assignmentService: AssignmentService,
     private sessionService: SessionService,
     private eventEmitter: EventEmitter2,
   ) {}
@@ -54,11 +57,27 @@ export class SubmissionService {
     submitDto: SubmitAnswersDto,
     studentId: string,
   ): Promise<unknown> {
-    const lockAcquired = await this.sessionService.acquireSubmitLock(
-      assignmentId,
-      studentId,
-    );
-    if (!lockAcquired) {
+    const tabId = submitDto.tabId?.trim();
+    if (!tabId) {
+      throw new BadRequestException('tabId is required for submit');
+    }
+
+    let lockAcquired = false;
+    let lockEnabled = true;
+
+    try {
+      lockAcquired = await this.sessionService.acquireSubmitLock(
+        assignmentId,
+        studentId,
+      );
+    } catch {
+      lockEnabled = false;
+      this.logger.warn(
+        `Redis submit lock unavailable for assignment ${assignmentId}, continuing with DB idempotency fallback`,
+      );
+    }
+
+    if (lockEnabled && !lockAcquired) {
       const existing = await this.prisma.examAssignment.findUnique({
         where: { id: assignmentId },
         select: { status: true },
@@ -67,6 +86,21 @@ export class SubmissionService {
         return { message: 'Already submitted', idempotent: true };
       }
       throw new ConflictException('Submit in progress, please wait');
+    }
+
+    try {
+      const lockOk = await this.sessionService.refreshExamLock(assignmentId, tabId);
+      if (!lockOk) {
+        throw new ConflictException('Exam is open in another tab');
+      }
+    } catch (error) {
+      if (error instanceof ConflictException) {
+        throw error;
+      }
+
+      this.logger.warn(
+        `Redis exam lock unavailable for assignment ${assignmentId}, continuing with DB fallback`,
+      );
     }
 
     try {
@@ -87,23 +121,61 @@ export class SubmissionService {
         return { message: 'Already submitted', idempotent: true };
       }
 
-      await this.sessionService.markSubmitted(assignmentId);
+      if (assignment.status !== AssignmentStatus.IN_PROGRESS) {
+        throw new BadRequestException('Exam is not active');
+      }
+
+      if (!assignment.endTime) {
+        throw new BadRequestException('Exam end time is missing');
+      }
+
+      const now = Date.now();
+      const gracePeriodEnd =
+        assignment.endTime.getTime() + SUBMIT_GRACE_PERIOD_MS;
+      if (now > gracePeriodEnd) {
+        throw new BadRequestException('Exam time has expired');
+      }
+
+      let submitResult: unknown;
 
       if (assignment.section.type === 'WRITING') {
-        return await this.submitWritingAsync(
+        submitResult = await this.submitWritingAsync(
           assignment as AssignmentWithSection,
           submitDto,
           studentId,
         );
       } else {
-        return await this.submitReadingListeningSync(
+        submitResult = await this.submitReadingListeningSync(
           assignment as AssignmentWithSection,
           submitDto,
           studentId,
         );
       }
+
+      const isIdempotent =
+        (submitResult as { idempotent?: boolean }).idempotent === true;
+
+      if (!isIdempotent) {
+        try {
+          await this.sessionService.markSubmitted(assignmentId);
+        } catch {
+          this.logger.warn(
+            `Failed to mark Redis session submitted for assignment ${assignmentId}`,
+          );
+        }
+      }
+
+      return submitResult;
     } finally {
-      await this.sessionService.releaseSubmitLock(assignmentId);
+      if (lockEnabled && lockAcquired) {
+        try {
+          await this.sessionService.releaseSubmitLock(assignmentId);
+        } catch {
+          this.logger.warn(
+            `Failed to release submit lock for assignment ${assignmentId}`,
+          );
+        }
+      }
     }
   }
 
@@ -150,42 +222,65 @@ export class SubmissionService {
       });
     }
 
-    const result = await this.prisma.examResult.create({
-      data: {
-        studentId,
-        sectionId: assignment.sectionId,
-        score: 0,
-        totalScore: 9,
-        bandScore: null,
-        answers: submitDto.answers as Prisma.InputJsonValue,
-        feedback: undefined,
-      },
+    const persisted = await this.prisma.$transaction(async (tx) => {
+      const claimed = await tx.examAssignment.updateMany({
+        where: {
+          id: assignment.id,
+          status: { not: AssignmentStatus.SUBMITTED },
+        },
+        data: {
+          status: AssignmentStatus.SUBMITTED,
+          answers: submitDto.answers as Prisma.InputJsonValue,
+          score: 0,
+        },
+      });
+
+      if (claimed.count === 0) {
+        return { alreadySubmitted: true as const };
+      }
+
+      const result = await tx.examResult.create({
+        data: {
+          studentId,
+          sectionId: assignment.sectionId,
+          score: 0,
+          totalScore: 9,
+          bandScore: null,
+          answers: submitDto.answers as Prisma.InputJsonValue,
+          feedback: undefined,
+        },
+      });
+
+      const submission = await tx.writingSubmission.create({
+        data: {
+          resultId: result.id,
+          studentId,
+          sectionId: assignment.sectionId,
+          task1Response: answers['w1'] || answers['task1'] || null,
+          task2Response: answers['w2'] || answers['task2'] || null,
+          status: 'QUEUED',
+        },
+      });
+
+      const mockProgress = await this.updateFullMockProgressInTransaction(
+        tx,
+        assignment.fullMockSessionId,
+        assignment.fullMockSequence,
+      );
+
+      return {
+        alreadySubmitted: false as const,
+        result,
+        submission,
+        mockProgress,
+      };
     });
 
-    const submission = await this.prisma.writingSubmission.create({
-      data: {
-        resultId: result.id,
-        studentId,
-        sectionId: assignment.sectionId,
-        task1Response: answers['w1'] || answers['task1'] || null,
-        task2Response: answers['w2'] || answers['task2'] || null,
-        status: 'QUEUED',
-      },
-    });
+    if (persisted.alreadySubmitted) {
+      return { message: 'Already submitted', idempotent: true };
+    }
 
-    await this.prisma.examAssignment.update({
-      where: { id: assignment.id },
-      data: {
-        status: AssignmentStatus.SUBMITTED,
-        answers: submitDto.answers as Prisma.InputJsonValue,
-        score: 0,
-      },
-    });
-
-    const mockProgress = await this.updateFullMockProgress(
-      assignment.fullMockSessionId,
-      assignment.fullMockSequence,
-    );
+    const { result, submission, mockProgress } = persisted;
 
     // Emit event instead of directly queuing - decouples from queue implementation
     this.eventEmitter.emit(
@@ -238,26 +333,53 @@ export class SubmissionService {
       assignment.section.type,
     );
 
-    await this.prisma.examAssignment.update({
-      where: { id: assignment.id },
-      data: {
-        status: AssignmentStatus.SUBMITTED,
-        answers: submitDto.answers as Prisma.InputJsonValue,
-        score: calculation.score,
-      },
+    const persisted = await this.prisma.$transaction(async (tx) => {
+      const claimed = await tx.examAssignment.updateMany({
+        where: {
+          id: assignment.id,
+          status: { not: AssignmentStatus.SUBMITTED },
+        },
+        data: {
+          status: AssignmentStatus.SUBMITTED,
+          answers: submitDto.answers as Prisma.InputJsonValue,
+          score: calculation.score,
+        },
+      });
+
+      if (claimed.count === 0) {
+        return { alreadySubmitted: true as const };
+      }
+
+      const result = await tx.examResult.create({
+        data: {
+          studentId,
+          sectionId: assignment.sectionId,
+          score: calculation.score,
+          totalScore: calculation.totalScore,
+          bandScore: calculation.bandScore,
+          answers: submitDto.answers as Prisma.InputJsonValue,
+          feedback: undefined,
+        },
+      });
+
+      const mockProgress = await this.updateFullMockProgressInTransaction(
+        tx,
+        assignment.fullMockSessionId,
+        assignment.fullMockSequence,
+      );
+
+      return {
+        alreadySubmitted: false as const,
+        result,
+        mockProgress,
+      };
     });
 
-    const result = await this.prisma.examResult.create({
-      data: {
-        studentId,
-        sectionId: assignment.sectionId,
-        score: calculation.score,
-        totalScore: calculation.totalScore,
-        bandScore: calculation.bandScore,
-        answers: submitDto.answers as Prisma.InputJsonValue,
-        feedback: undefined,
-      },
-    });
+    if (persisted.alreadySubmitted) {
+      return { message: 'Already submitted', idempotent: true };
+    }
+
+    const { result, mockProgress } = persisted;
 
     // Emit exam submitted event
     this.eventEmitter.emit(
@@ -270,11 +392,6 @@ export class SubmissionService {
         calculation.score,
         result.id,
       ),
-    );
-
-    const mockProgress = await this.updateFullMockProgress(
-      assignment.fullMockSessionId,
-      assignment.fullMockSequence,
     );
 
     return {
@@ -291,21 +408,19 @@ export class SubmissionService {
     };
   }
 
-  private async updateFullMockProgress(
+  private async updateFullMockProgressInTransaction(
+    tx: Prisma.TransactionClient,
     fullMockSessionId?: string | null,
     fullMockSequence?: number | null,
-  ): Promise<
-    | {
-        nextAssignmentId: string | null;
-        breakEndsAt: string | null;
-      }
-    | null
-  > {
+  ): Promise<{
+    nextAssignmentId: string | null;
+    breakEndsAt: string | null;
+  } | null> {
     if (!fullMockSessionId || !fullMockSequence) {
       return null;
     }
 
-    const session = await this.prisma.fullMockSession.findUnique({
+    const session = await tx.fullMockSession.findUnique({
       where: { id: fullMockSessionId },
     });
 
@@ -313,7 +428,7 @@ export class SubmissionService {
       return null;
     }
 
-    const nextAssignment = await this.prisma.examAssignment.findFirst({
+    const nextAssignment = await tx.examAssignment.findFirst({
       where: {
         fullMockSessionId,
         fullMockSequence: { gt: fullMockSequence },
@@ -323,7 +438,7 @@ export class SubmissionService {
     });
 
     if (!nextAssignment) {
-      await this.prisma.fullMockSession.update({
+      await tx.fullMockSession.update({
         where: { id: fullMockSessionId },
         data: {
           status: FullMockStatus.COMPLETED,
@@ -333,16 +448,15 @@ export class SubmissionService {
       return { nextAssignmentId: null, breakEndsAt: null };
     }
 
-    const breakEndsAt = new Date(
-      Date.now() + session.breakMinutes * 60 * 1000,
-    );
+    const breakEndsAt = new Date(Date.now() + session.breakMinutes * 60 * 1000);
 
-    await this.prisma.fullMockSession.update({
+    await tx.fullMockSession.update({
       where: { id: fullMockSessionId },
       data: {
         status: FullMockStatus.BREAK,
         breakEndsAt,
-        currentSequence: nextAssignment.fullMockSequence ?? session.currentSequence,
+        currentSequence:
+          nextAssignment.fullMockSequence ?? session.currentSequence,
       },
     });
 

@@ -1,4 +1,5 @@
 import { HighlightableText } from '@/components/exam/HighlightableText';
+import { sanitizeHtml } from '@/lib/sanitizeHtml';
 import { useEffect, useRef } from 'react';
 
 interface FillBlankProps {
@@ -99,7 +100,15 @@ export function FillBlankQuestion({
             className="leading-[34px]!"
           />
         ) : (
-          <span dangerouslySetInnerHTML={{ __html: part.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br />') }} />
+          <span
+            dangerouslySetInnerHTML={{
+              __html: sanitizeHtml(
+                part
+                  .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                  .replace(/\n/g, '<br />'),
+              ),
+            }}
+          />
         )
       )}
       {index < parts.length - 1 && renderInput()}

@@ -67,9 +67,29 @@ model User {
   results             ExamResult[]        @relation("StudentResults")
   writingSubmissions  WritingSubmission[] @relation("WritingSubmissions")
   fullMockSessions    FullMockSession[]
+  refreshTokens       RefreshToken[]
 
   @@index([centerId])
   @@index([role])
+}
+
+model RefreshToken {
+  id                String   @id @default(uuid())
+  userId            String
+  tokenHash         String   @unique
+  family            String
+  replacedByTokenId String?
+  revokedAt         DateTime?
+  expiresAt         DateTime
+  createdAt         DateTime @default(now())
+
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  replacedBy    RefreshToken? @relation("RefreshTokenChain", fields: [replacedByTokenId], references: [id], onDelete: SetNull)
+  replacements  RefreshToken[] @relation("RefreshTokenChain")
+
+  @@index([userId])
+  @@index([family])
+  @@index([expiresAt])
 }
 
 model ExamSection {

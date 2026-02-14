@@ -115,7 +115,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
     });
   }, []);
 
-  const { syncAnswers } = useExamSession({
+  const { syncAnswers, tabId } = useExamSession({
     assignmentId: assignment?.id || null,
     enabled: isExamStarted,
     onSyncError: handleSyncError,
@@ -454,6 +454,80 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
     [assignment?.section?.type]
   );
 
+  const exitExamToDashboard = useCallback(async () => {
+    setIsExamCompleted(true);
+    if (document.fullscreenElement) {
+      try {
+        await document.exitFullscreen();
+      } catch (exitErr) {
+        console.warn("Failed to exit fullscreen:", exitErr);
+      }
+    }
+    router.push("/dashboard");
+  }, [router]);
+
+  const navigateToNextAssignment = useCallback(
+    async (currentAssignmentId: string) => {
+      const allAssignments = await api.getMyAssignments();
+      const nextAssignment = ["LISTENING", "READING", "WRITING"]
+        .map((type) => allAssignments.find((a) => a.section?.type === type))
+        .find((a) => a && a.status !== "SUBMITTED" && a.id !== currentAssignmentId);
+
+      if (nextAssignment) {
+        router.push(`/exam/${nextAssignment.id}?showVideo=1`);
+        return;
+      }
+
+      await exitExamToDashboard();
+    },
+    [router, exitExamToDashboard],
+  );
+
+  const isTransientSubmitFailure = useCallback((err: unknown) => {
+    if (!(err instanceof Error)) {
+      return false;
+    }
+
+    return (
+      err.message.includes("HTTP error! status: 502") ||
+      err.message.includes("HTTP error! status: 503") ||
+      err.message.includes("HTTP error! status: 504") ||
+      err.message.includes("Request timeout after") ||
+      err.message.includes("Failed to fetch")
+    );
+  }, []);
+
+  const recoverSubmittedStateAfterFailure = useCallback(
+    async (currentAssignmentId: string) => {
+      try {
+        const allAssignments = await api.getMyAssignments();
+        const currentAssignment = allAssignments.find(
+          (item) => item.id === currentAssignmentId,
+        );
+
+        if (currentAssignment?.status !== "SUBMITTED") {
+          return false;
+        }
+
+        const hasPendingAssignment = allAssignments.some(
+          (item) => item.status !== "SUBMITTED" && item.id !== currentAssignmentId,
+        );
+
+        if (hasPendingAssignment) {
+          await navigateToNextAssignment(currentAssignmentId);
+        } else {
+          await exitExamToDashboard();
+        }
+
+        return true;
+      } catch (verificationError) {
+        console.error("Failed to verify submit status after transient error:", verificationError);
+        return false;
+      }
+    },
+    [navigateToNextAssignment, exitExamToDashboard],
+  );
+
   const handleFinalSubmit = useCallback(async () => {
     if (!assignment || isSubmitting) return;
     setIsSubmitting(true);
@@ -465,7 +539,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
     }
 
     try {
-      const submitResult = await api.submitExam(assignment.id, answers);
+      const submitResult = await api.submitExam(assignment.id, answers, tabId);
 
       if (submitResult.nextAssignmentId) {
         if (submitResult.breakEndsAt) {
@@ -480,46 +554,33 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
       }
 
       if (submitResult.fullMockSessionId) {
-        // Exam fully completed - allow fullscreen exit
-        setIsExamCompleted(true);
-        if (document.fullscreenElement) {
-          try {
-            await document.exitFullscreen();
-          } catch (exitErr) {
-            console.warn("Failed to exit fullscreen:", exitErr);
-          }
-        }
-        router.push("/dashboard");
+        await exitExamToDashboard();
         return;
       }
 
-      const allAssignments = await api.getMyAssignments();
-      const nextAssignment = ["LISTENING", "READING", "WRITING"]
-        .map((type) => allAssignments.find((a) => a.section?.type === type))
-        .find((a) => a && a.status !== "SUBMITTED" && a.id !== assignment.id);
-
-      if (nextAssignment) {
-        router.push(`/exam/${nextAssignment.id}?showVideo=1`);
-      } else {
-        // No more assignments - allow fullscreen exit
-        setIsExamCompleted(true);
-        if (document.fullscreenElement) {
-          try {
-            await document.exitFullscreen();
-          } catch (exitErr) {
-            console.warn("Failed to exit fullscreen:", exitErr);
-          }
-        }
-        router.push("/dashboard");
-      }
+      await navigateToNextAssignment(assignment.id);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to submit exam");
+      if (isTransientSubmitFailure(err)) {
+        setError("Submit response not confirmed. Verifying latest exam state...");
+        const recovered = await recoverSubmittedStateAfterFailure(assignment.id);
+
+        if (recovered) {
+          return;
+        }
+
+        setError(
+          "Temporary network issue while submitting. Please stay on this page and retry once connected.",
+        );
+      } else {
+        setError(err instanceof Error ? err.message : "Failed to submit exam");
+      }
+
       setIsSubmitting(false);
     } finally {
       setIsReviewModalOpen(false);
       setIsConfirmModalOpen(false);
     }
-  }, [assignment, answers, redirectToBreak, router, syncAnswers]);
+  }, [assignment, isSubmitting, syncAnswers, answers, redirectToBreak, exitExamToDashboard, navigateToNextAssignment, isTransientSubmitFailure, recoverSubmittedStateAfterFailure]);
 
   // Keep ref updated
   useEffect(() => {

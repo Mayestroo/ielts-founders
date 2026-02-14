@@ -20,18 +20,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    const token = api.getToken();
-    if (token) {
-      api.getProfile()
-        .then(setUser)
-        .catch(() => {
-          api.logout();
-          setUser(null);
-        })
-        .finally(() => setIsLoading(false));
-    } else {
-      setIsLoading(false);
-    }
+    api.getProfile()
+      .then(setUser)
+      .catch(() => {
+        api.logout();
+        setUser(null);
+      })
+      .finally(() => setIsLoading(false));
   }, []);
 
   const login = async (username: string, password: string) => {
