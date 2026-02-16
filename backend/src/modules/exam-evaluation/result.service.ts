@@ -102,8 +102,8 @@ export class ResultService {
     requesterRole: Role,
     requesterCenterId: string | null,
   ) {
-    if (requesterRole === Role.STUDENT) {
-      throw new ForbiddenException('Students cannot view results');
+    if (requesterRole === Role.STUDENT && requesterId !== studentId) {
+      throw new ForbiddenException('You can only view your own results');
     }
 
     if (requesterRole === Role.TEACHER || requesterRole === Role.CENTER_ADMIN) {

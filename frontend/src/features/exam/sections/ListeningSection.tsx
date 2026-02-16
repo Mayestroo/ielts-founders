@@ -2,7 +2,7 @@
 
 import { BottomNav, ExamHeader, PartBanner, SettingsModal } from '@/components/exam';
 import { ExamAssignment, ExamSection, Question } from '@/types';
-import { RefObject, useEffect, useMemo } from 'react';
+import { RefObject, useEffect, useMemo, useState } from 'react';
 import { IntroVideoOverlay } from '../components/IntroVideoOverlay';
 import { QuestionGroups } from '../components/QuestionGroups';
 import { ReviewAndConfirmModals } from '../components/ReviewAndConfirmModals';
@@ -110,6 +110,10 @@ export function ListeningSection({
   onSessionResolve,
   timerStart,
 }: ListeningSectionProps) {
+  const [isPreparingAudio, setIsPreparingAudio] = useState(false);
+  const [isAudioPrepared, setIsAudioPrepared] = useState(false);
+  const [audioLoadProgress, setAudioLoadProgress] = useState(0);
+
   // Memoize audio source URL to prevent <audio> element re-mount on re-renders
   const audioSrc = useMemo(() => {
     if (!section.audioUrl) return '';
@@ -117,6 +121,121 @@ export function ListeningSection({
       ? section.audioUrl
       : `${API_BASE_URL}${section.audioUrl.startsWith('/') ? '' : '/'}${section.audioUrl}`;
   }, [section.audioUrl]);
+
+  useEffect(() => {
+    if (!showPlayOverlay || !audioSrc || !audioRef.current || audioError) {
+      return;
+    }
+
+    const audio = audioRef.current;
+    let fallbackProgressTimer: ReturnType<typeof setInterval> | null = null;
+    let setupTimer: ReturnType<typeof setTimeout> | null = null;
+    let cleaned = false;
+
+    const stopFallbackProgress = () => {
+      if (fallbackProgressTimer) {
+        clearInterval(fallbackProgressTimer);
+        fallbackProgressTimer = null;
+      }
+    };
+
+    const markPrepared = () => {
+      if (cleaned) {
+        return;
+      }
+      setAudioLoadProgress(100);
+      setIsPreparingAudio(false);
+      setIsAudioPrepared(true);
+      stopFallbackProgress();
+    };
+
+    const updateBufferedProgress = () => {
+      if (cleaned) {
+        return;
+      }
+
+      if (audio.buffered.length > 0 && Number.isFinite(audio.duration) && audio.duration > 0) {
+        const bufferedEnd = audio.buffered.end(audio.buffered.length - 1);
+        const bufferedPercent = Math.min(
+          100,
+          Math.round((bufferedEnd / audio.duration) * 100),
+        );
+
+        setAudioLoadProgress((prev) => Math.max(prev, bufferedPercent));
+
+        if (bufferedPercent >= 100 || audio.readyState >= HTMLMediaElement.HAVE_ENOUGH_DATA) {
+          markPrepared();
+        }
+      }
+    };
+
+    const handleProgress = () => {
+      updateBufferedProgress();
+    };
+
+    const handleLoadedMetadata = () => {
+      updateBufferedProgress();
+    };
+
+    const handleCanPlayThrough = () => {
+      markPrepared();
+    };
+
+    const handleError = () => {
+      if (cleaned) {
+        return;
+      }
+      stopFallbackProgress();
+      setIsPreparingAudio(false);
+      setIsAudioPrepared(false);
+    };
+
+    audio.addEventListener('progress', handleProgress);
+    audio.addEventListener('loadedmetadata', handleLoadedMetadata);
+    audio.addEventListener('canplaythrough', handleCanPlayThrough);
+    audio.addEventListener('error', handleError);
+
+    setupTimer = setTimeout(() => {
+      if (cleaned) {
+        return;
+      }
+
+      setIsPreparingAudio(true);
+      setIsAudioPrepared(false);
+      setAudioLoadProgress((prev) => (prev > 0 ? prev : 5));
+
+      audio.preload = 'auto';
+      if (audio.src !== audioSrc) {
+        audio.src = audioSrc;
+      }
+
+      if (audio.readyState >= HTMLMediaElement.HAVE_ENOUGH_DATA) {
+        markPrepared();
+      } else {
+        audio.load();
+        fallbackProgressTimer = setInterval(() => {
+          setAudioLoadProgress((prev) => {
+            if (prev >= 90) {
+              return prev;
+            }
+            return prev + 3;
+          });
+        }, 350);
+      }
+    }, 0);
+
+    return () => {
+      cleaned = true;
+      if (setupTimer) {
+        clearTimeout(setupTimer);
+      }
+      stopFallbackProgress();
+      audio.removeEventListener('progress', handleProgress);
+      audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
+      audio.removeEventListener('canplaythrough', handleCanPlayThrough);
+      audio.removeEventListener('error', handleError);
+    };
+  }, [audioError, audioRef, audioSrc, showPlayOverlay]);
 
   // Pause audio ONLY if a tab conflict occurs (anti-cheat/multi-tab prevention)
   useEffect(() => {
@@ -165,7 +284,7 @@ export function ListeningSection({
                   'Failed to load audio source. Please check your connection or contact support.'
                 );
               }}
-              preload="metadata"
+              preload="auto"
               className="hidden"
             />
           )}
@@ -226,13 +345,31 @@ export function ListeningSection({
                   will not be permitted to pause or rewind the audio while
                   answering the questions.
                 </p>
-                <p className="text-lg text-gray-300">
-                  To continue, click Play.
-                </p>
+                {isPreparingAudio ? (
+                  <div className="max-w-lg mx-auto mt-3 rounded-2xl border border-white/20 bg-white/10 p-5">
+                    <p className="text-base font-semibold text-white">Preparing audio...</p>
+                    <p className="text-sm text-gray-200 mt-1">
+                      Please wait while we fully load audio to prevent disconnections.
+                    </p>
+
+                    <div className="mt-4 h-2.5 w-full rounded-full bg-white/20 overflow-hidden">
+                      <div
+                        className="h-full bg-white transition-all duration-300"
+                        style={{ width: `${audioLoadProgress}%` }}
+                      />
+                    </div>
+                    <p className="mt-2 text-xs text-gray-300">{audioLoadProgress}% loaded</p>
+                  </div>
+                ) : (
+                  <p className="text-lg text-gray-300">
+                    Audio is ready. Click Play to begin.
+                  </p>
+                )}
 
                 <button
                   onClick={async () => {
                     if (sessionError) return;
+                    if (!isAudioPrepared) return;
                     if (!document.fullscreenElement) {
                       await onRequestFullscreen();
                     }
@@ -262,9 +399,11 @@ export function ListeningSection({
                         });
                     }
                   }}
-                  disabled={!!sessionError}
+                  disabled={!!sessionError || isPreparingAudio || !isAudioPrepared}
                   className={`mt-8 px-8 py-3 bg-black border border-white/20 rounded-lg flex items-center gap-3 hover:bg-gray-800 transition-all font-bold text-lg mx-auto group shadow-2xl ${
-                    sessionError ? 'opacity-50 cursor-not-allowed' : ''
+                    sessionError || isPreparingAudio || !isAudioPrepared
+                      ? 'opacity-50 cursor-not-allowed'
+                      : ''
                   }`}
                 >
                   <div className="w-8 h-8 rounded-full bg-white flex items-center justify-center group-hover:scale-110 transition-transform">

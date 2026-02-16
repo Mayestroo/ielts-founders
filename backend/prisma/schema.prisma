@@ -36,6 +36,20 @@ enum FullMockStatus {
   COMPLETED
 }
 
+enum SessionAttendanceMode {
+  ONLINE
+  OFFLINE
+}
+
+enum SessionReferralSource {
+  TELEGRAM
+  INSTAGRAM
+  FACEBOOK
+  GOOGLE
+  FRIENDS
+  OTHER
+}
+
 // Models
 model Center {
   id            String   @id @default(uuid())
@@ -58,6 +72,10 @@ model User {
   lastName  String?
   role      Role     @default(STUDENT)
   centerId  String?
+  sessionAttendanceMode SessionAttendanceMode @default(OFFLINE)
+  sessionScheduledAt DateTime?
+  sessionReferralSource SessionReferralSource?
+  phoneNumber String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

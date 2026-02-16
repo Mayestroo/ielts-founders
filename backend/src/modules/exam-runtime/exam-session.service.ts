@@ -45,6 +45,13 @@ export class ExamSessionService {
   private readonly logger = new Logger(ExamSessionService.name);
   private readonly perfMetricsEnabled =
     process.env.EXAM_PERF_METRICS === 'true';
+  private readonly syncCheckpointEvery = (() => {
+    const parsed = Number.parseInt(
+      process.env.EXAM_SYNC_CHECKPOINT_EVERY || '48',
+      10,
+    );
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 48;
+  })();
   private readonly metricsEmitEvery = 100;
   private readonly latencySampleSize = 200;
   private readonly syncMetrics: SyncMetrics = {
@@ -93,7 +100,7 @@ export class ExamSessionService {
     tabId: string,
   ) {
     const startedAt = Date.now();
-    const checkpointEvery = 24;
+    const checkpointEvery = this.syncCheckpointEvery;
 
     if (!tabId || tabId.trim().length === 0) {
       throw new BadRequestException('tabId is required for sync');
@@ -621,7 +628,10 @@ export class ExamSessionService {
           return this.reconnectFromDatabase(assignment, clientAnswers);
         }
 
-        if (updateResult.newVersion > 0 && updateResult.newVersion % 24 === 0) {
+        if (
+          updateResult.newVersion > 0 &&
+          updateResult.newVersion % this.syncCheckpointEvery === 0
+        ) {
           this.persistReconnectCheckpointAsync(assignmentId, mergedAnswers);
         }
 

@@ -27,6 +27,15 @@ export function FlowChartGroup({
   const firstQ = questions[0];
   const flowchartData = firstQ ? (firstQ as any).flowchartData : null;
   const options = firstQ ? (firstQ as any).options as { id: string; text: string }[] | undefined : undefined;
+  const usedOptionIds = new Set(
+    questions
+      .map((question) => answers[question.id])
+      .filter((value): value is string => typeof value === 'string' && value.length > 0)
+      .map((value) => value.toUpperCase()),
+  );
+  const availableOptions = (options || []).filter(
+    (option) => !usedOptionIds.has(option.id.toUpperCase()),
+  );
 
   let questionIndex = 0;
 
@@ -158,8 +167,9 @@ export function FlowChartGroup({
       {options && (
         <div className="w-full lg:w-72 shrink-0 sticky top-6 z-20">
           <div className="bg-white border-2 border-black rounded-lg p-6 shadow-sm max-h-[80vh] overflow-y-auto">
+            {availableOptions.length > 0 ? (
               <div className="flex flex-col gap-4">
-                {options.map((opt) => (
+                {availableOptions.map((opt) => (
                   <div 
                     key={opt.id} 
                     draggable={true}
@@ -177,7 +187,10 @@ export function FlowChartGroup({
                     </span>
                   </div>
                 ))}
-          </div>
+              </div>
+            ) : (
+              <p className="text-sm text-gray-500">All options are used.</p>
+            )}
           </div>
         </div>
       )}

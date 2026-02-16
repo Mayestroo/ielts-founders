@@ -22,6 +22,8 @@ interface SeedConfig {
   teacherUsername: string;
   sectionId: string;
   sectionTitle: string;
+  sectionType: 'READING' | 'LISTENING' | 'WRITING';
+  sectionAudioUrl?: string;
   sectionDurationMinutes: number;
   reset: boolean;
 }
@@ -110,6 +112,8 @@ function usage() {
   console.log('  --teacher <username>       Teacher username (default: load_teacher)');
   console.log('  --section-id <id>          Section id (default: load-reading-section)');
   console.log('  --section-title <value>    Section title');
+  console.log('  --section-type <value>     READING | LISTENING | WRITING');
+  console.log('  --audio-url <value>        Audio URL (for LISTENING section)');
   console.log('  --duration <minutes>       Section duration minutes (default: 180)');
   console.log('  --reset <true|false>       Delete existing load students first');
   console.log('  --help                     Show this message');
@@ -120,6 +124,18 @@ function createConfig(args: CliArgs): SeedConfig {
     readString(args, 'password', process.env.LOAD_TEST_PASSWORD || 'load_password') ||
     'load_password';
 
+  const rawSectionType = readString(args, 'section-type', 'READING')
+    .trim()
+    .toUpperCase();
+  const sectionType: SeedConfig['sectionType'] =
+    rawSectionType === 'LISTENING' ||
+    rawSectionType === 'WRITING' ||
+    rawSectionType === 'READING'
+      ? rawSectionType
+      : 'READING';
+
+  const sectionAudioUrl = readString(args, 'audio-url', '').trim() || undefined;
+
   return {
     users: readNumber(args, 'users', 100, 1),
     prefix: readString(args, 'prefix', 'load_student_'),
@@ -129,6 +145,8 @@ function createConfig(args: CliArgs): SeedConfig {
     teacherUsername: readString(args, 'teacher', 'load_teacher'),
     sectionId: readString(args, 'section-id', 'load-reading-section'),
     sectionTitle: readString(args, 'section-title', 'Load Test Reading Section'),
+    sectionType,
+    sectionAudioUrl,
     sectionDurationMinutes: readNumber(args, 'duration', 180, 10),
     reset: readBoolean(args, 'reset', true),
   };
@@ -195,16 +213,32 @@ async function main() {
       where: { id: config.sectionId },
       update: {
         title: config.sectionTitle,
+        type: config.sectionType,
         duration: config.sectionDurationMinutes,
+        audioUrl:
+          config.sectionType === 'LISTENING' ? config.sectionAudioUrl || null : null,
+        passages:
+          config.sectionType === 'READING'
+            ? ([
+                {
+                  id: 'load-passage-1',
+                  title: 'Load Test Passage',
+                  content:
+                    'This passage exists to support synthetic load tests and does not represent production exam content.',
+                },
+              ] as Prisma.InputJsonValue)
+            : Prisma.JsonNull,
         teacherId: teacher.id,
         centerId: center.id,
       },
       create: {
         id: config.sectionId,
         title: config.sectionTitle,
-        type: 'READING',
+        type: config.sectionType,
         description: 'Load test section for concurrency simulation',
         duration: config.sectionDurationMinutes,
+        audioUrl:
+          config.sectionType === 'LISTENING' ? config.sectionAudioUrl || null : null,
         teacherId: teacher.id,
         centerId: center.id,
         questions: [
@@ -235,14 +269,17 @@ async function main() {
             points: 1,
           },
         ] as Prisma.InputJsonValue,
-        passages: [
-          {
-            id: 'load-passage-1',
-            title: 'Load Test Passage',
-            content:
-              'This passage exists to support synthetic load tests and does not represent production exam content.',
-          },
-        ] as Prisma.InputJsonValue,
+        passages:
+          config.sectionType === 'READING'
+            ? ([
+                {
+                  id: 'load-passage-1',
+                  title: 'Load Test Passage',
+                  content:
+                    'This passage exists to support synthetic load tests and does not represent production exam content.',
+                },
+              ] as Prisma.InputJsonValue)
+            : Prisma.JsonNull,
       },
     });
 

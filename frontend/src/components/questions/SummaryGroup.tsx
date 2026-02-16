@@ -28,6 +28,14 @@ export function SummaryGroup({
   const firstQuestion = questions[0];
   const hasOptions = firstQuestion && 'options' in firstQuestion && Array.isArray((firstQuestion as any).options);
   const options = hasOptions ? (firstQuestion as any).options : [];
+  const usedOptionIds = new Set(
+    questions
+      .map((question) => answers[question.id])
+      .filter((value): value is string => typeof value === 'string' && value.length > 0),
+  );
+  const availableOptions = options.filter(
+    (option: any) => !usedOptionIds.has(option.id),
+  );
 
   // Drag and drop handlers
   const handleDragStart = (e: React.DragEvent, optionId: string) => {
@@ -199,55 +207,34 @@ export function SummaryGroup({
           <h4 className="text-base font-bold text-gray-900 mb-4">
             Options
           </h4>
-          <div className="flex flex-wrap gap-3">
-            {options.map((option: any) => {
-              // Count how many times this option is used
-              const usedCount = questions.filter(
-                (q) => answers[q.id] === option.id
-              ).length;
-              const isUsed = usedCount > 0;
-
-              return (
-                <div
-                  key={option.id}
-                  draggable={true}
-                  onDragStart={(e) => handleDragStart(e, option.id)}
-                  onClick={() => {
-                    if (currentQuestionId) {
-                      onChange(currentQuestionId, option.id);
-                    }
-                  }}
-                  className={`
-                    px-4 py-2.5 rounded-lg border bg-white shadow-sm transition-all select-none
-                    flex items-center gap-3 relative overflow-hidden group cursor-grab active:cursor-grabbing
-                    ${
-                      isUsed
-                        ? 'border-[#2D8EFF] hover:border-[#2D8EFF] hover:shadow-md'
-                        : 'border-gray-200 hover:border-black hover:shadow-md'
-                    }
-                  `}
-                >
-                  <span
-                    className={`
-                      shrink-0 w-6 h-6 flex items-center justify-center text-xs font-bold rounded transition-colors
-                      ${
-                        isUsed ? 'bg-[#2D8EFF] text-white' : 'bg-black text-white'
+          {availableOptions.length > 0 ? (
+            <div className="flex flex-wrap gap-3">
+              {availableOptions.map((option: any) => {
+                return (
+                  <div
+                    key={option.id}
+                    draggable={true}
+                    onDragStart={(e) => handleDragStart(e, option.id)}
+                    onClick={() => {
+                      if (currentQuestionId) {
+                        onChange(currentQuestionId, option.id);
                       }
-                    `}
+                    }}
+                    className="px-4 py-2.5 rounded-lg border bg-white shadow-sm transition-all select-none flex items-center gap-3 relative overflow-hidden group cursor-grab active:cursor-grabbing border-gray-200 hover:border-black hover:shadow-md"
                   >
-                    {option.id}
-                  </span>
-                  <span
-                    className={`text-[15px] font-medium leading-tight ${
-                      isUsed ? 'text-[#2D8EFF]' : 'text-gray-700'
-                    }`}
-                  >
-                    {option.text}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
+                    <span className="shrink-0 w-6 h-6 flex items-center justify-center text-xs font-bold rounded transition-colors bg-black text-white">
+                      {option.id}
+                    </span>
+                    <span className="text-[15px] font-medium leading-tight text-gray-700">
+                      {option.text}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="text-sm text-gray-500">All options are used.</p>
+          )}
         </div>
       )}
     </div>

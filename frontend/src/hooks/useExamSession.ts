@@ -3,11 +3,13 @@
 import { api } from '@/lib/api';
 import { useExamStore } from '@/store';
 import { HeartbeatResponse, ReconnectResponse, SyncResponse } from '@/types';
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 interface UseExamSessionOptions {
   assignmentId: string | null;
   enabled: boolean;
+  heartbeatIntervalMs?: number;
+  syncDebounceMs?: number;
   onSyncError?: (error: Error) => void;
   onSessionExpired?: () => void;
   onTabConflict?: () => void;
@@ -23,8 +25,8 @@ interface UseExamSessionReturn {
   lastSyncAt: Date | null;
 }
 
-const HEARTBEAT_INTERVAL = 30000; // 30 seconds (reduced from 10s to reduce server load)
-const SYNC_DEBOUNCE_MS = 5000; // 5 seconds (increased from 1s to batch changes)
+const DEFAULT_HEARTBEAT_INTERVAL_MS = 30000;
+const DEFAULT_SYNC_DEBOUNCE_MS = 5000;
 const SYNC_RETRY_MS = 7000;
 
 const createTabId = (): string =>
@@ -33,6 +35,8 @@ const createTabId = (): string =>
 export function useExamSession({
   assignmentId,
   enabled,
+  heartbeatIntervalMs,
+  syncDebounceMs,
   onSyncError,
   onSessionExpired,
   onTabConflict,
@@ -53,6 +57,14 @@ export function useExamSession({
   } = useExamStore();
 
   const isSessionActive = status === 'active';
+  const resolvedHeartbeatIntervalMs = Math.max(
+    15000,
+    heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS,
+  );
+  const resolvedSyncDebounceMs = Math.max(
+    2500,
+    syncDebounceMs ?? DEFAULT_SYNC_DEBOUNCE_MS,
+  );
 
   const heartbeatTimerRef = useRef<NodeJS.Timeout | null>(null);
   const syncTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -60,6 +72,10 @@ export function useExamSession({
   const pendingAnswersRef = useRef<Record<string, unknown> | null>(null);
   const pendingHighlightsRef = useRef<unknown[] | null>(null);
   const isSyncingRef = useRef(false);
+  const performSyncRef = useRef<
+    | ((answers: Record<string, unknown>, highlights?: unknown[]) => Promise<void>)
+    | null
+  >(null);
 
   const isAlreadySubmittedError = useCallback((error: unknown) => {
     if (!(error instanceof Error)) return false;
@@ -109,12 +125,17 @@ export function useExamSession({
     return newTabId;
   }, []);
 
-  const tabId = useRef<string>(generateTabId());
+  const [tabIdValue, setTabIdValue] = useState<string>(generateTabId);
+  const tabId = useRef<string>(tabIdValue);
+
+  useEffect(() => {
+    tabId.current = tabIdValue;
+  }, [tabIdValue]);
 
   // Set active tab in store on mount
   useEffect(() => {
-    setActiveTab(tabId.current);
-  }, [setActiveTab]);
+    setActiveTab(tabIdValue);
+  }, [setActiveTab, tabIdValue]);
 
   // Detect duplicated tabs that copied sessionStorage and rotate tab id.
   useEffect(() => {
@@ -167,6 +188,7 @@ export function useExamSession({
         const rotatedTabId = createTabId();
         tabId.current = rotatedTabId;
         sessionStorage.setItem('exam_tab_id', rotatedTabId);
+        setTabIdValue(rotatedTabId);
         setActiveTab(rotatedTabId);
       }
     };
@@ -248,8 +270,11 @@ export function useExamSession({
     }
 
     handleHeartbeat();
-    heartbeatTimerRef.current = setInterval(handleHeartbeat, HEARTBEAT_INTERVAL);
-  }, [handleHeartbeat]);
+    heartbeatTimerRef.current = setInterval(
+      handleHeartbeat,
+      resolvedHeartbeatIntervalMs,
+    );
+  }, [handleHeartbeat, resolvedHeartbeatIntervalMs]);
 
   const stopHeartbeat = useCallback(() => {
     if (heartbeatTimerRef.current) {
@@ -329,6 +354,14 @@ export function useExamSession({
 
       syncComplete(response.newVersion);
       setError(null);
+
+      if (pendingAnswersRef.current === answersToSync) {
+        pendingAnswersRef.current = null;
+      }
+      if (pendingHighlightsRef.current === highlightsToSync) {
+        pendingHighlightsRef.current = null;
+      }
+
       if (retrySyncTimeoutRef.current) {
         clearTimeout(retrySyncTimeoutRef.current);
         retrySyncTimeoutRef.current = null;
@@ -370,7 +403,7 @@ export function useExamSession({
               return;
             }
 
-            void performSync(
+            void performSyncRef.current?.(
               pendingAnswers,
               pendingHighlightsRef.current || [],
             );
@@ -385,6 +418,10 @@ export function useExamSession({
       }
     }
   }, [assignmentId, enabled, startSync, syncVersion, syncError, reconnect, setError, onSyncError, syncComplete, isAlreadySubmittedError, setStatus, onSessionExpired, isSessionExpiredError, isTransientNetworkError]);
+
+  useEffect(() => {
+    performSyncRef.current = performSync;
+  }, [performSync]);
 
   const flushPendingSync = useCallback(async () => {
     if (!assignmentId || !enabled) return;
@@ -402,9 +439,14 @@ export function useExamSession({
   const syncAnswers = useCallback(async (newAnswers: Record<string, unknown>, highlights: unknown[] = []) => {
     if (!assignmentId || !enabled) return;
 
-    // Store the latest data regardless of sync status
-    pendingAnswersRef.current = newAnswers;
-    pendingHighlightsRef.current = highlights;
+    // Store merged pending changes to avoid sending full answer payload every time
+    pendingAnswersRef.current = {
+      ...(pendingAnswersRef.current || {}),
+      ...newAnswers,
+    };
+    if (highlights.length > 0) {
+      pendingHighlightsRef.current = highlights;
+    }
 
     if (isBrowserOffline()) {
       syncError('Offline - pending sync');
@@ -419,12 +461,21 @@ export function useExamSession({
     syncTimeoutRef.current = setTimeout(async () => {
       // If a sync is already in progress, reschedule this check
       if (isSyncingRef.current) {
-        syncTimeoutRef.current = setTimeout(() => {
-          syncAnswers(
-            pendingAnswersRef.current || newAnswers,
-            pendingHighlightsRef.current || highlights,
+        syncTimeoutRef.current = setTimeout(async () => {
+          if (!assignmentId || !enabled || isSyncingRef.current) {
+            return;
+          }
+
+          const pendingAnswers = pendingAnswersRef.current;
+          if (!pendingAnswers) {
+            return;
+          }
+
+          await performSync(
+            pendingAnswers,
+            pendingHighlightsRef.current || [],
           );
-        }, SYNC_DEBOUNCE_MS);
+        }, resolvedSyncDebounceMs);
         return;
       }
 
@@ -432,8 +483,8 @@ export function useExamSession({
         pendingAnswersRef.current || {},
         pendingHighlightsRef.current || [],
       );
-    }, SYNC_DEBOUNCE_MS);
-  }, [assignmentId, enabled, syncError, setError, isBrowserOffline, performSync]);
+    }, resolvedSyncDebounceMs);
+  }, [assignmentId, enabled, syncError, setError, isBrowserOffline, performSync, resolvedSyncDebounceMs]);
 
   const handleVisibilityChange = useCallback(() => {
     if (document.hidden) {
@@ -532,7 +583,7 @@ export function useExamSession({
     syncVersion,
     isSyncing,
     syncAnswers,
-    tabId: tabId.current,
+    tabId: tabIdValue,
     isSessionActive,
     lastHeartbeatAt: null, // Now tracked in store
     lastSyncAt: lastSyncedAt,

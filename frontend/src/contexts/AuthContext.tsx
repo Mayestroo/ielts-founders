@@ -1,14 +1,20 @@
 'use client';
 
 import { api } from '@/lib/api';
-import { User } from '@/types';
+import { RegisterPayload, RegisterWithGooglePayload, User } from '@/types';
 import { createContext, ReactNode, useContext, useEffect, useState } from 'react';
 
 interface AuthContextType {
   user: User | null;
   isLoading: boolean;
   isAuthenticated: boolean;
+  register: (payload: RegisterPayload) => Promise<void>;
   login: (username: string, password: string) => Promise<void>;
+  registerWithGoogle: (
+    idToken: string,
+    registration: RegisterWithGooglePayload,
+  ) => Promise<void>;
+  loginWithGoogle: (idToken: string) => Promise<void>;
   logout: () => void;
 }
 
@@ -20,12 +26,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     api.getProfile()
-      .then(setUser)
+      .then((profile) => {
+        if (profile.role !== 'STUDENT') {
+          api.logout();
+          setUser(null);
+          return;
+        }
+
+        setUser(profile);
+      })
       .catch((error) => {
         // Only logout on auth errors, NOT on network/server errors
         const msg = error.message?.toLowerCase();
         if (msg?.includes('401') || msg?.includes('unauthorized') || msg?.includes('session expired')) {
-          console.error('Auth check failed, logging out:', error);
           api.logout();
           setUser(null);
         } else {
@@ -38,6 +51,48 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = async (username: string, password: string) => {
     const response = await api.login(username, password);
+
+    if (response.user.role !== 'STUDENT') {
+      api.logout();
+      throw new Error('This portal is for student accounts only');
+    }
+
+    setUser(response.user);
+  };
+
+  const register = async (payload: RegisterPayload) => {
+    const response = await api.register(payload);
+
+    if (response.user.role !== 'STUDENT') {
+      api.logout();
+      throw new Error('This portal is for student accounts only');
+    }
+
+    setUser(response.user);
+  };
+
+  const registerWithGoogle = async (
+    idToken: string,
+    registration: RegisterWithGooglePayload,
+  ) => {
+    const response = await api.registerWithGoogle(idToken, registration);
+
+    if (response.user.role !== 'STUDENT') {
+      api.logout();
+      throw new Error('This portal is for student accounts only');
+    }
+
+    setUser(response.user);
+  };
+
+  const loginWithGoogle = async (idToken: string) => {
+    const response = await api.loginWithGoogle(idToken);
+
+    if (response.user.role !== 'STUDENT') {
+      api.logout();
+      throw new Error('This portal is for student accounts only');
+    }
+
     setUser(response.user);
   };
 
@@ -51,7 +106,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user,
       isLoading,
       isAuthenticated: !!user,
+      register,
       login,
+      registerWithGoogle,
+      loginWithGoogle,
       logout,
     }}>
       {children}

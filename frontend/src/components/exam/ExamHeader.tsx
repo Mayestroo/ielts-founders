@@ -38,7 +38,15 @@ export function ExamHeader({
         {/* Logo */}
         <div className="flex items-center gap-4">
           <div className="w-36 h-12 rounded-xl flex items-center justify-center ">
-            <Image src="/logo.png" alt="logo" width={144} height={48} className="object-contain" priority />
+            <Image
+              src="/logo.png"
+              alt="logo"
+              width={144}
+              height={48}
+              className="object-contain"
+              style={{ width: 'auto', height: 'auto' }}
+              priority
+            />
           </div>
           <div className="hidden sm:block">
             <h1 className="font-bold text-black text-sm uppercase leading-tight">{fullName || 'IELTS Mock'}</h1>

@@ -6,6 +6,20 @@ import { api } from '@/lib/api';
 import { Center, CreateUserForm, Role, User } from '@/types';
 import { useEffect, useState } from 'react';
 
+const toDateTimeLocalValue = (isoValue?: string) => {
+  if (!isoValue) {
+    return '';
+  }
+
+  const date = new Date(isoValue);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+
+  const timezoneOffsetMs = date.getTimezoneOffset() * 60 * 1000;
+  return new Date(date.getTime() - timezoneOffsetMs).toISOString().slice(0, 16);
+};
+
 export default function UsersPage() {
   const { user: currentUser, hasRole } = useAuth();
   const [users, setUsers] = useState<User[]>([]);
@@ -30,6 +44,10 @@ export default function UsersPage() {
     password: '',
     firstName: '',
     lastName: '',
+    sessionAttendanceMode: 'OFFLINE',
+    sessionReferralSource: 'TELEGRAM',
+    sessionScheduledAt: '',
+    phoneNumber: '',
     role: currentUser?.role === 'SUPER_ADMIN' ? 'CENTER_ADMIN' : 'TEACHER',
     centerId: currentUser?.centerId || '',
   });
@@ -87,15 +105,41 @@ export default function UsersPage() {
     setError('');
 
     try {
+      const payload: Partial<CreateUserForm> = {
+        ...formData,
+      };
+
+      if (payload.sessionScheduledAt) {
+        const parsed = new Date(payload.sessionScheduledAt);
+        if (Number.isNaN(parsed.getTime())) {
+          setError('Please provide a valid test session time');
+          return;
+        }
+        payload.sessionScheduledAt = parsed.toISOString();
+      } else {
+        delete payload.sessionScheduledAt;
+      }
+
+      if (payload.role !== 'STUDENT') {
+        delete payload.sessionAttendanceMode;
+        delete payload.sessionReferralSource;
+        delete payload.sessionScheduledAt;
+        delete payload.phoneNumber;
+      }
+
+      if (!payload.phoneNumber) {
+        delete payload.phoneNumber;
+      }
+
       if (editingUser) {
         // Prepare update data, omit password if empty
-        const updateData: any = { ...formData };
+        const updateData = { ...payload };
         if (!updateData.password) delete updateData.password;
         
         await api.updateUser(editingUser.id, updateData);
         success('User updated successfully');
       } else {
-        await api.createUser(formData);
+        await api.createUser(payload as CreateUserForm);
         success('User created successfully');
       }
       
@@ -106,6 +150,10 @@ export default function UsersPage() {
         password: '',
         firstName: '',
         lastName: '',
+        sessionAttendanceMode: 'OFFLINE',
+        sessionReferralSource: 'TELEGRAM',
+        sessionScheduledAt: '',
+        phoneNumber: '',
         role: currentUser?.role === 'SUPER_ADMIN' ? 'CENTER_ADMIN' : 'TEACHER',
         centerId: '',
       });
@@ -122,6 +170,10 @@ export default function UsersPage() {
       password: '', // Don't show password
       firstName: user.firstName || '',
       lastName: user.lastName || '',
+      sessionAttendanceMode: user.sessionAttendanceMode || 'OFFLINE',
+      sessionReferralSource: user.sessionReferralSource || 'TELEGRAM',
+      sessionScheduledAt: toDateTimeLocalValue(user.sessionScheduledAt),
+      phoneNumber: user.phoneNumber || '',
       role: user.role,
       centerId: user.centerId || '',
     });
@@ -178,6 +230,10 @@ export default function UsersPage() {
             password: '',
             firstName: '',
             lastName: '',
+            sessionAttendanceMode: 'OFFLINE',
+            sessionReferralSource: 'TELEGRAM',
+            sessionScheduledAt: '',
+            phoneNumber: '',
             role: currentUser?.role === 'SUPER_ADMIN' ? 'CENTER_ADMIN' : 'TEACHER',
             centerId: currentUser?.centerId || '',
           });
@@ -399,6 +455,10 @@ export default function UsersPage() {
             password: '',
             firstName: '',
             lastName: '',
+            sessionAttendanceMode: 'OFFLINE',
+            sessionReferralSource: 'TELEGRAM',
+            sessionScheduledAt: '',
+            phoneNumber: '',
             role: currentUser?.role === 'SUPER_ADMIN' ? 'CENTER_ADMIN' : 'TEACHER',
             centerId: '',
           });
@@ -447,6 +507,17 @@ export default function UsersPage() {
             onChange={(e) => setFormData({ ...formData, role: e.target.value as Role })}
             required
           />
+
+          {formData.role === 'STUDENT' && (
+            <Input
+              label="Test Session Time"
+              type="datetime-local"
+              value={formData.sessionScheduledAt || ''}
+              onChange={(e) =>
+                setFormData({ ...formData, sessionScheduledAt: e.target.value })
+              }
+            />
+          )}
 
           {hasRole('SUPER_ADMIN') && (
             <Select

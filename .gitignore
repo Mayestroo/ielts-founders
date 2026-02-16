@@ -32,3 +32,10 @@ test-results/
 .env.*
 !.env.example
 !.env.*.example
+
+# Secrets
+creds.txt
+creds.backup.*.txt
+
+# Backups / exports
+download_host7685_*/

@@ -1,5 +1,16 @@
-import { Role } from '@prisma/client';
-import { IsEnum, IsOptional, IsString, MinLength } from 'class-validator';
+import {
+  Role,
+  SessionAttendanceMode,
+  SessionReferralSource,
+} from '@prisma/client';
+import {
+  IsEnum,
+  IsISO8601,
+  IsOptional,
+  IsString,
+  Matches,
+  MinLength,
+} from 'class-validator';
 
 export class CreateUserDto {
   @IsString()
@@ -24,4 +35,21 @@ export class CreateUserDto {
   @IsOptional()
   @IsString()
   centerId?: string;
+
+  @IsOptional()
+  @IsEnum(SessionAttendanceMode)
+  sessionAttendanceMode?: SessionAttendanceMode;
+
+  @IsOptional()
+  @IsISO8601()
+  sessionScheduledAt?: string;
+
+  @IsOptional()
+  @IsEnum(SessionReferralSource)
+  sessionReferralSource?: SessionReferralSource;
+
+  @IsOptional()
+  @IsString()
+  @Matches(/^\+998\d{9}$/)
+  phoneNumber?: string;
 }

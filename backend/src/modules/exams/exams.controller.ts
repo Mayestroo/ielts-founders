@@ -232,6 +232,7 @@ export class ExamsController {
   }
 
   @Get('assignments/my')
+  @Roles(Role.STUDENT)
   getMyAssignments(@Request() req: AuthenticatedRequest) {
     return this.assignmentService.getStudentAssignments(
       req.user.id,
@@ -374,6 +375,17 @@ export class ExamsController {
   ) {
     return this.resultService.getStudentResults(
       studentId,
+      req.user.id,
+      req.user.role,
+      req.user.centerId,
+    );
+  }
+
+  @Get('results/my')
+  @Roles(Role.STUDENT)
+  getMyResults(@Request() req: AuthenticatedRequest) {
+    return this.resultService.getStudentResults(
+      req.user.id,
       req.user.id,
       req.user.role,
       req.user.centerId,

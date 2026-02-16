@@ -1,8 +1,11 @@
 import {
     Center,
     ExamAssignment,
+    ExamResult,
     HeartbeatResponse,
     LoginResponse,
+    RegisterPayload,
+    RegisterWithGooglePayload,
     ReconnectResponse,
     StartExamResponse,
     SubmitExamResponse,
@@ -11,6 +14,8 @@ import {
 } from "@/types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000/api";
+const ACCESS_TOKEN_STORAGE_KEY = "student_access_token";
+const REFRESH_TOKEN_STORAGE_KEY = "student_refresh_token";
 
 interface RequestOptions extends RequestInit {
   timeoutMs?: number;
@@ -24,8 +29,23 @@ class ApiClient {
   private refreshToken: string | null = null;
   private refreshInFlight: Promise<string | null> | null = null;
 
+  constructor() {
+    if (typeof window !== "undefined") {
+      this.token = window.localStorage.getItem(ACCESS_TOKEN_STORAGE_KEY);
+      this.refreshToken = window.localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY);
+    }
+  }
+
   setToken(token: string | null) {
     this.token = token;
+
+    if (typeof window !== "undefined") {
+      if (token) {
+        window.localStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, token);
+      } else {
+        window.localStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY);
+      }
+    }
   }
 
   getToken(): string | null {
@@ -34,6 +54,14 @@ class ApiClient {
 
   setRefreshToken(token: string | null) {
     this.refreshToken = token;
+
+    if (typeof window !== "undefined") {
+      if (token) {
+        window.localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, token);
+      } else {
+        window.localStorage.removeItem(REFRESH_TOKEN_STORAGE_KEY);
+      }
+    }
   }
 
   getRefreshToken(): string | null {
@@ -81,7 +109,7 @@ class ApiClient {
         const response = await fetch(`${API_URL}${endpoint}`, {
           ...fetchOptions,
           headers,
-          credentials: "include",
+          credentials: fetchOptions.credentials ?? "omit",
           signal: controller.signal,
         });
 
@@ -91,18 +119,29 @@ class ApiClient {
             allowRefresh &&
             !refreshTried &&
             endpoint !== "/auth/login" &&
+            endpoint !== "/auth/google/login" &&
+            endpoint !== "/auth/google/register" &&
             endpoint !== "/auth/refresh"
           ) {
-            const refreshedToken = await this.refreshAccessToken();
-            refreshTried = true;
+            const hasRefreshToken = Boolean(this.getRefreshToken());
 
-            if (refreshedToken) {
-              clearTimeout(timeoutId);
-              continue;
+            if (hasRefreshToken) {
+              const refreshedToken = await this.refreshAccessToken();
+              refreshTried = true;
+
+              if (refreshedToken) {
+                clearTimeout(timeoutId);
+                continue;
+              }
+
+              this.logout();
+              throw new Error("Session expired");
             }
 
-            this.logout();
-            throw new Error("Session expired");
+            if (this.getToken()) {
+              this.logout();
+              throw new Error("Session expired");
+            }
           }
 
           if (
@@ -167,7 +206,7 @@ class ApiClient {
     }
 
     const refreshToken = this.getRefreshToken();
-    if (!refreshToken && typeof window === "undefined") {
+    if (!refreshToken) {
       return null;
     }
 
@@ -179,10 +218,8 @@ class ApiClient {
         const response = await fetch(`${API_URL}/auth/refresh`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          ...(refreshToken
-            ? { body: JSON.stringify({ refresh_token: refreshToken }) }
-            : {}),
-          credentials: "include",
+          body: JSON.stringify({ refresh_token: refreshToken }),
+          credentials: "omit",
           signal: controller.signal,
         });
 
@@ -270,10 +307,65 @@ class ApiClient {
   }
 
   // Auth
+  async register(payload: RegisterPayload): Promise<LoginResponse> {
+    const response = await this.request<LoginResponse>("/auth/register", {
+      method: "POST",
+      body: JSON.stringify({
+        username: payload.username,
+        password: payload.password,
+        firstName: payload.firstName,
+        lastName: payload.lastName,
+        attendanceMode: payload.attendanceMode,
+        scheduledAt: payload.scheduledAt,
+        referralSource: payload.referralSource,
+        phoneNumber: payload.phoneNumber,
+      }),
+      allowRefresh: false,
+    });
+
+    this.setToken(response.access_token);
+    this.setRefreshToken(response.refresh_token);
+    return response;
+  }
+
   async login(username: string, password: string): Promise<LoginResponse> {
     const response = await this.request<LoginResponse>("/auth/login", {
       method: "POST",
       body: JSON.stringify({ username, password }),
+      allowRefresh: false,
+    });
+    this.setToken(response.access_token);
+    this.setRefreshToken(response.refresh_token);
+    return response;
+  }
+
+  async registerWithGoogle(
+    idToken: string,
+    registration: RegisterWithGooglePayload,
+  ): Promise<LoginResponse> {
+    const response = await this.request<LoginResponse>("/auth/google/register", {
+      method: "POST",
+      body: JSON.stringify({
+        idToken,
+        firstName: registration.firstName,
+        lastName: registration.lastName,
+        attendanceMode: registration.attendanceMode,
+        scheduledAt: registration.scheduledAt,
+        referralSource: registration.referralSource,
+        phoneNumber: registration.phoneNumber,
+      }),
+      allowRefresh: false,
+    });
+    this.setToken(response.access_token);
+    this.setRefreshToken(response.refresh_token);
+    return response;
+  }
+
+  async loginWithGoogle(idToken: string): Promise<LoginResponse> {
+    const response = await this.request<LoginResponse>("/auth/google/login", {
+      method: "POST",
+      body: JSON.stringify({ idToken }),
+      allowRefresh: false,
     });
     this.setToken(response.access_token);
     this.setRefreshToken(response.refresh_token);
@@ -285,14 +377,17 @@ class ApiClient {
   }
 
   logout() {
+    const refreshToken = this.getRefreshToken();
     this.setToken(null);
     this.setRefreshToken(null);
 
-    if (typeof window !== "undefined") {
+    if (refreshToken) {
       void Promise.resolve(
         fetch(`${API_URL}/auth/logout`, {
           method: "POST",
-          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ refresh_token: refreshToken }),
+          credentials: "omit",
         }),
       ).catch(() => undefined);
     }
@@ -309,6 +404,14 @@ class ApiClient {
 
   async getAssignment(id: string): Promise<ExamAssignment> {
     return this.request<ExamAssignment>(`/assignments/${id}`);
+  }
+
+  async getMyResults(): Promise<ExamResult[]> {
+    return this.request<ExamResult[]>("/results/my");
+  }
+
+  async getResult(id: string): Promise<ExamResult> {
+    return this.request<ExamResult>(`/results/${id}`);
   }
 
   async startExam(
@@ -349,8 +452,8 @@ class ApiClient {
 
   async syncAnswers(
     assignmentId: string,
-    answers: Record<string, any>,
-    highlights: any[] = [],
+    answers: Record<string, unknown>,
+    highlights: unknown[] = [],
     tabId: string,
     syncVersion = 0
   ): Promise<SyncResponse> {
@@ -364,7 +467,7 @@ class ApiClient {
 
   async reconnectExam(
     assignmentId: string,
-    clientAnswers?: Record<string, any>,
+    clientAnswers?: Record<string, unknown>,
     tabId?: string
   ): Promise<ReconnectResponse> {
     return this.request<ReconnectResponse>(`/assignments/${assignmentId}/reconnect`, {

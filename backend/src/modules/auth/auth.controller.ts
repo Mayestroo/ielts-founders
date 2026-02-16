@@ -14,7 +14,10 @@ import { AuthGuard } from '@nestjs/passport';
 import { Throttle } from '@nestjs/throttler';
 import type { Request as ExpressRequest, Response } from 'express';
 import { AuthService } from './auth.service';
+import { GoogleAuthDto } from './dto/google-auth.dto';
+import { GoogleRegisterDto } from './dto/google-register.dto';
 import { LoginDto } from './dto/login.dto';
+import { RegisterDto } from './dto/register.dto';
 
 interface AuthenticatedRequest {
   user: { id: string };
@@ -93,6 +96,42 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response,
   ) {
     const payload = await this.authService.login(loginDto);
+    this.setAuthCookies(res, payload.access_token, payload.refresh_token);
+    return payload;
+  }
+
+  @Post('register')
+  @Throttle({ default: { ttl: 60000, limit: 8 } })
+  async register(
+    @Body() registerDto: RegisterDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const payload = await this.authService.register(registerDto);
+    this.setAuthCookies(res, payload.access_token, payload.refresh_token);
+    return payload;
+  }
+
+  @Post('google/register')
+  @Throttle({ default: { ttl: 60000, limit: 8 } })
+  async registerWithGoogle(
+    @Body() googleRegisterDto: GoogleRegisterDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const payload =
+      await this.authService.registerWithGoogle(googleRegisterDto);
+    this.setAuthCookies(res, payload.access_token, payload.refresh_token);
+    return payload;
+  }
+
+  @Post('google/login')
+  @Throttle({ default: { ttl: 60000, limit: 8 } })
+  async loginWithGoogle(
+    @Body() googleAuthDto: GoogleAuthDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const payload = await this.authService.loginWithGoogle(
+      googleAuthDto.idToken,
+    );
     this.setAuthCookies(res, payload.access_token, payload.refresh_token);
     return payload;
   }

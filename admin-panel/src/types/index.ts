@@ -3,6 +3,14 @@
 export type Role = "SUPER_ADMIN" | "CENTER_ADMIN" | "TEACHER" | "STUDENT";
 export type ExamSectionType = "LISTENING" | "READING" | "WRITING";
 export type AssignmentStatus = "ASSIGNED" | "IN_PROGRESS" | "SUBMITTED";
+export type SessionAttendanceMode = "ONLINE" | "OFFLINE";
+export type SessionReferralSource =
+  | "TELEGRAM"
+  | "INSTAGRAM"
+  | "FACEBOOK"
+  | "GOOGLE"
+  | "FRIENDS"
+  | "OTHER";
 
 export interface Center {
   id: string;
@@ -23,6 +31,10 @@ export interface User {
   firstName?: string;
   lastName?: string;
   role: Role;
+  sessionAttendanceMode?: SessionAttendanceMode;
+  sessionScheduledAt?: string;
+  sessionReferralSource?: SessionReferralSource;
+  phoneNumber?: string;
   centerId?: string;
   center?: Center;
   createdAt: string;
@@ -245,6 +257,10 @@ export interface CreateUserForm {
   password: string;
   firstName?: string;
   lastName?: string;
+  sessionAttendanceMode?: SessionAttendanceMode;
+  sessionScheduledAt?: string;
+  sessionReferralSource?: SessionReferralSource;
+  phoneNumber?: string;
   role: Role;
   centerId?: string;
 }

@@ -1,7 +1,9 @@
 'use client';
 
+import { GoogleAuthButton } from '@/components/auth/GoogleAuthButton';
 import { useAuth } from '@/contexts/AuthContext';
 import Image from 'next/image';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 
@@ -10,8 +12,15 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const { login, isAuthenticated, isLoading: authLoading } = useAuth();
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
+  const {
+    login,
+    loginWithGoogle,
+    isAuthenticated,
+    isLoading: authLoading,
+  } = useAuth();
   const router = useRouter();
+  const googleClientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
 
   useEffect(() => {
     if (!authLoading && isAuthenticated) {
@@ -34,6 +43,20 @@ export default function LoginPage() {
     }
   };
 
+  const handleGoogleLogin = async (idToken: string) => {
+    setError('');
+    setIsGoogleLoading(true);
+
+    try {
+      await loginWithGoogle(idToken);
+      router.push('/dashboard');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Google login failed');
+    } finally {
+      setIsGoogleLoading(false);
+    }
+  };
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50">
       <div className="absolute inset-0 overflow-hidden">
@@ -46,7 +69,13 @@ export default function LoginPage() {
           {/* Logo */}
           <div className="text-center mb-8">
             <div className="inline-flex items-center justify-center mb-8">
-             <Image src="/logo.png" alt="Logo" width={156} height={156}/>
+             <Image
+               src="/logo.png"
+               alt="Logo"
+               width={156}
+               height={156}
+               style={{ width: 'auto', height: 'auto' }}
+             />
             </div>
             <h1 className="text-2xl font-bold text-gray-900">IELTS Mock Exam</h1>
             <p className="text-gray-500 mt-2">Student Portal</p>
@@ -68,6 +97,7 @@ export default function LoginPage() {
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 className="w-full px-4 py-3 rounded-lg bg-gray-50 border border-gray-200 text-gray-900 placeholder-gray-400 focus:ring-2 focus:ring-black focus:border-transparent outline-none transition-all"
+                disabled={isLoading || isGoogleLoading}
                 required
               />
             </div>
@@ -80,13 +110,14 @@ export default function LoginPage() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className="w-full px-4 py-3 rounded-lg bg-gray-50 border border-gray-200 text-gray-900 placeholder-gray-400 focus:ring-2 focus:ring-black focus:border-transparent outline-none transition-all"
+                disabled={isLoading || isGoogleLoading}
                 required
               />
             </div>
 
             <button
               type="submit"
-              disabled={isLoading}
+              disabled={isLoading || isGoogleLoading}
               className="w-full py-3 rounded-lg bg-black text-white font-semibold hover:bg-gray-900 transition-all shadow-lg shadow-black/20 disabled:opacity-50"
             >
               {isLoading ? (
@@ -99,6 +130,29 @@ export default function LoginPage() {
                 </span>
               ) : 'Sign In'}
             </button>
+
+            <div className="relative py-1">
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-gray-200" />
+              </div>
+              <div className="relative flex justify-center">
+                <span className="bg-white px-3 text-xs uppercase tracking-wide text-gray-400">Or</span>
+              </div>
+            </div>
+
+            <GoogleAuthButton
+              clientId={googleClientId}
+              text="signin_with"
+              disabled={isLoading || isGoogleLoading}
+              onCredential={handleGoogleLogin}
+            />
+
+            <p className="text-center text-sm text-gray-500">
+              New student?{' '}
+              <Link href="/register" className="font-semibold text-gray-900 hover:underline">
+                Register
+              </Link>
+            </p>
           </form>
         </div>
       </div>

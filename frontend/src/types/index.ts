@@ -3,6 +3,14 @@
 export type Role = "SUPER_ADMIN" | "CENTER_ADMIN" | "TEACHER" | "STUDENT";
 export type ExamSectionType = "LISTENING" | "READING" | "WRITING";
 export type AssignmentStatus = "ASSIGNED" | "IN_PROGRESS" | "SUBMITTED";
+export type SessionAttendanceMode = "ONLINE" | "OFFLINE";
+export type SessionReferralSource =
+  | "TELEGRAM"
+  | "INSTAGRAM"
+  | "FACEBOOK"
+  | "GOOGLE"
+  | "FRIENDS"
+  | "OTHER";
 
 export interface Center {
   id: string;
@@ -23,10 +31,29 @@ export interface User {
   firstName?: string;
   lastName?: string;
   role: Role;
+  points?: number;
+  sessionAttendanceMode?: SessionAttendanceMode;
+  sessionScheduledAt?: string;
+  sessionReferralSource?: SessionReferralSource;
+  phoneNumber?: string;
   centerId?: string;
   center?: Center;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface RegisterWithGooglePayload {
+  firstName: string;
+  lastName: string;
+  attendanceMode: SessionAttendanceMode;
+  scheduledAt: string;
+  referralSource: SessionReferralSource;
+  phoneNumber: string;
+}
+
+export interface RegisterPayload extends RegisterWithGooglePayload {
+  username: string;
+  password: string;
 }
 
 export interface LoginResponse {

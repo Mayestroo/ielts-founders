@@ -46,6 +46,14 @@ import { UsersModule } from './modules/users';
     ServeStaticModule.forRoot({
       rootPath: join(process.cwd(), 'uploads'),
       serveRoot: '/uploads',
+      serveStaticOptions: {
+        maxAge: 60 * 60 * 1000,
+        setHeaders: (res, filePath) => {
+          if (/\.(mp3|wav|ogg|opus|mp4|webm)$/i.test(filePath)) {
+            res.setHeader('Cache-Control', 'public, max-age=86400');
+          }
+        },
+      },
     }),
   ],
   providers: [

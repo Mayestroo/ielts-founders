@@ -46,7 +46,6 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
   const introVideoRef = useRef<HTMLVideoElement>(null) as unknown as RefObject<HTMLVideoElement>;
   const introContainerRef = useRef<HTMLDivElement>(null) as unknown as RefObject<HTMLDivElement>;
   const rightPanelRef = useRef<HTMLDivElement>(null) as unknown as RefObject<HTMLDivElement>;
-  const syncDebounceRef = useRef<NodeJS.Timeout | null>(null);
 
   const isExamStarted = assignment?.status === "IN_PROGRESS";
 
@@ -115,9 +114,16 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
     });
   }, []);
 
+  const adaptiveHeartbeatIntervalMs =
+    assignment?.section?.type === "LISTENING" ? 40000 : 30000;
+  const adaptiveSyncDebounceMs =
+    assignment?.section?.type === "LISTENING" ? 6500 : 5000;
+
   const { syncAnswers, tabId } = useExamSession({
     assignmentId: assignment?.id || null,
     enabled: isExamStarted,
+    heartbeatIntervalMs: adaptiveHeartbeatIntervalMs,
+    syncDebounceMs: adaptiveSyncDebounceMs,
     onSyncError: handleSyncError,
     onSessionExpired: handleSessionExpired,
     onTabConflict: handleTabConflict,
@@ -403,13 +409,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
       setAnswers((prev) => {
         const newAnswers = { ...prev, [questionId]: value };
 
-        if (syncDebounceRef.current) {
-          clearTimeout(syncDebounceRef.current);
-        }
-
-        syncDebounceRef.current = setTimeout(() => {
-          syncAnswers(newAnswers);
-        }, 2000);
+        syncAnswers({ [questionId]: value });
 
         return newAnswers;
       });
