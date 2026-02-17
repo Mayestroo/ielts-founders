@@ -217,7 +217,6 @@ export interface CreateFullMockForm {
   listeningSectionId: string;
   readingSectionId: string;
   writingSectionId: string;
-  breakMinutes?: number;
 }
 
 export interface WritingSubmission {

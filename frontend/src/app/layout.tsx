@@ -1,3 +1,4 @@
+import { QueryProvider } from "@/components/providers/QueryProvider";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { SettingsProvider } from "@/contexts/SettingsContext";
 import type { Metadata } from "next";
@@ -33,11 +34,11 @@ export default function RootLayout({
   return (
     <html lang="en" translate="no" className="notranslate">
       <body className="antialiased notranslate">
-        <AuthProvider>
-          <SettingsProvider>
-            {children}
-          </SettingsProvider>
-        </AuthProvider>
+        <QueryProvider>
+          <AuthProvider>
+            <SettingsProvider>{children}</SettingsProvider>
+          </AuthProvider>
+        </QueryProvider>
       </body>
     </html>
   );

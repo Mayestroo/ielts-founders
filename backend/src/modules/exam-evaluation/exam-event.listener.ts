@@ -1,9 +1,14 @@
 import { InjectQueue } from '@nestjs/bullmq';
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import { Prisma } from '@prisma/client';
 import { Queue } from 'bullmq';
+import { AiService } from '../ai/ai.service';
 import { WRITING_GRADING_QUEUE } from '../queue/queue.module';
 import { WritingGradingJobData } from '../queue/writing-grading.types';
+import { PrismaService } from '../prisma/prisma.service';
+import { ResponseCacheService } from '../redis';
 import {
   WritingSubmittedEvent,
   WritingGradedEvent,
@@ -21,8 +26,13 @@ export class ExamEventListener {
   private readonly logger = new Logger(ExamEventListener.name);
 
   constructor(
+    @Optional()
     @InjectQueue(WRITING_GRADING_QUEUE)
-    private writingQueue: Queue<WritingGradingJobData>,
+    private readonly writingQueue?: Queue<WritingGradingJobData>,
+    private readonly prisma?: PrismaService,
+    private readonly aiService?: AiService,
+    private readonly responseCache?: ResponseCacheService,
+    private readonly eventEmitter?: EventEmitter2,
   ) {}
 
   @OnEvent('writing.submitted')
@@ -38,30 +48,132 @@ export class ExamEventListener {
       return;
     }
 
-    try {
-      await this.writingQueue.add(
-        'grade',
-        {
-          submissionId: event.submissionId,
-          resultId: event.resultId,
-          tasks: event.tasks,
-        },
-        {
-          jobId: `writing-${event.submissionId}`,
-          attempts: 3,
-          backoff: {
-            type: 'exponential',
-            delay: 5000,
+    if (this.writingQueue) {
+      try {
+        await this.writingQueue.add(
+          'grade',
+          {
+            submissionId: event.submissionId,
+            resultId: event.resultId,
+            tasks: event.tasks,
           },
+          {
+            jobId: `writing-${event.submissionId}`,
+            attempts: 3,
+            backoff: {
+              type: 'exponential',
+              delay: 5000,
+            },
+          },
+        );
+
+        this.logger.log(`Job queued for submission ${event.submissionId}`);
+        return;
+      } catch (error) {
+        this.logger.warn(
+          `Queue unavailable for submission ${event.submissionId}, using inline grading fallback: ${error}`,
+        );
+      }
+    }
+
+    await this.processWritingInline(event);
+  }
+
+  private async processWritingInline(event: WritingSubmittedEvent) {
+    if (
+      !this.prisma ||
+      !this.aiService ||
+      !this.responseCache ||
+      !this.eventEmitter
+    ) {
+      this.logger.error(
+        `Inline grading dependencies missing for submission ${event.submissionId}`,
+      );
+      return;
+    }
+
+    try {
+      await this.prisma.writingSubmission.update({
+        where: { id: event.submissionId },
+        data: {
+          status: 'PROCESSING',
+          processingAt: new Date(),
+          attempts: { increment: 1 },
+          jobId: null,
         },
+      });
+
+      const minTotalWeight = event.tasks.length === 2 ? 3 : event.tasks.length;
+      const evaluation = await this.aiService.evaluateWritingSection(
+        event.tasks,
+        minTotalWeight,
       );
 
-      this.logger.log(`Job queued for submission ${event.submissionId}`);
-    } catch (error) {
-      this.logger.error(
-        `Failed to queue job for submission ${event.submissionId}: ${error}`,
+      await this.prisma.$transaction([
+        this.prisma.writingSubmission.update({
+          where: { id: event.submissionId },
+          data: {
+            status: 'COMPLETED',
+            completedAt: new Date(),
+            bandScore: evaluation.bandScore,
+            evaluation: evaluation as unknown as Prisma.InputJsonValue,
+            lastError: null,
+          },
+        }),
+        this.prisma.examResult.update({
+          where: { id: event.resultId },
+          data: {
+            bandScore: evaluation.bandScore,
+            feedback: evaluation as unknown as Prisma.InputJsonValue,
+            score: evaluation.bandScore,
+          },
+        }),
+      ]);
+
+      await this.responseCache.delByPrefixes([
+        'cache:results:list:v1:',
+        'cache:results:student:v1:',
+        'cache:dashboard:stats:v1:',
+      ]);
+
+      this.eventEmitter.emit(
+        'writing.graded',
+        new WritingGradedEvent(
+          event.submissionId,
+          event.resultId,
+          event.studentId,
+          evaluation.bandScore,
+          evaluation,
+        ),
       );
-      throw error;
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown inline grading error';
+      this.logger.error(
+        `Inline grading failed for submission ${event.submissionId}: ${errorMessage}`,
+      );
+
+      await this.prisma.writingSubmission
+        .update({
+          where: { id: event.submissionId },
+          data: {
+            status: 'FAILED',
+            lastError: errorMessage,
+          },
+        })
+        .catch(() => undefined);
+
+      this.eventEmitter.emit(
+        'writing.gradingFailed',
+        new WritingGradingFailedEvent(
+          event.submissionId,
+          event.resultId,
+          event.studentId,
+          errorMessage,
+          1,
+          1,
+        ),
+      );
     }
   }
 

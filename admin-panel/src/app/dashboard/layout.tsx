@@ -3,7 +3,10 @@
 import { ConfirmationModal, ThemeSwitcher } from "@/components/ui";
 import { useAuth } from "@/contexts/AuthContext";
 import { api } from "@/lib/api";
-import { Center, Role } from "@/types";
+import { ADMIN_QUERY_TIMINGS } from "@/lib/query/config";
+import { adminQueryKeys } from "@/lib/query/keys";
+import { Role } from "@/types";
+import { useQuery } from "@tanstack/react-query";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -164,33 +167,26 @@ const menuItems: {
 export default function DashboardLayout({ children }: DashboardLayoutProps) {
   const { user, isLoading, isAuthenticated, logout, hasRole } = useAuth();
   const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false);
-  const [centerLogo, setCenterLogo] = useState<string | null>(null);
   const router = useRouter();
   const pathname = usePathname();
+
+  const centerQuery = useQuery({
+    queryKey: adminQueryKeys.center(user?.centerId || ""),
+    queryFn: ({ signal }) => api.getCenter(user!.centerId!, { signal }),
+    enabled:
+      !!user?.centerId &&
+      (user.role === "CENTER_ADMIN" || user.role === "TEACHER"),
+    staleTime: ADMIN_QUERY_TIMINGS.center.staleTime,
+    gcTime: ADMIN_QUERY_TIMINGS.center.gcTime,
+  });
+
+  const centerLogo = centerQuery.data?.logo || null;
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
       router.push("/login");
     }
   }, [isLoading, isAuthenticated, router]);
-
-  // Load center logo for CENTER_ADMIN and TEACHER
-  useEffect(() => {
-    if (
-      user &&
-      user.centerId &&
-      (user.role === "CENTER_ADMIN" || user.role === "TEACHER")
-    ) {
-      api
-        .getCenter(user.centerId)
-        .then((center: Center) => {
-          if (center.logo) {
-            setCenterLogo(center.logo);
-          }
-        })
-        .catch(console.error);
-    }
-  }, [user]);
 
   if (isLoading) {
     return (

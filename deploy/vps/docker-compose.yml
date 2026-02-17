@@ -23,14 +23,14 @@ services:
     restart: unless-stopped
     env_file:
       - ./env/redis-session.env
-    command: ["/bin/sh", "-c", "exec redis-server /usr/local/etc/redis/redis.conf --requirepass \"$REDIS_PASSWORD\""]
+    command: ["/bin/sh", "-c", "exec redis-server /usr/local/etc/redis/redis.conf --requirepass \"$$REDIS_PASSWORD\""]
     volumes:
       - ./redis/session.conf:/usr/local/etc/redis/redis.conf:ro
       - redis_session_data:/data
     networks:
       - internal
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a \"$REDIS_PASSWORD\" ping | grep -q PONG"]
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -41,14 +41,14 @@ services:
     restart: unless-stopped
     env_file:
       - ./env/redis-queue.env
-    command: ["/bin/sh", "-c", "exec redis-server /usr/local/etc/redis/redis.conf --requirepass \"$REDIS_PASSWORD\""]
+    command: ["/bin/sh", "-c", "exec redis-server /usr/local/etc/redis/redis.conf --requirepass \"$$REDIS_PASSWORD\""]
     volumes:
       - ./redis/queue.conf:/usr/local/etc/redis/redis.conf:ro
       - redis_queue_data:/data
     networks:
       - internal
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a \"$REDIS_PASSWORD\" ping | grep -q PONG"]
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
       interval: 10s
       timeout: 5s
       retries: 10

@@ -5,12 +5,16 @@ import {
 } from '@nestjs/common';
 import { Prisma, Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { ResponseCacheService } from '../redis';
 import { CreateExamSectionDto } from '../exams/dto/create-exam-section.dto';
 import { UpdateExamSectionDto } from '../exams/dto/update-exam-section.dto';
 
 @Injectable()
 export class ExamSectionService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private responseCache: ResponseCacheService,
+  ) {}
 
   private buildScopedWhere(userRole: Role, centerId: string | null) {
     if (userRole === Role.TEACHER || userRole === Role.CENTER_ADMIN) {
@@ -28,7 +32,7 @@ export class ExamSectionService {
     teacherId: string,
     centerId: string,
   ) {
-    return this.prisma.examSection.create({
+    const section = await this.prisma.examSection.create({
       data: {
         ...createSectionDto,
         questions: createSectionDto.questions as Prisma.InputJsonValue,
@@ -42,9 +46,12 @@ export class ExamSectionService {
         },
       },
     });
+
+    await this.invalidateSectionReadCaches();
+    return section;
   }
 
-  async findAll(userRole: Role, centerId: string | null, teacherId?: string) {
+  async findAll(userRole: Role, centerId: string | null) {
     const where = this.buildScopedWhere(userRole, centerId);
 
     return this.prisma.examSection.findMany({
@@ -140,6 +147,7 @@ export class ExamSectionService {
     }
 
     await this.prisma.examSection.delete({ where: { id } });
+    await this.invalidateSectionReadCaches();
     return { message: 'Section deleted successfully' };
   }
 
@@ -157,11 +165,15 @@ export class ExamSectionService {
     }
 
     const { centerId, ...rest } = updateSectionDto;
-    if (centerId && userRole !== Role.SUPER_ADMIN) {
+    if (
+      centerId &&
+      userRole !== Role.SUPER_ADMIN &&
+      centerId !== section.centerId
+    ) {
       throw new ForbiddenException('You cannot change section center');
     }
 
-    return this.prisma.examSection.update({
+    const updatedSection = await this.prisma.examSection.update({
       where: { id },
       data: {
         ...rest,
@@ -170,5 +182,17 @@ export class ExamSectionService {
         passages: updateSectionDto.passages as Prisma.InputJsonValue,
       },
     });
+
+    await this.invalidateSectionReadCaches();
+    return updatedSection;
+  }
+
+  private async invalidateSectionReadCaches() {
+    await this.responseCache.delByPrefixes([
+      'cache:dashboard:stats:v1:',
+      'cache:assignments:grouped:v1:',
+      'cache:results:list:v1:',
+      'cache:results:student:v1:',
+    ]);
   }
 }

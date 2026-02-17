@@ -3,7 +3,10 @@
 import { Badge, Button, Card, CardBody, ConfirmationModal, Input, Modal, Select, useToast } from '@/components/ui';
 import { useAuth } from '@/contexts/AuthContext';
 import { api } from '@/lib/api';
+import { ADMIN_QUERY_TIMINGS } from '@/lib/query/config';
+import { adminQueryKeys } from '@/lib/query/keys';
 import { Center, CreateUserForm, Role, User } from '@/types';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 
 const toDateTimeLocalValue = (isoValue?: string) => {
@@ -22,16 +25,13 @@ const toDateTimeLocalValue = (isoValue?: string) => {
 
 export default function UsersPage() {
   const { user: currentUser, hasRole } = useAuth();
-  const [users, setUsers] = useState<User[]>([]);
-  const [total, setTotal] = useState(0);
-  const [isLoading, setIsLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [pageSize] = useState(10);
   const [showModal, setShowModal] = useState(false);
   const [error, setError] = useState('');
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [userToDelete, setUserToDelete] = useState<string | null>(null);
-  const [centers, setCenters] = useState<Center[]>([]);
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
   
   // Filtering States
   const [searchTerm, setSearchTerm] = useState('');
@@ -52,53 +52,78 @@ export default function UsersPage() {
     centerId: currentUser?.centerId || '',
   });
 
-  const loadUsers = async () => {
-    setIsLoading(true);
-    try {
-      const skip = (page - 1) * pageSize;
-      const { users, total } = await api.getUsers(
-        skip, 
-        pageSize, 
-        searchTerm, 
-        roleFilter as Role, 
-        centerFilter
-      );
-      setUsers(users);
-      setTotal(total);
-    } catch (err) {
-      console.error('Failed to load users:', err);
-      showError('Failed to load users');
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  const queryClient = useQueryClient();
+  const { success, error: showError } = useToast();
 
   useEffect(() => {
-    // Debounce search
     const timer = setTimeout(() => {
-      setPage(1); // Reset to page 1 on new filter
-      loadUsers();
+      setDebouncedSearchTerm(searchTerm.trim());
     }, 300);
 
     return () => clearTimeout(timer);
-  }, [searchTerm, roleFilter, centerFilter]);
+  }, [searchTerm]);
 
-  // Handle page changes separately to strict loading
   useEffect(() => {
-    loadUsers();
-  }, [page]);
+    setPage(1);
+  }, [debouncedSearchTerm, roleFilter, centerFilter]);
+
+  const usersQuery = useQuery({
+    queryKey: adminQueryKeys.usersList({
+      page,
+      pageSize,
+      search: debouncedSearchTerm,
+      role: roleFilter,
+      centerId: centerFilter,
+    }),
+    queryFn: ({ signal }) =>
+      api.getUsers(
+        (page - 1) * pageSize,
+        pageSize,
+        debouncedSearchTerm || undefined,
+        (roleFilter || undefined) as Role | undefined,
+        centerFilter || undefined,
+        { signal },
+      ),
+    staleTime: ADMIN_QUERY_TIMINGS.list.staleTime,
+    gcTime: ADMIN_QUERY_TIMINGS.list.gcTime,
+    placeholderData: (previousData) => previousData,
+  });
+
+  const centersQuery = useQuery<Center[]>({
+    queryKey: adminQueryKeys.centers(),
+    queryFn: ({ signal }) => api.getCenters({ signal }),
+    staleTime: ADMIN_QUERY_TIMINGS.reference.staleTime,
+    gcTime: ADMIN_QUERY_TIMINGS.reference.gcTime,
+    enabled: hasRole('SUPER_ADMIN'),
+  });
+
+  const users = usersQuery.data?.users ?? [];
+  const total = usersQuery.data?.total ?? 0;
+  const isLoading = usersQuery.isLoading && !usersQuery.data;
+  const centers = centersQuery.data ?? [];
 
   // Removed client-side filtering
   const filteredUsers = users;
 
-  useEffect(() => {
-    // Load centers for SuperAdmin to select when creating users
-    if (hasRole('SUPER_ADMIN')) {
-      api.getCenters().then(setCenters).catch(console.error);
-    }
-  }, [hasRole]);
+  const saveUserMutation = useMutation({
+    mutationFn: async (payload: { editingId?: string; data: Partial<CreateUserForm> }) => {
+      if (payload.editingId) {
+        return api.updateUser(payload.editingId, payload.data);
+      }
 
-  const { success, error: showError } = useToast();
+      return api.createUser(payload.data as CreateUserForm);
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['admin', 'users'] });
+    },
+  });
+
+  const deleteUserMutation = useMutation({
+    mutationFn: (id: string) => api.deleteUser(id),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['admin', 'users'] });
+    },
+  });
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -132,14 +157,16 @@ export default function UsersPage() {
       }
 
       if (editingUser) {
-        // Prepare update data, omit password if empty
         const updateData = { ...payload };
         if (!updateData.password) delete updateData.password;
-        
-        await api.updateUser(editingUser.id, updateData);
+
+        await saveUserMutation.mutateAsync({
+          editingId: editingUser.id,
+          data: updateData,
+        });
         success('User updated successfully');
       } else {
-        await api.createUser(payload as CreateUserForm);
+        await saveUserMutation.mutateAsync({ data: payload as CreateUserForm });
         success('User created successfully');
       }
       
@@ -157,7 +184,6 @@ export default function UsersPage() {
         role: currentUser?.role === 'SUPER_ADMIN' ? 'CENTER_ADMIN' : 'TEACHER',
         centerId: '',
       });
-      loadUsers();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save user');
     }
@@ -187,8 +213,7 @@ export default function UsersPage() {
   const confirmDelete = async () => {
     if (!userToDelete) return;
     try {
-      await api.deleteUser(userToDelete);
-      loadUsers();
+      await deleteUserMutation.mutateAsync(userToDelete);
       success('User deleted successfully');
     } catch (err) {
       showError(err instanceof Error ? err.message : 'Failed to delete user');

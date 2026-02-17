@@ -24,6 +24,8 @@ interface RequestOptions extends RequestInit {
   allowRefresh?: boolean;
 }
 
+export type ApiReadOptions = Pick<RequestOptions, "signal">;
+
 class ApiClient {
   private token: string | null = null;
   private refreshToken: string | null = null;
@@ -372,8 +374,8 @@ class ApiClient {
     return response;
   }
 
-  async getProfile(): Promise<User> {
-    return this.request<User>("/auth/profile");
+  async getProfile(options: ApiReadOptions = {}): Promise<User> {
+    return this.request<User>("/auth/profile", options);
   }
 
   logout() {
@@ -394,24 +396,24 @@ class ApiClient {
   }
 
   // Assignments
-  async getCenter(id: string): Promise<Center> {
-    return this.request<Center>(`/centers/${id}`);
+  async getCenter(id: string, options: ApiReadOptions = {}): Promise<Center> {
+    return this.request<Center>(`/centers/${id}`, options);
   }
 
-  async getMyAssignments(): Promise<ExamAssignment[]> {
-    return this.request<ExamAssignment[]>("/assignments/my");
+  async getMyAssignments(options: ApiReadOptions = {}): Promise<ExamAssignment[]> {
+    return this.request<ExamAssignment[]>("/assignments/my", options);
   }
 
-  async getAssignment(id: string): Promise<ExamAssignment> {
-    return this.request<ExamAssignment>(`/assignments/${id}`);
+  async getAssignment(id: string, options: ApiReadOptions = {}): Promise<ExamAssignment> {
+    return this.request<ExamAssignment>(`/assignments/${id}`, options);
   }
 
-  async getMyResults(): Promise<ExamResult[]> {
-    return this.request<ExamResult[]>("/results/my");
+  async getMyResults(options: ApiReadOptions = {}): Promise<ExamResult[]> {
+    return this.request<ExamResult[]>("/results/my", options);
   }
 
-  async getResult(id: string): Promise<ExamResult> {
-    return this.request<ExamResult>(`/results/${id}`);
+  async getResult(id: string, options: ApiReadOptions = {}): Promise<ExamResult> {
+    return this.request<ExamResult>(`/results/${id}`, options);
   }
 
   async startExam(

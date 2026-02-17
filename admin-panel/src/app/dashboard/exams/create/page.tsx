@@ -13,6 +13,8 @@ import {
 } from "@/components/ui";
 import { useAuth } from "@/contexts/AuthContext";
 import { api } from "@/lib/api";
+import { ADMIN_QUERY_TIMINGS } from "@/lib/query/config";
+import { adminQueryKeys } from "@/lib/query/keys";
 import {
   Center,
   CreateExamSectionForm,
@@ -21,6 +23,7 @@ import {
   Question,
   QuestionType,
 } from "@/types";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 
@@ -104,8 +107,7 @@ function CreateExamContent() {
   const router = useRouter();
   const { user } = useAuth();
   const { success, error: showToastError } = useToast();
-  const [isLoading, setIsLoading] = useState(false);
-  const [centers, setCenters] = useState<Center[]>([]);
+  const queryClient = useQueryClient();
   const [error, setError] = useState("");
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -125,6 +127,25 @@ function CreateExamContent() {
 
   const searchParams = useSearchParams();
   const typeParam = searchParams.get("type");
+
+  const centersQuery = useQuery<Center[]>({
+    queryKey: adminQueryKeys.centers(),
+    queryFn: ({ signal }) => api.getCenters({ signal }),
+    staleTime: ADMIN_QUERY_TIMINGS.reference.staleTime,
+    gcTime: ADMIN_QUERY_TIMINGS.reference.gcTime,
+    enabled: user?.role === "SUPER_ADMIN",
+  });
+
+  const createExamMutation = useMutation({
+    mutationFn: (payload: CreateExamSectionForm) => api.createExamSection(payload),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: adminQueryKeys.examSections() });
+      await queryClient.invalidateQueries({ queryKey: adminQueryKeys.examSectionOptions() });
+      await queryClient.invalidateQueries({ queryKey: adminQueryKeys.dashboardStats() });
+    },
+  });
+
+  const centers = centersQuery.data ?? [];
 
   useEffect(() => {
     if (typeParam && ["READING", "LISTENING", "WRITING"].includes(typeParam)) {
@@ -150,10 +171,13 @@ function CreateExamContent() {
           audio.addEventListener("loadedmetadata", () => {
             const minutes = Math.ceil(audio.duration / 60);
             const totalDuration = minutes + 2;
-            // Only update if it's different and reasonable
-            if (totalDuration > 2 && formData.duration !== totalDuration) {
-              setFormData((prev) => ({ ...prev, duration: totalDuration }));
-            }
+            if (totalDuration <= 2) return;
+
+            setFormData((prev) =>
+              prev.duration === totalDuration
+                ? prev
+                : { ...prev, duration: totalDuration }
+            );
           });
         } catch (err) {
           console.error("Error calculating audio duration:", err);
@@ -164,10 +188,12 @@ function CreateExamContent() {
   }, [formData.audioUrl, formData.type]);
 
   useEffect(() => {
-    if (user?.role === "SUPER_ADMIN") {
-      api.getCenters().then(setCenters).catch(console.error);
+    if (!centersQuery.error) {
+      return;
     }
-  }, [user]);
+
+    showToastError("Failed to load centers");
+  }, [centersQuery.error, showToastError]);
 
   // Initialize Writing tasks if type is WRITING
   useEffect(() => {
@@ -179,14 +205,14 @@ function CreateExamContent() {
           questionText: "",
           points: 3,
           instruction: "Write at least 150 words.",
-        } as any,
+        } as Question,
         {
           id: "w2",
           type: "SHORT_ANSWER",
           questionText: "",
           points: 6,
           instruction: "Write at least 250 words.",
-        } as any,
+        } as Question,
       ]);
     }
   }, [formData.type, questions.length]);
@@ -261,10 +287,10 @@ function CreateExamContent() {
       default:
         newQuestion = {
           ...baseQuestion,
-          type: type as any,
+          type,
           correctAnswer: "",
           wordLimit: 3,
-        };
+        } as Question;
     }
 
     setQuestions([...questions, newQuestion]);
@@ -285,10 +311,9 @@ function CreateExamContent() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
-    setIsLoading(true);
 
     try {
-      const submissionData = {
+      const submissionData: CreateExamSectionForm = {
         ...formData,
         questions,
         passages: formData.type === "READING" ? passages : undefined,
@@ -296,17 +321,16 @@ function CreateExamContent() {
 
       // Remove audioUrl if it's empty or null to avoid validation errors
       if (!submissionData.audioUrl) {
-        delete (submissionData as any).audioUrl;
+        delete submissionData.audioUrl;
       }
 
-      await api.createExamSection(submissionData);
+      await createExamMutation.mutateAsync(submissionData as CreateExamSectionForm);
+      success("Exam section created");
       router.push("/dashboard/exams");
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Failed to create exam section"
       );
-    } finally {
-      setIsLoading(false);
     }
   };
 
@@ -863,7 +887,12 @@ function CreateExamContent() {
                           value={question.correctAnswer as string}
                           onChange={(e) =>
                             updateQuestion(question.id, {
-                              correctAnswer: e.target.value as any,
+                              correctAnswer: e.target.value as
+                                | "TRUE"
+                                | "FALSE"
+                                | "NOT_GIVEN"
+                                | "YES"
+                                | "NO",
                             })
                           }
                         />
@@ -947,7 +976,7 @@ function CreateExamContent() {
           >
             Cancel
           </Button>
-          <Button type="submit" isLoading={isLoading} className="flex-1">
+          <Button type="submit" isLoading={createExamMutation.isPending} className="flex-1">
             Create Exam Section
           </Button>
         </div>

@@ -9,6 +9,7 @@ import {
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { AssignmentStatus, FullMockStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { ResponseCacheService } from '../redis';
 import { SessionService } from '../session/session.service';
 import { ScoringService } from '../exam-evaluation/scoring.service';
 import { SubmitAnswersDto } from '../exams/dto/submit-answers.dto';
@@ -50,6 +51,7 @@ export class SubmissionService {
     private scoringService: ScoringService,
     private sessionService: SessionService,
     private eventEmitter: EventEmitter2,
+    private responseCache: ResponseCacheService,
   ) {}
 
   async submitAnswers(
@@ -89,7 +91,10 @@ export class SubmissionService {
     }
 
     try {
-      const lockOk = await this.sessionService.refreshExamLock(assignmentId, tabId);
+      const lockOk = await this.sessionService.refreshExamLock(
+        assignmentId,
+        tabId,
+      );
       if (!lockOk) {
         throw new ConflictException('Exam is open in another tab');
       }
@@ -163,6 +168,8 @@ export class SubmissionService {
             `Failed to mark Redis session submitted for assignment ${assignmentId}`,
           );
         }
+
+        await this.invalidateSubmissionReadCaches();
       }
 
       return submitResult;
@@ -464,5 +471,14 @@ export class SubmissionService {
       nextAssignmentId: nextAssignment.id,
       breakEndsAt: breakEndsAt.toISOString(),
     };
+  }
+
+  private async invalidateSubmissionReadCaches() {
+    await this.responseCache.delByPrefixes([
+      'cache:assignments:grouped:v1:',
+      'cache:results:list:v1:',
+      'cache:results:student:v1:',
+      'cache:dashboard:stats:v1:',
+    ]);
   }
 }

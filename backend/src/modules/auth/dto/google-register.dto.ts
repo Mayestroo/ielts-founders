@@ -1,6 +1,7 @@
 import {
   IsEnum,
   IsISO8601,
+  IsOptional,
   IsString,
   Matches,
   MaxLength,
@@ -22,28 +23,33 @@ export enum SessionReferralSourceDto {
 }
 
 export class SessionRegistrationDto {
+  @IsOptional()
   @IsString()
   @MinLength(1)
   @MaxLength(100)
-  firstName: string;
+  firstName?: string;
 
+  @IsOptional()
   @IsString()
   @MinLength(1)
   @MaxLength(100)
-  lastName: string;
+  lastName?: string;
 
+  @IsOptional()
   @IsEnum(SessionAttendanceModeDto)
-  attendanceMode: SessionAttendanceModeDto;
+  attendanceMode?: SessionAttendanceModeDto;
 
+  @IsOptional()
   @IsISO8601()
-  scheduledAt: string;
+  scheduledAt?: string;
 
   @IsEnum(SessionReferralSourceDto)
   referralSource: SessionReferralSourceDto;
 
+  @IsOptional()
   @IsString()
   @Matches(/^\+998\d{9}$/)
-  phoneNumber: string;
+  phoneNumber?: string;
 }
 
 export class GoogleRegisterDto extends SessionRegistrationDto {

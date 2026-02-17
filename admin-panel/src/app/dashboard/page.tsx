@@ -3,7 +3,10 @@
 import { Badge, Card, CardBody } from '@/components/ui';
 import { useAuth } from '@/contexts/AuthContext';
 import { api } from '@/lib/api';
-import { useEffect, useState } from 'react';
+import { ADMIN_QUERY_TIMINGS } from '@/lib/query/config';
+import { adminQueryKeys } from '@/lib/query/keys';
+import { useQuery } from '@tanstack/react-query';
+import Link from 'next/link';
 
 const timeAgo = (dateIdx: string) => {
   const date = new Date(dateIdx);
@@ -25,41 +28,16 @@ const timeAgo = (dateIdx: string) => {
 
 export default function DashboardPage() {
   const { user } = useAuth();
-  const [data, setData] = useState<{
-    counts: {
-      totalUsers: number;
-      examSections: number;
-      activeAssignments: number;
-      completedTests: number;
-    };
-    growth: {
-      users: number;
-      sections: number;
-      assignments: number;
-      completedTests: number;
-    };
-    activity: {
-      type: 'success' | 'info' | 'warning' | 'default';
-      action: string;
-      user: string;
-      time: string;
-    }[];
-  } | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const statsQuery = useQuery({
+    queryKey: adminQueryKeys.dashboardStats(),
+    queryFn: ({ signal }) => api.getDashboardStats({ signal }),
+    staleTime: ADMIN_QUERY_TIMINGS.dashboardStats.staleTime,
+    gcTime: ADMIN_QUERY_TIMINGS.dashboardStats.gcTime,
+    placeholderData: (previousData) => previousData,
+  });
 
-  useEffect(() => {
-    async function loadStats() {
-      try {
-        const stats = await api.getDashboardStats();
-        setData(stats);
-      } catch (e) {
-        console.error('Failed to load dashboard stats', e);
-      } finally {
-        setIsLoading(false);
-      }
-    }
-    loadStats();
-  }, []);
+  const data = statsQuery.data ?? null;
+  const isLoading = statsQuery.isLoading && !statsQuery.data;
 
   const formatGrowth = (val?: number) => {
     if (val === undefined) return '-';
@@ -152,34 +130,34 @@ export default function DashboardPage() {
             <CardBody className="p-6">
               <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">Quick Actions</h3>
               <div className="grid grid-cols-2 gap-4">
-                <button className="group p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-slate-300 dark:hover:border-slate-700 hover:shadow-sm transition-all text-left" onClick={() => window.location.href='/dashboard/exams'}>
+                <Link href="/dashboard/exams" className="group p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-slate-300 dark:hover:border-slate-700 hover:shadow-sm transition-all text-left">
                   <div className="w-10 h-10 rounded-lg bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-700 dark:text-slate-200 mb-3 transition-colors group-hover:bg-slate-900 group-hover:text-white">
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" /></svg>
                   </div>
                   <p className="font-medium text-slate-900 dark:text-white">Create Exam</p>
                   <p className="text-sm text-slate-500 mt-1">Add new exam section</p>
-                </button>
-                <button className="group p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-slate-300 dark:hover:border-slate-700 hover:shadow-sm transition-all text-left" onClick={() => window.location.href='/dashboard/users'}>
+                </Link>
+                <Link href="/dashboard/users" className="group p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-slate-300 dark:hover:border-slate-700 hover:shadow-sm transition-all text-left">
                   <div className="w-10 h-10 rounded-lg bg-blue-100 dark:bg-blue-900/20 flex items-center justify-center text-blue-700 dark:text-blue-300 mb-3 transition-colors group-hover:bg-blue-600 group-hover:text-white">
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" /></svg>
                   </div>
                   <p className="font-medium text-slate-900 dark:text-white">Add User</p>
                   <p className="text-sm text-slate-500 mt-1">Create new account</p>
-                </button>
-                <button className="group p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-slate-300 dark:hover:border-slate-700 hover:shadow-sm transition-all text-left" onClick={() => window.location.href='/dashboard/assignments'}>
+                </Link>
+                <Link href="/dashboard/assignments?mode=offline" className="group p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-slate-300 dark:hover:border-slate-700 hover:shadow-sm transition-all text-left">
                   <div className="w-10 h-10 rounded-lg bg-emerald-100 dark:bg-emerald-900/20 flex items-center justify-center text-emerald-700 dark:text-emerald-300 mb-3 transition-colors group-hover:bg-emerald-600 group-hover:text-white">
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
                   </div>
-                  <p className="font-medium text-slate-900 dark:text-white">Assign Exam</p>
-                  <p className="text-sm text-slate-500 mt-1">Assign to students</p>
-                </button>
-                <button className="group p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-slate-300 dark:hover:border-slate-700 hover:shadow-sm transition-all text-left" onClick={() => window.location.href='/dashboard/results'}>
+                  <p className="font-medium text-slate-900 dark:text-white">Assign Offline Exam</p>
+                  <p className="text-sm text-slate-500 mt-1">Create full mock for center test</p>
+                </Link>
+                <Link href="/dashboard/results" className="group p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-slate-300 dark:hover:border-slate-700 hover:shadow-sm transition-all text-left">
                   <div className="w-10 h-10 rounded-lg bg-amber-100 dark:bg-amber-900/20 flex items-center justify-center text-amber-700 dark:text-amber-300 mb-3 transition-colors group-hover:bg-amber-500 group-hover:text-white">
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>
                   </div>
                   <p className="font-medium text-slate-900 dark:text-white">View Results</p>
                   <p className="text-sm text-slate-500 mt-1">Check scores</p>
-                </button>
+                </Link>
               </div>
             </CardBody>
           </Card>

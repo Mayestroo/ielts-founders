@@ -3,8 +3,11 @@
 import { Badge, Button, Card, CardBody, useToast } from '@/components/ui';
 import { api } from '@/lib/api';
 import { generateBatchPDF } from '@/lib/generatePDF';
+import { ADMIN_QUERY_TIMINGS } from '@/lib/query/config';
+import { adminQueryKeys } from '@/lib/query/keys';
 import { ExamResult, User } from '@/types';
-import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { useEffect, useMemo, useState } from 'react';
 
 interface StudentReportGroup {
   student: User;
@@ -17,72 +20,71 @@ interface StudentReportGroup {
 }
 
 export default function DownloadsPage() {
-  const [reportGroups, setReportGroups] = useState<StudentReportGroup[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isDownloading, setIsDownloading] = useState(false);
   const [page, setPage] = useState(1);
   const [pageSize] = useState(10);
-  const [total, setTotal] = useState(0);
   
   // Filtering State
   const [searchTerm, setSearchTerm] = useState('');
   const { error: showError, success } = useToast();
 
-  const loadData = async () => {
-    setIsLoading(true);
-    try {
-      // Fetch all results for client-side grouping
-      const { results } = await api.getResults(0, 1000);
-      
-      const groups: Record<string, StudentReportGroup> = {};
-      
-      results.forEach(result => {
-        const studentId = result.studentId;
-        if (!groups[studentId]) {
-          groups[studentId] = {
-            student: result.student!,
-            results: {},
-            testDate: result.submittedAt,
-          };
-        }
-        
-        const type = result.section?.type;
-        if (type === 'LISTENING') groups[studentId].results.listening = result;
-        if (type === 'READING') groups[studentId].results.reading = result;
-        if (type === 'WRITING') groups[studentId].results.writing = result;
-      });
+  const resultsQuery = useQuery({
+    queryKey: adminQueryKeys.resultsList({ skip: 0, take: 1000 }),
+    queryFn: ({ signal }) => api.getResults(0, 1000, { signal }),
+    staleTime: ADMIN_QUERY_TIMINGS.list.staleTime,
+    gcTime: ADMIN_QUERY_TIMINGS.list.gcTime,
+    placeholderData: (previousData) => previousData,
+  });
 
-      setReportGroups(Object.values(groups));
-    } catch (err) {
-      console.error('Failed to load results for downloads:', err);
-      showError('Failed to load download data');
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  const reportGroups = useMemo(() => {
+    const grouped: Record<string, StudentReportGroup> = {};
+    const results = resultsQuery.data?.results ?? [];
+
+    results.forEach((result) => {
+      const studentId = result.studentId;
+      if (!grouped[studentId]) {
+        grouped[studentId] = {
+          student: result.student!,
+          results: {},
+          testDate: result.submittedAt,
+        };
+      }
+
+      const type = result.section?.type;
+      if (type === 'LISTENING') grouped[studentId].results.listening = result;
+      if (type === 'READING') grouped[studentId].results.reading = result;
+      if (type === 'WRITING') grouped[studentId].results.writing = result;
+    });
+
+    return Object.values(grouped);
+  }, [resultsQuery.data]);
+
+  const isLoading = resultsQuery.isLoading && !resultsQuery.data;
 
   useEffect(() => {
-    loadData();
-  }, []); // Remove page dependency
+    if (!resultsQuery.error) {
+      return;
+    }
 
-  /* filteredGroups is defined above */
-  const filteredGroups = reportGroups.filter(group => {
+    showError('Failed to load download data');
+  }, [resultsQuery.error, showError]);
+
+  const filteredGroups = useMemo(() => reportGroups.filter(group => {
     const student = group.student;
     return (
       student.firstName?.toLowerCase().includes(searchTerm.toLowerCase()) || 
       student.lastName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       student.username.toLowerCase().includes(searchTerm.toLowerCase())
     );
-  });
+  }), [reportGroups, searchTerm]);
 
   // Client-side pagination logic
-  const paginatedGroups = filteredGroups.slice((page - 1) * pageSize, page * pageSize);
-
-  // Update total for pagination controls
-  useEffect(() => {
-    setTotal(filteredGroups.length);
-  }, [filteredGroups]);
+  const paginatedGroups = useMemo(
+    () => filteredGroups.slice((page - 1) * pageSize, page * pageSize),
+    [filteredGroups, page, pageSize],
+  );
+  const total = filteredGroups.length;
 
   const toggleSelect = (studentId: string) => {
     const next = new Set(selectedIds);
@@ -182,10 +184,12 @@ export default function DownloadsPage() {
              <Button 
                size="sm" 
                variant="secondary" 
-               onClick={loadData}
-               className="ml-auto"
-             >
-                <svg className={`w-4 h-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+               onClick={() => {
+                 void resultsQuery.refetch();
+               }}
+                className="ml-auto"
+              >
+                 <svg className={`w-4 h-4 mr-2 ${resultsQuery.isFetching ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                 </svg>
                 Refresh

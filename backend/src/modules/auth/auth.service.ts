@@ -49,12 +49,12 @@ interface GoogleTokenInfo {
 }
 
 interface SessionRegistrationInput {
-  firstName: string;
-  lastName: string;
-  attendanceMode: SessionAttendanceMode;
-  scheduledAt: string;
+  firstName?: string | null;
+  lastName?: string | null;
+  attendanceMode?: SessionAttendanceMode | null;
+  scheduledAt?: string | null;
   referralSource: SessionReferralSource;
-  phoneNumber: string;
+  phoneNumber?: string | null;
 }
 
 const POINTS_BY_AVERAGE_BAND: Array<{ minBand: number; points: number }> = [
@@ -66,6 +66,10 @@ const POINTS_BY_AVERAGE_BAND: Array<{ minBand: number; points: number }> = [
   { minBand: 6.5, points: 10 },
   { minBand: 6.0, points: 5 },
 ];
+
+const GOOGLE_AUTH_PASSWORD_PREFIX = 'google_auth_only$';
+const INVALID_LOGIN_MESSAGE =
+  'Invalid credentials. If you signed up with Google, please continue with Google.';
 
 @Injectable()
 export class AuthService {
@@ -179,23 +183,19 @@ export class AuthService {
   }
 
   private parseSessionRegistration(input: SessionRegistrationInput) {
-    const normalizedFirstName = input.firstName.trim();
-    const normalizedLastName = input.lastName.trim();
-    const normalizedPhoneNumber = input.phoneNumber.trim();
-    const scheduledAt = new Date(input.scheduledAt);
+    const normalizedFirstName = input.firstName?.trim() || null;
+    const normalizedLastName = input.lastName?.trim() || null;
+    const normalizedPhoneNumber = input.phoneNumber?.trim() || null;
+    const scheduledAt = input.scheduledAt ? new Date(input.scheduledAt) : null;
 
-    if (!normalizedFirstName || !normalizedLastName || !normalizedPhoneNumber) {
-      throw new UnauthorizedException('Invalid registration details');
-    }
-
-    if (Number.isNaN(scheduledAt.getTime())) {
+    if (scheduledAt && Number.isNaN(scheduledAt.getTime())) {
       throw new UnauthorizedException('Invalid test session time');
     }
 
     return {
       firstName: normalizedFirstName,
       lastName: normalizedLastName,
-      attendanceMode: input.attendanceMode,
+      attendanceMode: input.attendanceMode ?? SessionAttendanceMode.OFFLINE,
       scheduledAt,
       referralSource: input.referralSource,
       phoneNumber: normalizedPhoneNumber,
@@ -270,18 +270,29 @@ export class AuthService {
   }
 
   async validateUser(username: string, password: string) {
+    const normalizedInput = username.trim();
+    const normalizedUsername = normalizedInput.includes('@')
+      ? normalizedInput.toLowerCase()
+      : normalizedInput;
+
     const user = await this.prisma.user.findUnique({
-      where: { username },
+      where: { username: normalizedUsername },
       include: { center: true },
     });
 
     if (!user) {
-      throw new UnauthorizedException('Invalid credentials');
+      throw new UnauthorizedException(INVALID_LOGIN_MESSAGE);
+    }
+
+    if (user.password.startsWith(GOOGLE_AUTH_PASSWORD_PREFIX)) {
+      throw new UnauthorizedException(
+        'This account uses Google Sign-In. Please continue with Google.',
+      );
     }
 
     const isPasswordValid = await bcrypt.compare(password, user.password);
     if (!isPasswordValid) {
-      throw new UnauthorizedException('Invalid credentials');
+      throw new UnauthorizedException(INVALID_LOGIN_MESSAGE);
     }
 
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -362,14 +373,17 @@ export class AuthService {
   }
 
   async register(registerDto: RegisterDto) {
-    const username = registerDto.username.trim();
+    const rawUsername = registerDto.username.trim();
+    const username = rawUsername.includes('@')
+      ? rawUsername.toLowerCase()
+      : rawUsername;
 
     const existingUser = await this.prisma.user.findUnique({
       where: { username },
     });
 
     if (existingUser) {
-      throw new ConflictException('Username already exists');
+      throw new ConflictException('Email already exists');
     }
 
     const centerId = await this.resolveDefaultStudentCenterId();
@@ -419,11 +433,11 @@ export class AuthService {
       );
     }
 
-    const generatedPassword = await bcrypt.hash(randomUUID(), 10);
+    const generatedPasswordHash = await bcrypt.hash(randomUUID(), 10);
     const centerId = await this.resolveDefaultStudentCenterId();
     const session = this.parseSessionRegistration({
-      firstName: registerDto.firstName,
-      lastName: registerDto.lastName,
+      firstName: registerDto.firstName ?? googleToken.given_name ?? null,
+      lastName: registerDto.lastName ?? googleToken.family_name ?? null,
       attendanceMode: registerDto.attendanceMode as SessionAttendanceMode,
       scheduledAt: registerDto.scheduledAt,
       referralSource: registerDto.referralSource as SessionReferralSource,
@@ -433,7 +447,7 @@ export class AuthService {
     const user = await this.prisma.user.create({
       data: {
         username,
-        password: generatedPassword,
+        password: `${GOOGLE_AUTH_PASSWORD_PREFIX}${generatedPasswordHash}`,
         firstName: session.firstName,
         lastName: session.lastName,
         centerId,

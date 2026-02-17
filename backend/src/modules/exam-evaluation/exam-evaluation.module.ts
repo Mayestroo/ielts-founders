@@ -1,12 +1,14 @@
 import { Module, Provider } from '@nestjs/common';
 import { AiModule } from '../ai';
 import { PrismaModule } from '../prisma';
-import { QueueModule } from '../queue';
+import { QueueModule, isWritingQueueEnabled } from '../queue';
 import { ExamEventListener } from './exam-event.listener';
 import { ResultService } from './result.service';
 import { ScoringService } from './scoring.service';
 import { WritingEvaluationService } from './writing-evaluation.service';
 import { WritingGradingProcessor } from './writing-grading.processor';
+
+const writingQueueEnabled = isWritingQueueEnabled();
 
 const examEvaluationProviders: Provider[] = [
   ScoringService,
@@ -15,12 +17,17 @@ const examEvaluationProviders: Provider[] = [
   ExamEventListener,
 ];
 
-if (process.env.DISABLE_WRITING_QUEUE_WORKER !== 'true') {
+if (
+  writingQueueEnabled &&
+  process.env.DISABLE_WRITING_QUEUE_WORKER !== 'true'
+) {
   examEvaluationProviders.push(WritingGradingProcessor);
 }
 
 @Module({
-  imports: [AiModule, QueueModule, PrismaModule],
+  imports: writingQueueEnabled
+    ? [AiModule, QueueModule, PrismaModule]
+    : [AiModule, PrismaModule],
   providers: examEvaluationProviders,
   exports: [ScoringService, WritingEvaluationService, ResultService],
 })

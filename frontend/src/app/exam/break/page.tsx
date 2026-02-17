@@ -2,7 +2,10 @@
 
 import { useAuth } from "@/contexts/AuthContext";
 import { api } from "@/lib/api";
+import { STUDENT_QUERY_TIMINGS } from "@/lib/query/config";
+import { studentQueryKeys } from "@/lib/query/keys";
 import { ExamAssignment } from "@/types";
+import { useQuery } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
@@ -23,8 +26,18 @@ function BreakContent() {
   const endsAtParam = searchParams.get("endsAt");
 
   const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null);
-  const [nextAssignment, setNextAssignment] = useState<ExamAssignment | null>(null);
   const [autoStarted, setAutoStarted] = useState(false);
+
+  const nextAssignmentQuery = useQuery({
+    queryKey: studentQueryKeys.assignment(nextAssignmentId || ""),
+    queryFn: ({ signal }) => api.getAssignment(nextAssignmentId!, { signal }),
+    enabled: !!nextAssignmentId && isAuthenticated,
+    staleTime: STUDENT_QUERY_TIMINGS.assignmentDetail.staleTime,
+    gcTime: STUDENT_QUERY_TIMINGS.assignmentDetail.gcTime,
+    placeholderData: (previousData) => previousData,
+  });
+
+  const nextAssignment = (nextAssignmentQuery.data as ExamAssignment | undefined) || null;
 
   const requestFullscreen = useCallback(async () => {
     try {
@@ -69,14 +82,6 @@ function BreakContent() {
       router.push("/dashboard");
     }
   }, [endsAt, isAuthenticated, isLoading, nextAssignmentId, router]);
-
-  useEffect(() => {
-    if (!nextAssignmentId || !isAuthenticated) return;
-    api
-      .getAssignment(nextAssignmentId)
-      .then((assignment) => setNextAssignment(assignment))
-      .catch(() => setNextAssignment(null));
-  }, [isAuthenticated, nextAssignmentId]);
 
   useEffect(() => {
     if (!endsAt) return;

@@ -88,11 +88,7 @@ export class ExamsController {
   @Get('exam-sections')
   @Roles(Role.TEACHER, Role.CENTER_ADMIN, Role.SUPER_ADMIN)
   findAllSections(@Request() req: AuthenticatedRequest) {
-    return this.examSectionService.findAll(
-      req.user.role,
-      req.user.centerId,
-      req.user.id,
-    );
+    return this.examSectionService.findAll(req.user.role, req.user.centerId);
   }
 
   @Get('exam-sections/options')

@@ -3,30 +3,67 @@
 import { Badge, Button, Card, CardBody, CardHeader, Modal, Select, useToast } from '@/components/ui';
 import { api } from '@/lib/api';
 import { generateWritingDOCX } from '@/lib/generateDOCX';
-import { ExamResult, User } from '@/types';
+import { ADMIN_QUERY_TIMINGS } from '@/lib/query/config';
+import { adminQueryKeys } from '@/lib/query/keys';
+import { ExamResult, Question, User } from '@/types';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import React, { useEffect, useMemo, useState } from 'react';
+
+interface AiCriterion {
+  score: number;
+  feedback: string;
+}
 
 interface AiEvaluation {
   bandScore: number;
-  taskAchievement: { score: number; feedback: string };
-  coherenceAndCohesion: { score: number; feedback: string };
-  lexicalResource: { score: number; feedback: string };
-  grammaticalRangeAndAccuracy: { score: number; feedback: string };
+  taskAchievement: AiCriterion;
+  coherenceAndCohesion: AiCriterion;
+  lexicalResource: AiCriterion;
+  grammaticalRangeAndAccuracy: AiCriterion;
   overallFeedback: string;
   strengths: string[];
   areasForImprovement: string[];
 }
 
+interface MultiTaskAiEvaluation {
+  bandScore: number;
+  tasks: Record<string, AiEvaluation>;
+}
+
+type AiEvaluationPayload = AiEvaluation | MultiTaskAiEvaluation;
+type LegacyQuestion = Question & { correctAnswers?: unknown };
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null;
+
+const hasMultiTaskBreakdown = (
+  evaluation: AiEvaluationPayload,
+): evaluation is MultiTaskAiEvaluation =>
+  isRecord(evaluation) && isRecord((evaluation as MultiTaskAiEvaluation).tasks);
+
+const coerceAiEvaluation = (value: unknown): AiEvaluationPayload | null => {
+  if (!isRecord(value) || typeof value.bandScore !== 'number') {
+    return null;
+  }
+
+  if (isRecord(value.tasks)) {
+    return value as unknown as MultiTaskAiEvaluation;
+  }
+
+  if (typeof value.overallFeedback === 'string') {
+    return value as unknown as AiEvaluation;
+  }
+
+  return null;
+};
+
 export default function ResultsPage() {
-  const [results, setResults] = useState<ExamResult[]>([]);
-  const [total, setTotal] = useState(0);
-  const [isLoading, setIsLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [pageSize] = useState(10);
   const [selectedResult, setSelectedResult] = useState<ExamResult | null>(null);
-  const [detailLoading, setDetailLoading] = useState(false);
+  const [selectedResultId, setSelectedResultId] = useState<string | null>(null);
   const [showModal, setShowModal] = useState(false);
-  const [aiEvaluation, setAiEvaluation] = useState<AiEvaluation | null>(null);
+  const [aiEvaluation, setAiEvaluation] = useState<AiEvaluationPayload | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const [docxLoading, setDocxLoading] = useState(false);
@@ -36,7 +73,64 @@ export default function ResultsPage() {
     isOpen: false,
     bandScore: 0,
   });
+  const queryClient = useQueryClient();
   const { error: showError } = useToast();
+
+  const resultsQuery = useQuery({
+    queryKey: adminQueryKeys.resultsList({ skip: 0, take: 1000 }),
+    queryFn: ({ signal }) => api.getResults(0, 1000, { signal }),
+    staleTime: ADMIN_QUERY_TIMINGS.list.staleTime,
+    gcTime: ADMIN_QUERY_TIMINGS.list.gcTime,
+    placeholderData: (previousData) => previousData,
+    refetchInterval: (query) => {
+      const payload = query.state.data as { results?: ExamResult[] } | undefined;
+      const pendingWriting = payload?.results?.some((result) => {
+        const status = result.writingSubmission?.status;
+        return status === 'QUEUED' || status === 'PROCESSING';
+      });
+
+      return pendingWriting ? 5000 : false;
+    },
+  });
+
+  const selectedResultQuery = useQuery({
+    queryKey: selectedResultId
+      ? adminQueryKeys.result(selectedResultId)
+      : ['admin', 'results', 'selected-empty'],
+    queryFn: ({ signal }) => api.getResult(selectedResultId!, { signal }),
+    enabled: showModal && Boolean(selectedResultId),
+    staleTime: ADMIN_QUERY_TIMINGS.list.staleTime,
+    gcTime: ADMIN_QUERY_TIMINGS.list.gcTime,
+  });
+
+  const results = useMemo(
+    () => resultsQuery.data?.results ?? [],
+    [resultsQuery.data],
+  );
+  const isLoading = resultsQuery.isLoading && !resultsQuery.data;
+  const detailLoading = selectedResultQuery.isLoading || selectedResultQuery.isFetching;
+
+  useEffect(() => {
+    if (!selectedResultQuery.data) {
+      return;
+    }
+
+    setSelectedResult(selectedResultQuery.data);
+    const existingEval =
+      selectedResultQuery.data.feedback || selectedResultQuery.data.answers?._aiEvaluation;
+    const normalizedEval = coerceAiEvaluation(existingEval);
+    if (normalizedEval) {
+      setAiEvaluation(normalizedEval);
+    }
+  }, [selectedResultQuery.data]);
+
+  useEffect(() => {
+    if (!selectedResultQuery.error || !showModal) {
+      return;
+    }
+
+    showError('Failed to load result details');
+  }, [selectedResultQuery.error, showModal, showError]);
 
   // UX Grouping View state
   const [selectedGroup, setSelectedGroup] = useState<{ student: User; results: ExamResult[]; latestDate: string } | null>(null);
@@ -95,59 +189,33 @@ export default function ResultsPage() {
 
   const hasFilters = Boolean(searchTerm.trim() || typeFilter);
 
-  // Update total for pagination controls
-  useEffect(() => {
-    setTotal(groupedResults.length);
-  }, [groupedResults]);
   useEffect(() => {
     setPage(1);
   }, [searchTerm, typeFilter]);
-  const loadResults = async () => {
-    setIsLoading(true);
-    try {
-      // Fetch larger batch to allow client-side grouping
-      const { results } = await api.getResults(0, 1000);
-      setResults(results);
-      // setTotal(total); // Total now derived from grouped results
-    } catch (err) {
-      console.error('Failed to load results:', err);
-      showError('Failed to load results');
-    } finally {
-      setIsLoading(false);
-    }
-  };
 
   useEffect(() => {
-    loadResults();
-  }, []); // Remove page dependency
+    if (!resultsQuery.error) {
+      return;
+    }
+
+    showError('Failed to load results');
+  }, [resultsQuery.error, showError]);
 
   const handleViewDetails = async (id: string) => {
-    setDetailLoading(true);
+    setSelectedResultId(id);
     setShowModal(true);
-    setShowSelectedStudentModal(false); // Close student list so breakdown is visible
+    setShowSelectedStudentModal(false);
+    setSelectedResult(null);
     setAiEvaluation(null);
     setAiError(null);
-    try {
-      const result = await api.getResult(id);
-      setSelectedResult(result);
-      const existingEval = result.feedback || result.answers?._aiEvaluation;
-      if (existingEval) {
-        setAiEvaluation(existingEval as AiEvaluation);
-      }
-    } catch (err) {
-      console.error('Failed to load result details:', err);
-      showError('Failed to load result details');
-    } finally {
-      setDetailLoading(false);
-    }
   };
 
   const closeModal = () => {
     setShowModal(false);
+    setSelectedResultId(null);
     setSelectedResult(null);
     setAiEvaluation(null);
     setAiError(null);
-    // Re-open student list modal after closing breakdown
     if (selectedGroup) {
       setShowSelectedStudentModal(true);
     }
@@ -176,22 +244,26 @@ export default function ResultsPage() {
       setAiStatus('Evaluation complete!');
       
       const newEval = response.aiEvaluation || response.feedback;
-      setAiEvaluation(newEval);
+      const normalizedEval = coerceAiEvaluation(newEval);
+      if (normalizedEval) {
+        setAiEvaluation(normalizedEval);
+      }
       
       const updatedResult = {
         ...target,
         score: response.score ?? response.bandScore,
         totalScore: response.totalScore ?? 9,
         bandScore: response.bandScore,
-        feedback: newEval,
+        feedback: normalizedEval ?? newEval,
         writingSubmission: response.writingSubmission || target.writingSubmission
       };
 
       if (selectedResult && selectedResult.id === target.id) {
         setSelectedResult(updatedResult);
       }
-      
-      setTimeout(() => loadResults(), 500);
+
+      queryClient.setQueryData(adminQueryKeys.result(target.id), updatedResult);
+      await queryClient.invalidateQueries({ queryKey: ['admin', 'results'] });
       setSuccessModal({ isOpen: true, bandScore: response.bandScore });
     } catch (err) {
       clearInterval(progressInterval);
@@ -223,16 +295,16 @@ export default function ResultsPage() {
     }
   };
 
-  const isAnswerCorrect = (studentAnswer: any, correctAnswer: any, type: string) => {
+  const isAnswerCorrect = (studentAnswer: unknown, correctAnswer: unknown, type: string) => {
     if (studentAnswer === undefined || studentAnswer === null || studentAnswer === '-') return false;
     
     // MCQ_MULTIPLE set-based comparison
     if (type === 'MCQ_MULTIPLE' && Array.isArray(studentAnswer) && Array.isArray(correctAnswer)) {
       if (studentAnswer.length !== correctAnswer.length) return false;
-      const sSet = new Set(studentAnswer.map(a => String(a).toLowerCase().trim()));
-      const cSet = new Set(correctAnswer.map(a => String(a).toLowerCase().trim()));
+      const sSet = new Set(studentAnswer.map((answer) => String(answer).toLowerCase().trim()));
+      const cSet = new Set(correctAnswer.map((answer) => String(answer).toLowerCase().trim()));
       if (sSet.size !== cSet.size) return false;
-      for (let a of sSet) if (!cSet.has(a)) return false;
+      for (const answer of sSet) if (!cSet.has(answer)) return false;
       return true;
     }
 
@@ -242,20 +314,14 @@ export default function ResultsPage() {
     return s === c;
   };
 
-  const formatAnswer = (answer: any, type: string, isCorrectAnswer = false) => {
+  const formatAnswer = (answer: unknown, type: string, isCorrectAnswer = false) => {
     if (answer === undefined || answer === null || answer === '-' || answer === '') {
       return isCorrectAnswer ? '(Not configured)' : '-';
     }
-    if (type === 'MCQ_MULTIPLE' && Array.isArray(answer)) return answer.map((a: any) => String(a).toUpperCase()).join(', ');
+    if (type === 'MCQ_MULTIPLE' && Array.isArray(answer)) return answer.map((item) => String(item).toUpperCase()).join(', ');
     if (type === 'MCQ_SINGLE' || type === 'TRUE_FALSE_NOT_GIVEN' || type === 'YES_NO_NOT_GIVEN') return String(answer).toUpperCase();
-    if (typeof answer === 'object') return Object.entries(answer).map(([k, v]) => `${k}: ${v}`).join(', ');
+    if (isRecord(answer)) return Object.entries(answer).map(([k, v]) => `${k}: ${v}`).join(', ');
     return String(answer);
-  };
-
-  const statusVariants: Record<string, 'info' | 'warning' | 'success' | 'default'> = {
-    ASSIGNED: 'info',
-    IN_PROGRESS: 'warning',
-    SUBMITTED: 'success',
   };
 
   const sectionVariants: Record<string, 'info' | 'warning' | 'success' | 'default'> = {
@@ -395,7 +461,7 @@ export default function ResultsPage() {
             {aiEvaluation && (
               <div className="space-y-6 animate-in fade-in duration-500">
                 {/* Check if multi-task evaluation */}
-                {(aiEvaluation as any).tasks ? (
+                {hasMultiTaskBreakdown(aiEvaluation) ? (
                   <div className="space-y-8">
                      {/* Overall Band Score Card */}
                     <div className="bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700 rounded-xl p-6">
@@ -411,17 +477,17 @@ export default function ResultsPage() {
                     </div>
 
                     {/* Task Tabs/Sections */}
-                    {Object.entries((aiEvaluation as any).tasks).map(([taskId, evalData]: [string, any]) => (
+                    {Object.entries(aiEvaluation.tasks).map(([taskId, evalData]) => (
                       <div key={taskId} className="border-t border-slate-200 dark:border-slate-700 pt-6">
                          <h4 className="text-xl font-bold text-slate-900 dark:text-white mb-4">{taskId} Evaluation</h4>
                          
                          {/* Individual Task Feedback */}
                          <div className="space-y-4">
                             <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl p-4">
-                               <p className="text-slate-700 dark:text-slate-300 italic border-l-4 border-slate-300 pl-4 py-1">
-                                 "{evalData.overallFeedback}"
-                               </p>
-                            </div>
+                                <p className="text-slate-700 dark:text-slate-300 italic border-l-4 border-slate-300 pl-4 py-1">
+                                  &quot;{evalData.overallFeedback}&quot;
+                                </p>
+                             </div>
 
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                {[
@@ -488,7 +554,7 @@ export default function ResultsPage() {
                       </div>
                     </div>
                     <p className="text-slate-700 dark:text-slate-300 italic border-l-4 border-slate-300 pl-4 py-1">
-                      "{aiEvaluation.overallFeedback}"
+                      &quot;{aiEvaluation.overallFeedback}&quot;
                     </p>
                   </div>
 
@@ -563,24 +629,42 @@ export default function ResultsPage() {
     let questionCounter = 0;
     const items: React.ReactNode[] = [];
 
-    (selectedResult.section.questions as any[]).forEach((question) => {
-      const studentAnswer = selectedResult.answers?.[question.id];
-      const points = question.points || 1;
+    (selectedResult.section.questions as LegacyQuestion[]).forEach((question) => {
+      const rawQuestion = question as {
+        id: string;
+        type: string;
+        questionText: string;
+        points?: number;
+        correctAnswer?: unknown;
+        correctAnswers?: unknown;
+      };
+
+      const studentAnswer = selectedResult.answers?.[rawQuestion.id];
+      const points = rawQuestion.points || 1;
       
       // Support both correctAnswer (singular) and correctAnswers (plural) field names
-      const correctAnswer = question.correctAnswer ?? question.correctAnswers;
+      const correctAnswer =
+        rawQuestion.correctAnswer ?? rawQuestion.correctAnswers;
       
       // Only split if we have multiple points AND multiple correct answers to map them to
       const shouldSplit = points > 1 && (
-        (question.type === 'MCQ_MULTIPLE' && Array.isArray(correctAnswer)) ||
-        (['MATCHING','PLAN_MAP_LABELING','DIAGRAM_LABELING'].includes(question.type) && typeof correctAnswer === 'object' && !Array.isArray(correctAnswer))
+        (rawQuestion.type === 'MCQ_MULTIPLE' && Array.isArray(correctAnswer)) ||
+        (['MATCHING','PLAN_MAP_LABELING','DIAGRAM_LABELING'].includes(rawQuestion.type) && typeof correctAnswer === 'object' && !Array.isArray(correctAnswer))
       );
 
       if (shouldSplit) {
-        const studentAnswers = Array.isArray(studentAnswer) ? studentAnswer : (typeof studentAnswer === 'object' ? Object.values(studentAnswer) : []);
-        const correctAnswersArr = Array.isArray(correctAnswer) ? correctAnswer : Object.values(correctAnswer);
+        const studentAnswers = Array.isArray(studentAnswer)
+          ? studentAnswer
+          : isRecord(studentAnswer)
+            ? Object.values(studentAnswer)
+            : [];
+        const correctAnswersArr = Array.isArray(correctAnswer)
+          ? correctAnswer
+          : isRecord(correctAnswer)
+            ? Object.values(correctAnswer)
+            : [];
         
-        correctAnswersArr.forEach((ca: any, i: number) => {
+        correctAnswersArr.forEach((ca, i) => {
           questionCounter++;
           // For split questions, we mark as correct if the student's OVERALL set for this question contains this correct answer
           // or if it's a direct index match for objects (Matching)
@@ -588,30 +672,35 @@ export default function ResultsPage() {
           let displayStudentAnswer: string;
           
           if (Array.isArray(correctAnswer)) {
-             isPartCorrect = studentAnswers.some(sa => String(sa).toLowerCase().trim() === String(ca).toLowerCase().trim());
+              isPartCorrect = studentAnswers.some(sa => String(sa).toLowerCase().trim() === String(ca).toLowerCase().trim());
              // Just show the student's selections
-             displayStudentAnswer = studentAnswers.length > 0 
-               ? studentAnswers.map((a: any) => String(a).toUpperCase()).join(', ')
-               : '-';
-          } else {
+              displayStudentAnswer = studentAnswers.length > 0 
+               ? studentAnswers.map((answer) => String(answer).toUpperCase()).join(', ')
+                : '-';
+          } else if (isRecord(correctAnswer)) {
              // For Matching, check by specific sub-key if possible, or fallback to index
-             const subId = Object.keys(correctAnswer)[i];
-             const subAnswer = selectedResult.answers?.[question.id]?.[subId];
-             isPartCorrect = String(subAnswer).toLowerCase().trim() === String(ca).toLowerCase().trim();
-             displayStudentAnswer = formatAnswer(subAnswer, 'MCQ_SINGLE');
+              const subId = Object.keys(correctAnswer)[i];
+              const answerByQuestion = selectedResult.answers?.[rawQuestion.id];
+              const subAnswer = isRecord(answerByQuestion)
+                ? answerByQuestion[subId]
+                : undefined;
+              isPartCorrect = String(subAnswer).toLowerCase().trim() === String(ca).toLowerCase().trim();
+              displayStudentAnswer = formatAnswer(subAnswer, 'MCQ_SINGLE');
+          } else {
+              displayStudentAnswer = '-';
           }
           
           items.push(
-            <div key={`${question.id}-${i}`} className={`p-4 rounded-xl border ${isPartCorrect ? 'border-green-100 bg-green-50/30' : 'border-red-100 bg-red-50/30'}`}>
+            <div key={`${rawQuestion.id}-${i}`} className={`p-4 rounded-xl border ${isPartCorrect ? 'border-green-100 bg-green-50/30' : 'border-red-100 bg-red-50/30'}`}>
               <div className="flex justify-between mb-2">
-                <span className="font-medium text-gray-900">Q{questionCounter}. {question.questionText}</span>
+                <span className="font-medium text-gray-900">Q{questionCounter}. {rawQuestion.questionText}</span>
                 <Badge variant={isPartCorrect ? 'success' : 'danger'} size="sm">{isPartCorrect ? 'Correct' : 'Incorrect'}</Badge>
               </div>
               <div className="grid grid-cols-2 gap-4 text-sm mt-3">
                  <div>
                     <p className="text-gray-500">Student:</p>
                     <p className={`font-bold ${isPartCorrect ? 'text-green-700' : 'text-red-700'}`}>
-                      {Array.isArray(correctAnswer) ? displayStudentAnswer : displayStudentAnswer}
+                      {displayStudentAnswer}
                     </p>
                  </div>
                  <div>
@@ -627,23 +716,24 @@ export default function ResultsPage() {
 
       } else {
         questionCounter++;
-        let ca = correctAnswer;
-        if (['MATCHING','PLAN_MAP_LABELING','DIAGRAM_LABELING'].includes(question.type) && typeof ca === 'object' && ca !== null && !Array.isArray(ca)) { 
-           ca = ca[question.id] || ca; 
-        }
+        const ca =
+          ['MATCHING', 'PLAN_MAP_LABELING', 'DIAGRAM_LABELING'].includes(rawQuestion.type) &&
+          isRecord(correctAnswer)
+            ? correctAnswer[rawQuestion.id] || correctAnswer
+            : correctAnswer;
         
-        const correct = isAnswerCorrect(studentAnswer, ca, question.type);
+        const correct = isAnswerCorrect(studentAnswer, ca, rawQuestion.type);
         const label = points > 1 ? `Q${questionCounter}-${questionCounter + points - 1}` : `Q${questionCounter}`;
         if (points > 1) questionCounter += (points - 1);
 
         // Format display values - handle MCQ_MULTIPLE arrays properly
-        const displayStudentAnswer = formatAnswer(studentAnswer, question.type);
-        const displayCorrectAnswer = formatAnswer(ca, question.type, true);
+        const displayStudentAnswer = formatAnswer(studentAnswer, rawQuestion.type);
+        const displayCorrectAnswer = formatAnswer(ca, rawQuestion.type, true);
 
         items.push(
-          <div key={question.id} className={`p-4 rounded-xl border ${correct ? 'border-green-100 bg-green-50/30' : 'border-red-100 bg-red-50/30'}`}>
+          <div key={rawQuestion.id} className={`p-4 rounded-xl border ${correct ? 'border-green-100 bg-green-50/30' : 'border-red-100 bg-red-50/30'}`}>
             <div className="flex justify-between mb-2">
-              <span className="font-medium text-gray-900">{label}. {question.questionText}</span>
+              <span className="font-medium text-gray-900">{label}. {rawQuestion.questionText}</span>
               <Badge variant={correct ? 'success' : 'danger'} size="sm">{correct ? 'Correct' : 'Incorrect'}</Badge>
             </div>
             <div className="grid grid-cols-2 gap-4 text-sm mt-3">
@@ -672,7 +762,7 @@ export default function ResultsPage() {
         <h1 className="text-2xl font-semibold text-slate-900 dark:text-white">Exam Results</h1>
         <p className="text-slate-500 mt-1">
           View student performance and scores
-          <span className="ml-2 text-xs text-slate-400">{total} of {totalGroups} students</span>
+          <span className="ml-2 text-xs text-slate-400">{groupedResults.length} of {totalGroups} students</span>
         </p>
       </div>
 
@@ -928,7 +1018,7 @@ export default function ResultsPage() {
 
       {/* Pagination (Simplified student-count based) */}
       {/* Pagination */}
-      {total > pageSize && (
+      {groupedResults.length > pageSize && (
         <div className="flex items-center justify-between bg-white dark:bg-slate-900 px-4 py-3 rounded-lg border border-slate-200 dark:border-slate-800">
           <div className="flex flex-1 justify-between sm:hidden">
             <Button
@@ -940,7 +1030,7 @@ export default function ResultsPage() {
             </Button>
             <Button
               onClick={() => setPage(p => p + 1)}
-              disabled={page * pageSize >= total}
+               disabled={page * pageSize >= groupedResults.length}
               variant="secondary"
             >
               Next
@@ -949,8 +1039,8 @@ export default function ResultsPage() {
           <div className="hidden sm:flex sm:flex-1 sm:items-center sm:justify-between">
             <div>
               <p className="text-sm text-slate-700 dark:text-slate-300">
-                Showing <span className="font-medium">{(page - 1) * pageSize + 1}</span> to <span className="font-medium">{Math.min(page * pageSize, total)}</span> of{' '}
-                <span className="font-medium">{total}</span> groups
+                 Showing <span className="font-medium">{(page - 1) * pageSize + 1}</span> to <span className="font-medium">{Math.min(page * pageSize, groupedResults.length)}</span> of{' '}
+                 <span className="font-medium">{groupedResults.length}</span> groups
               </p>
             </div>
             <div>
@@ -965,7 +1055,7 @@ export default function ResultsPage() {
                     <path fillRule="evenodd" d="M12.79 5.23a.75.75 0 01-.02 1.06L8.832 10l3.938 3.71a.75.75 0 11-1.04 1.08l-4.5-4.25a.75.75 0 010-1.08l4.5-4.25a.75.75 0 011.06.02z" clipRule="evenodd" />
                   </svg>
                 </button>
-                {[...Array(Math.ceil(total / pageSize))].map((_, i) => (
+                {[...Array(Math.ceil(groupedResults.length / pageSize))].map((_, i) => (
                   <button
                     key={i}
                     onClick={() => setPage(i + 1)}
@@ -980,7 +1070,7 @@ export default function ResultsPage() {
                 ))}
                 <button
                   onClick={() => setPage(p => p + 1)}
-                  disabled={page * pageSize >= total}
+                   disabled={page * pageSize >= groupedResults.length}
                   className="relative inline-flex items-center rounded-r-md px-2 py-2 text-slate-400 ring-1 ring-inset ring-slate-200 hover:bg-slate-50 focus:z-20 focus:outline-offset-0 disabled:opacity-50"
                 >
                   <span className="sr-only">Next</span>

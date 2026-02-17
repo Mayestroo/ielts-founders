@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { ResponseCacheService } from '../redis';
 import { AiService, WritingEvaluation } from '../ai/ai.service';
 
 interface QuestionItem {
@@ -24,6 +25,7 @@ export class WritingEvaluationService {
   constructor(
     private prisma: PrismaService,
     private aiService: AiService,
+    private responseCache: ResponseCacheService,
   ) {}
 
   async evaluateWriting(
@@ -144,6 +146,8 @@ export class WritingEvaluationService {
       },
     });
 
+    await this.invalidateEvaluationReadCaches();
+
     return {
       ...updatedResult,
       aiEvaluation: evaluation,
@@ -215,5 +219,13 @@ export class WritingEvaluationService {
         submission.status === 'FAILED' &&
         submission.attempts < submission.maxAttempts,
     };
+  }
+
+  private async invalidateEvaluationReadCaches() {
+    await this.responseCache.delByPrefixes([
+      'cache:results:list:v1:',
+      'cache:results:student:v1:',
+      'cache:dashboard:stats:v1:',
+    ]);
   }
 }

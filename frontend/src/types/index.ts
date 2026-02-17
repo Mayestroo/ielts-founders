@@ -43,12 +43,12 @@ export interface User {
 }
 
 export interface RegisterWithGooglePayload {
-  firstName: string;
-  lastName: string;
-  attendanceMode: SessionAttendanceMode;
-  scheduledAt: string;
+  firstName?: string;
+  lastName?: string;
+  attendanceMode?: SessionAttendanceMode;
+  scheduledAt?: string;
   referralSource: SessionReferralSource;
-  phoneNumber: string;
+  phoneNumber?: string;
 }
 
 export interface RegisterPayload extends RegisterWithGooglePayload {

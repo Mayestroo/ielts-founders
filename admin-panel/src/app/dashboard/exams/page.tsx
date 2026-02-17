@@ -2,15 +2,16 @@
 
 import { Badge, Button, Card, CardBody, ConfirmationModal, useToast } from '@/components/ui';
 import { api } from '@/lib/api';
+import { ADMIN_QUERY_TIMINGS } from '@/lib/query/config';
+import { adminQueryKeys } from '@/lib/query/keys';
 import { ExamSection } from '@/types';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 
 type TabType = 'READING' | 'LISTENING' | 'WRITING';
 
 export default function ExamSectionsPage() {
-  const [sections, setSections] = useState<ExamSection[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<TabType>('LISTENING');
   
   // Modal State
@@ -18,22 +19,33 @@ export default function ExamSectionsPage() {
   const [sectionToDelete, setSectionToDelete] = useState<string | null>(null);
 
   // Alert State
+  const queryClient = useQueryClient();
   const { success, error: showError } = useToast();
 
-  const loadSections = async () => {
-    try {
-      const data = await api.getExamSections();
-      setSections(data);
-    } catch (err) {
-      console.error('Failed to load sections:', err);
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  const sectionsQuery = useQuery<ExamSection[]>({
+    queryKey: adminQueryKeys.examSections(),
+    queryFn: ({ signal }) => api.getExamSections({ signal }),
+    staleTime: ADMIN_QUERY_TIMINGS.reference.staleTime,
+    gcTime: ADMIN_QUERY_TIMINGS.reference.gcTime,
+  });
+
+  const deleteSectionMutation = useMutation({
+    mutationFn: (sectionId: string) => api.deleteExamSection(sectionId),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: adminQueryKeys.examSections() });
+    },
+  });
+
+  const sections = useMemo(() => sectionsQuery.data ?? [], [sectionsQuery.data]);
+  const isLoading = sectionsQuery.isLoading && !sectionsQuery.data;
 
   useEffect(() => {
-    loadSections();
-  }, []);
+    if (!sectionsQuery.error) {
+      return;
+    }
+
+    showError('Failed to load sections');
+  }, [sectionsQuery.error, showError]);
 
   const counts = useMemo(() => {
     return {
@@ -51,8 +63,7 @@ export default function ExamSectionsPage() {
   const confirmDelete = async () => {
     if (!sectionToDelete) return;
     try {
-      await api.deleteExamSection(sectionToDelete);
-      loadSections();
+      await deleteSectionMutation.mutateAsync(sectionToDelete);
       success('Section deleted successfully');
     } catch (err) {
       showError(err instanceof Error ? err.message : 'Failed to delete section');
@@ -231,6 +242,7 @@ export default function ExamSectionsPage() {
         message="Are you sure you want to delete this exam section? This action cannot be undone."
         confirmText="Delete Section"
         variant="danger"
+        isLoading={deleteSectionMutation.isPending}
       />
     </div>
   );

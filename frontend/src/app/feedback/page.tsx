@@ -3,7 +3,10 @@
 import { ConfirmationModal } from "@/components/ui";
 import { useAuth } from "@/contexts/AuthContext";
 import { api } from "@/lib/api";
-import { Center, ExamResult, ExamSectionType, Question } from "@/types";
+import { STUDENT_QUERY_TIMINGS } from "@/lib/query/config";
+import { studentQueryKeys } from "@/lib/query/keys";
+import { ExamResult, ExamSectionType, Question } from "@/types";
+import { useQuery } from "@tanstack/react-query";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -32,6 +35,7 @@ interface WritingFeedbackSummary {
 }
 
 const SECTION_ORDER: FeedbackSectionType[] = ["LISTENING", "READING", "WRITING"];
+const PROFILE_ENABLED = false;
 
 const SECTION_LABELS: Record<FeedbackSectionType, string> = {
   LISTENING: "Listening",
@@ -294,115 +298,93 @@ const parseWritingFeedback = (feedback: unknown): WritingFeedbackSummary | null 
 export default function FeedbackPage() {
   const { user, isLoading, isAuthenticated, logout } = useAuth();
   const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false);
-  const [centerLogo, setCenterLogo] = useState<string | null>(null);
-  const [loadingFeedback, setLoadingFeedback] = useState(true);
-  const [profilePoints, setProfilePoints] = useState<number | null>(null);
   const [expandedSection, setExpandedSection] = useState<FeedbackSectionType | null>("LISTENING");
-  const [resultsByType, setResultsByType] = useState<Record<FeedbackSectionType, ExamResult | null>>(
-    EMPTY_RESULTS_BY_TYPE,
-  );
   const router = useRouter();
+
+  const centerQuery = useQuery({
+    queryKey: studentQueryKeys.center(user?.centerId || ""),
+    queryFn: ({ signal }) => api.getCenter(user!.centerId!, { signal }),
+    enabled: !!user?.centerId,
+    staleTime: STUDENT_QUERY_TIMINGS.center.staleTime,
+    gcTime: STUDENT_QUERY_TIMINGS.center.gcTime,
+  });
+
+  const profileQuery = useQuery({
+    queryKey: studentQueryKeys.authProfile(),
+    queryFn: ({ signal }) => api.getProfile({ signal }),
+    enabled: !!user?.id,
+    staleTime: STUDENT_QUERY_TIMINGS.profile.staleTime,
+    gcTime: STUDENT_QUERY_TIMINGS.profile.gcTime,
+    placeholderData: (previousData) => previousData,
+  });
+
+  const feedbackQuery = useQuery({
+    queryKey: studentQueryKeys.feedbackLatest(),
+    queryFn: async ({ signal }) => {
+      const results = await api.getMyResults({ signal });
+
+      const latestByType: Record<FeedbackSectionType, ExamResult | null> = {
+        LISTENING: null,
+        READING: null,
+        WRITING: null,
+      };
+
+      for (const result of results) {
+        const type = result.section?.type;
+        if (!type || !SECTION_ORDER.includes(type as FeedbackSectionType)) {
+          continue;
+        }
+
+        const sectionType = type as FeedbackSectionType;
+        if (!latestByType[sectionType]) {
+          latestByType[sectionType] = result;
+        }
+      }
+
+      const detailEntries = await Promise.all(
+        SECTION_ORDER.map(async (sectionType) => {
+          const summaryResult = latestByType[sectionType];
+          if (!summaryResult) {
+            return [sectionType, null] as const;
+          }
+
+          try {
+            const detailed = await api.getResult(summaryResult.id, { signal });
+            return [sectionType, detailed] as const;
+          } catch {
+            return [sectionType, summaryResult] as const;
+          }
+        }),
+      );
+
+      return detailEntries.reduce<Record<FeedbackSectionType, ExamResult | null>>(
+        (accumulator, [sectionType, result]) => {
+          accumulator[sectionType] = result;
+          return accumulator;
+        },
+        {
+          LISTENING: null,
+          READING: null,
+          WRITING: null,
+        },
+      );
+    },
+    enabled: !!user?.id,
+    staleTime: STUDENT_QUERY_TIMINGS.feedback.staleTime,
+    gcTime: STUDENT_QUERY_TIMINGS.feedback.gcTime,
+    placeholderData: (previousData) => previousData,
+  });
+
+  const centerLogo = centerQuery.data?.logo || null;
+  const profilePoints = profileQuery.data?.points ?? user?.points ?? 0;
+  const resultsByType = feedbackQuery.data ?? EMPTY_RESULTS_BY_TYPE;
+  const loadingFeedback = feedbackQuery.isLoading && !feedbackQuery.data;
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
       router.push("/login");
     }
   }, [isLoading, isAuthenticated, router]);
-
-  useEffect(() => {
-    if (user?.centerId) {
-      api
-        .getCenter(user.centerId)
-        .then((center: Center) => {
-          if (center.logo) {
-            setCenterLogo(center.logo);
-          }
-        })
-        .catch(console.error);
-    }
-  }, [user?.centerId]);
-
-  useEffect(() => {
-    if (!user?.id) {
-      return;
-    }
-
-    api
-      .getProfile()
-      .then((profile) => setProfilePoints(profile.points ?? 0))
-      .catch(() => undefined);
-  }, [user?.id]);
-
-  useEffect(() => {
-    if (!user?.id) {
-      return;
-    }
-
-    let cancelled = false;
-
-    const loadFeedback = async () => {
-      setLoadingFeedback(true);
-
-      try {
-        const results = await api.getMyResults();
-
-        const latestByType: Record<FeedbackSectionType, ExamResult | null> = {
-          LISTENING: null,
-          READING: null,
-          WRITING: null,
-        };
-
-        for (const result of results) {
-          const type = result.section?.type;
-          if (!type || !SECTION_ORDER.includes(type as FeedbackSectionType)) {
-            continue;
-          }
-
-          const sectionType = type as FeedbackSectionType;
-          if (!latestByType[sectionType]) {
-            latestByType[sectionType] = result;
-          }
-        }
-
-        const detailedByType: Record<FeedbackSectionType, ExamResult | null> = {
-          ...latestByType,
-        };
-
-        for (const sectionType of SECTION_ORDER) {
-          const summaryResult = latestByType[sectionType];
-          if (!summaryResult) {
-            continue;
-          }
-
-          try {
-            detailedByType[sectionType] = await api.getResult(summaryResult.id);
-          } catch {
-            detailedByType[sectionType] = summaryResult;
-          }
-        }
-
-        if (!cancelled) {
-          setResultsByType(detailedByType);
-        }
-      } catch (error) {
-        console.error("Failed to load feedback:", error);
-
-        if (!cancelled) {
-          setResultsByType({ ...EMPTY_RESULTS_BY_TYPE });
-        }
-      } finally {
-        if (!cancelled) {
-          setLoadingFeedback(false);
-        }
-      }
-    };
-
-    void loadFeedback();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [user?.id]);
 
   const feedbackMetaByType = useMemo(() => {
     return {
@@ -474,12 +456,21 @@ export default function FeedbackPage() {
                 </Link>
               </li>
               <li>
-                <Link
-                  href="/profile"
-                  className="inline-flex rounded-lg px-3 py-2 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900"
-                >
-                  Profile ({profilePoints ?? user?.points ?? 0} pts)
-                </Link>
+                {PROFILE_ENABLED ? (
+                  <Link
+                    href="/profile"
+                    className="inline-flex rounded-lg px-3 py-2 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900"
+                  >
+                    Profile ({profilePoints ?? user?.points ?? 0} pts)
+                  </Link>
+                ) : (
+                  <span
+                    aria-disabled="true"
+                    className="inline-flex cursor-not-allowed rounded-lg bg-gray-100 px-3 py-2 text-sm font-medium text-gray-400"
+                  >
+                    Profile ({profilePoints ?? user?.points ?? 0} pts)
+                  </span>
+                )}
               </li>
             </ul>
           </nav>

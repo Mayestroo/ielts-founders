@@ -10,13 +10,14 @@ import {
     useToast,
 } from "@/components/ui";
 import { api } from "@/lib/api";
+import { ADMIN_QUERY_TIMINGS } from "@/lib/query/config";
+import { adminQueryKeys } from "@/lib/query/keys";
 import { Center } from "@/types";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Image from "next/image";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 export default function CentersPage() {
-  const [centers, setCenters] = useState<Center[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [editingCenter, setEditingCenter] = useState<Center | null>(null);
   const [name, setName] = useState("");
@@ -32,23 +33,38 @@ export default function CentersPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const queryClient = useQueryClient();
   const { success, error: showError } = useToast();
 
-  const loadCenters = async () => {
-    try {
-      const data = await api.getCenters();
-      setCenters(data);
-    } catch (err) {
-      console.error("Failed to load centers:", err);
-      showError("Failed to load centers");
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  const centersQuery = useQuery({
+    queryKey: adminQueryKeys.centers(),
+    queryFn: ({ signal }) => api.getCenters({ signal }),
+    staleTime: ADMIN_QUERY_TIMINGS.reference.staleTime,
+    gcTime: ADMIN_QUERY_TIMINGS.reference.gcTime,
+  });
 
-  useEffect(() => {
-    loadCenters();
-  }, []);
+  const centers = useMemo(() => centersQuery.data ?? [], [centersQuery.data]);
+  const isLoading = centersQuery.isLoading && !centersQuery.data;
+
+  const saveCenterMutation = useMutation({
+    mutationFn: async (payload: { editingId?: string; data: { name: string; logo?: string; loginPassword?: string } }) => {
+      if (payload.editingId) {
+        return api.updateCenter(payload.editingId, payload.data);
+      }
+
+      return api.createCenter(payload.data);
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: adminQueryKeys.centers() });
+    },
+  });
+
+  const deleteCenterMutation = useMutation({
+    mutationFn: (id: string) => api.deleteCenter(id),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: adminQueryKeys.centers() });
+    },
+  });
 
   const resetForm = () => {
     setName("");
@@ -114,16 +130,18 @@ export default function CentersPage() {
       };
 
       if (editingCenter) {
-        await api.updateCenter(editingCenter.id, centerData);
+        await saveCenterMutation.mutateAsync({
+          editingId: editingCenter.id,
+          data: centerData,
+        });
         success("Center updated successfully");
       } else {
-        await api.createCenter(centerData);
+        await saveCenterMutation.mutateAsync({ data: centerData });
         success("Center created successfully");
       }
 
       setShowModal(false);
       resetForm();
-      loadCenters();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save center");
     } finally {
@@ -138,8 +156,7 @@ export default function CentersPage() {
   const confirmDelete = async () => {
     if (!centerToDelete) return;
     try {
-      await api.deleteCenter(centerToDelete);
-      loadCenters();
+      await deleteCenterMutation.mutateAsync(centerToDelete);
       success("Center deleted successfully");
     } catch (err) {
       showError(err instanceof Error ? err.message : "Failed to delete center");

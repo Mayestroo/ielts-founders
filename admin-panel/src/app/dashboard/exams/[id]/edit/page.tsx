@@ -12,6 +12,8 @@ import {
 } from "@/components/ui";
 import { useAuth } from "@/contexts/AuthContext";
 import { api } from "@/lib/api";
+import { ADMIN_QUERY_TIMINGS } from "@/lib/query/config";
+import { adminQueryKeys } from "@/lib/query/keys";
 import {
     Center,
     CreateExamSectionForm,
@@ -20,6 +22,7 @@ import {
     Question,
     QuestionType,
 } from "@/types";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
@@ -87,13 +90,13 @@ const questionTypes: {
 
 export default function EditExamPage() {
   const router = useRouter();
-  const { id } = useParams();
-  const [isLoading, setIsLoading] = useState(true);
-  const [isSaving, setIsSaving] = useState(false);
+  const params = useParams<{ id: string | string[] }>();
+  const sectionId = Array.isArray(params.id) ? params.id[0] : params.id;
+  const queryClient = useQueryClient();
   const [error, setError] = useState("");
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
-  const [centers, setCenters] = useState<Center[]>([]);
   const { user } = useAuth();
 
   const [formData, setFormData] = useState({
@@ -108,33 +111,68 @@ export default function EditExamPage() {
   const [passages, setPassages] = useState<Passage[]>([]);
   const [questions, setQuestions] = useState<Question[]>([]);
 
-  useEffect(() => {
-    const loadSection = async () => {
-      try {
-        const section = await api.getExamSection(id as string);
-        setFormData({
-          title: section.title,
-          type: section.type,
-          description: section.description || "",
-          duration: section.duration,
-          audioUrl: section.audioUrl || "",
-          centerId: section.centerId,
-        });
-        setQuestions(section.questions || []);
-        setPassages(section.passages || []);
-      } catch (err) {
-        setError(
-          err instanceof Error ? err.message : "Failed to load exam section"
-        );
-      } finally {
-        setIsLoading(false);
-      }
-    };
+  const sectionQuery = useQuery({
+    queryKey: sectionId
+      ? adminQueryKeys.examSection(sectionId)
+      : ["admin", "exam-sections", "edit-empty"],
+    queryFn: ({ signal }) => api.getExamSection(sectionId!, { signal }),
+    enabled: Boolean(sectionId),
+    staleTime: ADMIN_QUERY_TIMINGS.reference.staleTime,
+    gcTime: ADMIN_QUERY_TIMINGS.reference.gcTime,
+  });
 
-    if (id) {
-      loadSection();
+  const centersQuery = useQuery<Center[]>({
+    queryKey: adminQueryKeys.centers(),
+    queryFn: ({ signal }) => api.getCenters({ signal }),
+    staleTime: ADMIN_QUERY_TIMINGS.reference.staleTime,
+    gcTime: ADMIN_QUERY_TIMINGS.reference.gcTime,
+    enabled: user?.role === "SUPER_ADMIN",
+  });
+
+  const updateExamMutation = useMutation({
+    mutationFn: (payload: { id: string; data: Partial<CreateExamSectionForm> }) =>
+      api.updateExamSection(payload.id, payload.data),
+    onSuccess: async (_result, variables) => {
+      await queryClient.invalidateQueries({ queryKey: adminQueryKeys.examSections() });
+      await queryClient.invalidateQueries({
+        queryKey: adminQueryKeys.examSection(variables.id),
+      });
+      await queryClient.invalidateQueries({ queryKey: adminQueryKeys.examSectionOptions() });
+      await queryClient.invalidateQueries({ queryKey: adminQueryKeys.dashboardStats() });
+    },
+  });
+
+  const centers = centersQuery.data ?? [];
+  const isLoading = sectionQuery.isLoading && !sectionQuery.data;
+
+  useEffect(() => {
+    if (!sectionQuery.data) {
+      return;
     }
-  }, [id]);
+
+    setFormData({
+      title: sectionQuery.data.title,
+      type: sectionQuery.data.type,
+      description: sectionQuery.data.description || "",
+      duration: sectionQuery.data.duration,
+      audioUrl: sectionQuery.data.audioUrl || "",
+      centerId: sectionQuery.data.centerId,
+    });
+    setQuestions(sectionQuery.data.questions || []);
+    setPassages(sectionQuery.data.passages || []);
+  }, [sectionQuery.data]);
+
+  useEffect(() => {
+    if (!sectionQuery.error) {
+      return;
+    }
+
+    setError(
+      sectionQuery.error instanceof Error
+        ? sectionQuery.error.message
+        : "Failed to load exam section",
+    );
+  }, [sectionQuery.error]);
 
   // Auto-calculate duration for Listening exams
   useEffect(() => {
@@ -154,10 +192,13 @@ export default function EditExamPage() {
           audio.addEventListener("loadedmetadata", () => {
             const minutes = Math.ceil(audio.duration / 60);
             const totalDuration = minutes + 2;
-            // Only update if it's different and reasonable
-            if (totalDuration > 2 && formData.duration !== totalDuration) {
-              setFormData((prev) => ({ ...prev, duration: totalDuration }));
-            }
+            if (totalDuration <= 2) return;
+
+            setFormData((prev) =>
+              prev.duration === totalDuration
+                ? prev
+                : { ...prev, duration: totalDuration }
+            );
           });
         } catch (err) {
           console.error("Error calculating audio duration:", err);
@@ -168,10 +209,16 @@ export default function EditExamPage() {
   }, [formData.audioUrl, formData.type]);
 
   useEffect(() => {
-    if (user?.role === "SUPER_ADMIN") {
-      api.getCenters().then(setCenters).catch(console.error);
+    if (!centersQuery.error) {
+      return;
     }
-  }, [user]);
+
+    setError(
+      centersQuery.error instanceof Error
+        ? centersQuery.error.message
+        : "Failed to load centers",
+    );
+  }, [centersQuery.error]);
 
   // Add passage (for Reading)
   const addPassage = () => {
@@ -243,10 +290,10 @@ export default function EditExamPage() {
       default:
         newQuestion = {
           ...baseQuestion,
-          type: type as any,
+          type,
           correctAnswer: "",
           wordLimit: 3,
-        };
+        } as Question;
     }
 
     setQuestions([...questions, newQuestion]);
@@ -267,10 +314,14 @@ export default function EditExamPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
-    setIsSaving(true);
+
+    if (!sectionId) {
+      setError("Missing exam section id");
+      return;
+    }
 
     try {
-      const submissionData = {
+      const submissionData: Partial<CreateExamSectionForm> = {
         ...formData,
         questions,
         passages: formData.type === "READING" ? passages : undefined,
@@ -278,17 +329,22 @@ export default function EditExamPage() {
 
       // Remove audioUrl if it's empty or null to avoid validation errors
       if (!submissionData.audioUrl) {
-        delete (submissionData as any).audioUrl;
+        delete submissionData.audioUrl;
       }
 
-      await api.updateExamSection(id as string, submissionData);
+      if (user?.role !== "SUPER_ADMIN") {
+        delete submissionData.centerId;
+      }
+
+      await updateExamMutation.mutateAsync({
+        id: sectionId,
+        data: submissionData,
+      });
       router.push("/dashboard/exams");
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Failed to update exam section"
       );
-    } finally {
-      setIsSaving(false);
     }
   };
 
@@ -313,7 +369,7 @@ export default function EditExamPage() {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    setIsSaving(true);
+    setIsUploading(true);
     setUploadProgress(0);
     setError("");
 
@@ -329,7 +385,7 @@ export default function EditExamPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "File upload failed");
     } finally {
-      setIsSaving(false);
+      setIsUploading(false);
       setUploadProgress(0);
       // Reset input
       e.target.value = "";
@@ -370,7 +426,7 @@ export default function EditExamPage() {
       />
 
       <Modal 
-        isOpen={isSaving && uploadProgress > 0} 
+        isOpen={isUploading && uploadProgress > 0} 
         onClose={() => {}} 
         title="Uploading File..."
       >
@@ -537,7 +593,7 @@ export default function EditExamPage() {
                     points: 6,
                     instruction: "Write at least 250 words.",
                   },
-                ] as any[])
+                ] as Question[])
             ).map((task, idx) => (
               <Card key={task.id || idx}>
                 <CardHeader>
@@ -826,7 +882,12 @@ export default function EditExamPage() {
                           value={question.correctAnswer as string}
                           onChange={(e) =>
                             updateQuestion(question.id, {
-                              correctAnswer: e.target.value as any,
+                              correctAnswer: e.target.value as
+                                | "TRUE"
+                                | "FALSE"
+                                | "NOT_GIVEN"
+                                | "YES"
+                                | "NO",
                             })
                           }
                         />
@@ -910,7 +971,7 @@ export default function EditExamPage() {
           >
             Cancel
           </Button>
-          <Button type="submit" isLoading={isSaving} className="flex-1">
+          <Button type="submit" isLoading={updateExamMutation.isPending} className="flex-1">
             Save Changes
           </Button>
         </div>

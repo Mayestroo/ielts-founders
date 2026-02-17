@@ -1,16 +1,78 @@
 import { Global, Logger, Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Redis from 'ioredis';
+import { REDIS_CLIENT } from './redis.constants';
+import { ResponseCacheService } from './response-cache.service';
 
-export const REDIS_CLIENT = 'REDIS_CLIENT';
+export { REDIS_CLIENT } from './redis.constants';
+
+const isRedisEnabled = () => {
+  if (process.env.DISABLE_REDIS === 'true') {
+    return false;
+  }
+
+  if (process.env.ENABLE_REDIS === 'true') {
+    return true;
+  }
+
+  if (process.env.ENABLE_REDIS === 'false') {
+    return false;
+  }
+
+  const hasExplicitRedisTarget = Boolean(
+    process.env.SESSION_REDIS_URL ||
+    process.env.REDIS_URL ||
+    process.env.SESSION_REDIS_HOST ||
+    process.env.REDIS_HOST,
+  );
+
+  if (hasExplicitRedisTarget) {
+    return true;
+  }
+
+  return process.env.NODE_ENV === 'production';
+};
+
+const createDisabledRedisClient = () => {
+  const buildDisabledError = () => new Error('Redis is disabled');
+  const throwDisabled = () => Promise.reject(buildDisabledError());
+
+  const noopClient = {
+    on: () => noopClient,
+    once: () => noopClient,
+    addListener: () => noopClient,
+    removeListener: () => noopClient,
+    quit: () => Promise.resolve('OK'),
+    disconnect: () => undefined,
+    ping: throwDisabled,
+    get: throwDisabled,
+    set: throwDisabled,
+    setex: throwDisabled,
+    del: throwDisabled,
+    scan: throwDisabled,
+    eval: throwDisabled,
+    ttl: throwDisabled,
+    expire: throwDisabled,
+    flushall: throwDisabled,
+  };
+
+  return noopClient as unknown as Redis;
+};
 
 @Global()
 @Module({
   providers: [
     {
       provide: REDIS_CLIENT,
-      useFactory: (configService: ConfigService) => {
+      useFactory: async (configService: ConfigService) => {
         const logger = new Logger('RedisModule');
+
+        if (!isRedisEnabled()) {
+          logger.warn(
+            'Redis is disabled (set ENABLE_REDIS=true to force enable). Using no-op Redis client.',
+          );
+          return createDisabledRedisClient();
+        }
 
         const redisUrl =
           configService.get<string>('SESSION_REDIS_URL') ||
@@ -68,17 +130,53 @@ export const REDIS_CLIENT = 'REDIS_CLIENT';
         // Support both standard Redis and Upstash (which requires TLS)
         const useTLS = tlsFlag === 'true' || host.includes('upstash.io');
 
-        const redis = new Redis({
+        const redisRequired =
+          configService.get<string>('REDIS_REQUIRED') === 'true' ||
+          process.env.NODE_ENV === 'production';
+
+        const redisBaseOptions = {
           host,
           port,
           password,
           db,
-          maxRetriesPerRequest: 3, // Fail fast instead of hanging
-          lazyConnect: false, // Connect immediately on startup
           tls: useTLS ? {} : undefined, // Enable TLS for Upstash
+        };
+
+        if (!redisRequired) {
+          const redis = new Redis({
+            ...redisBaseOptions,
+            maxRetriesPerRequest: 1,
+            lazyConnect: true,
+            enableOfflineQueue: false,
+            retryStrategy: () => null,
+          });
+
+          redis.on('error', (err) => {
+            logger.warn(`Redis optional mode error: ${err.message}`);
+          });
+
+          try {
+            await redis.connect();
+            logger.log('Redis connected successfully');
+            return redis;
+          } catch (error) {
+            const message =
+              error instanceof Error ? error.message : 'Unknown redis error';
+            logger.warn(
+              `Redis unavailable in optional mode (${message}). Using no-op Redis client.`,
+            );
+            redis.disconnect();
+            return createDisabledRedisClient();
+          }
+        }
+
+        const redis = new Redis({
+          ...redisBaseOptions,
+          maxRetriesPerRequest: 3,
+          lazyConnect: false,
           retryStrategy: (times) => {
-            if (times > 10) return null; // Stop retrying after 10 attempts
-            return Math.min(times * 200, 5000); // Exponential backoff, max 5s
+            if (times > 10) return null;
+            return Math.min(times * 200, 5000);
           },
           reconnectOnError: (err) => {
             const targetErrors = ['READONLY', 'ETIMEDOUT', 'ECONNRESET'];
@@ -98,7 +196,8 @@ export const REDIS_CLIENT = 'REDIS_CLIENT';
       },
       inject: [ConfigService],
     },
+    ResponseCacheService,
   ],
-  exports: [REDIS_CLIENT],
+  exports: [REDIS_CLIENT, ResponseCacheService],
 })
 export class RedisModule {}

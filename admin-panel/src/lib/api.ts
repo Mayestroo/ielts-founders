@@ -21,6 +21,12 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000/api';
 class ApiClient {
   private token: string | null = null;
 
+  private buildReadOptions(options: ApiReadOptions = {}): RequestInit {
+    return {
+      signal: options.signal,
+    };
+  }
+
   setToken(token: string | null) {
     this.token = token;
   }
@@ -64,8 +70,8 @@ class ApiClient {
     return response;
   }
 
-  async getProfile(): Promise<User> {
-    return this.request<User>('/auth/profile');
+  async getProfile(options: ApiReadOptions = {}): Promise<User> {
+    return this.request<User>('/auth/profile', this.buildReadOptions(options));
   }
 
   logout() {
@@ -82,7 +88,14 @@ class ApiClient {
   }
 
   // Users
-  async getUsers(skip?: number, take?: number, search?: string, role?: Role, centerId?: string): Promise<{ users: User[]; total: number }> {
+  async getUsers(
+    skip?: number,
+    take?: number,
+    search?: string,
+    role?: Role,
+    centerId?: string,
+    options: ApiReadOptions = {},
+  ): Promise<{ users: User[]; total: number }> {
     const params = new URLSearchParams();
     if (skip !== undefined) params.append('skip', skip.toString());
     if (take !== undefined) params.append('take', take.toString());
@@ -90,20 +103,27 @@ class ApiClient {
     if (role) params.append('role', role);
     if (centerId) params.append('centerId', centerId);
     const query = params.toString() ? `?${params.toString()}` : '';
-    return this.request<{ users: User[]; total: number }>(`/users${query}`);
+    return this.request<{ users: User[]; total: number }>(
+      `/users${query}`,
+      this.buildReadOptions(options),
+    );
   }
 
   async getStudents(
     skip?: number,
     take?: number,
     search?: string,
+    options: ApiReadOptions = {},
   ): Promise<{ users: StudentSummary[]; total: number }> {
     const params = new URLSearchParams();
     if (skip !== undefined) params.append('skip', skip.toString());
     if (take !== undefined) params.append('take', take.toString());
     if (search?.trim()) params.append('search', search.trim());
     const query = params.toString() ? `?${params.toString()}` : '';
-    return this.request<{ users: StudentSummary[]; total: number }>(`/users/students${query}`);
+    return this.request<{ users: StudentSummary[]; total: number }>(
+      `/users/students${query}`,
+      this.buildReadOptions(options),
+    );
   }
 
   async createUser(data: CreateUserForm): Promise<User> {
@@ -125,12 +145,12 @@ class ApiClient {
   }
 
   // Centers
-  async getCenters(): Promise<Center[]> {
-    return this.request<Center[]>('/centers');
+  async getCenters(options: ApiReadOptions = {}): Promise<Center[]> {
+    return this.request<Center[]>('/centers', this.buildReadOptions(options));
   }
 
-  async getCenter(id: string): Promise<Center> {
-    return this.request<Center>(`/centers/${id}`);
+  async getCenter(id: string, options: ApiReadOptions = {}): Promise<Center> {
+    return this.request<Center>(`/centers/${id}`, this.buildReadOptions(options));
   }
 
   async createCenter(data: CreateCenterForm): Promise<Center> {
@@ -152,16 +172,19 @@ class ApiClient {
   }
 
   // Exam Sections
-  async getExamSections(): Promise<ExamSection[]> {
-    return this.request<ExamSection[]>('/exam-sections');
+  async getExamSections(options: ApiReadOptions = {}): Promise<ExamSection[]> {
+    return this.request<ExamSection[]>('/exam-sections', this.buildReadOptions(options));
   }
 
-  async getExamSection(id: string): Promise<ExamSection> {
-    return this.request<ExamSection>(`/exam-sections/${id}`);
+  async getExamSection(id: string, options: ApiReadOptions = {}): Promise<ExamSection> {
+    return this.request<ExamSection>(`/exam-sections/${id}`, this.buildReadOptions(options));
   }
 
-  async getExamSectionOptions(): Promise<ExamSectionOption[]> {
-    return this.request<ExamSectionOption[]>('/exam-sections/options');
+  async getExamSectionOptions(options: ApiReadOptions = {}): Promise<ExamSectionOption[]> {
+    return this.request<ExamSectionOption[]>(
+      '/exam-sections/options',
+      this.buildReadOptions(options),
+    );
   }
 
   async createExamSection(data: CreateExamSectionForm): Promise<ExamSection> {
@@ -188,6 +211,7 @@ class ApiClient {
     take?: number,
     search?: string,
     sectionType?: string,
+    options: ApiReadOptions = {},
   ): Promise<GroupedAssignmentsResponse> {
     const params = new URLSearchParams();
     if (skip !== undefined) params.append('skip', skip.toString());
@@ -195,11 +219,20 @@ class ApiClient {
     if (search?.trim()) params.append('search', search.trim());
     if (sectionType) params.append('sectionType', sectionType);
     const query = params.toString() ? `?${params.toString()}` : '';
-    return this.request<GroupedAssignmentsResponse>(`/assignments/grouped${query}`);
+    return this.request<GroupedAssignmentsResponse>(
+      `/assignments/grouped${query}`,
+      this.buildReadOptions(options),
+    );
   }
 
-  async getStudentAssignments(studentId: string): Promise<ExamAssignment[]> {
-    return this.request<ExamAssignment[]>(`/assignments/student/${studentId}`);
+  async getStudentAssignments(
+    studentId: string,
+    options: ApiReadOptions = {},
+  ): Promise<ExamAssignment[]> {
+    return this.request<ExamAssignment[]>(
+      `/assignments/student/${studentId}`,
+      this.buildReadOptions(options),
+    );
   }
 
   async createAssignment(data: CreateAssignmentForm): Promise<ExamAssignment> {
@@ -219,16 +252,23 @@ class ApiClient {
   }
 
   // Results
-  async getResults(skip?: number, take?: number): Promise<{ results: ExamResult[]; total: number }> {
+  async getResults(
+    skip?: number,
+    take?: number,
+    options: ApiReadOptions = {},
+  ): Promise<{ results: ExamResult[]; total: number }> {
     const params = new URLSearchParams();
     if (skip !== undefined) params.append('skip', skip.toString());
     if (take !== undefined) params.append('take', take.toString());
     const query = params.toString() ? `?${params.toString()}` : '';
-    return this.request<{ results: ExamResult[]; total: number }>(`/results${query}`);
+    return this.request<{ results: ExamResult[]; total: number }>(
+      `/results${query}`,
+      this.buildReadOptions(options),
+    );
   }
 
-  async getResult(id: string): Promise<ExamResult> {
-    return this.request<ExamResult>(`/results/${id}`);
+  async getResult(id: string, options: ApiReadOptions = {}): Promise<ExamResult> {
+    return this.request<ExamResult>(`/results/${id}`, this.buildReadOptions(options));
   }
 
   async evaluateWriting(resultId: string): Promise<any> {
@@ -249,7 +289,7 @@ class ApiClient {
     });
   }
 
-  async getDashboardStats() {
+  async getDashboardStats(options: ApiReadOptions = {}) {
     return this.request<{
       counts: {
         totalUsers: number;
@@ -269,7 +309,7 @@ class ApiClient {
         user: string;
         time: string;
       }[];
-    }>('/dashboard/stats');
+    }>('/dashboard/stats', this.buildReadOptions(options));
   }
 
   // Uploads
@@ -322,6 +362,10 @@ class ApiClient {
       xhr.send(formData);
     });
   }
+}
+
+interface ApiReadOptions {
+  signal?: AbortSignal;
 }
 
 export const api = new ApiClient();

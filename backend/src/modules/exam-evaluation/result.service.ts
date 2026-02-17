@@ -5,10 +5,19 @@ import {
 } from '@nestjs/common';
 import { Prisma, Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { ResponseCacheService } from '../redis';
+
+const RESULTS_LIST_CACHE_PREFIX = 'cache:results:list:v1:';
+const STUDENT_RESULTS_CACHE_PREFIX = 'cache:results:student:v1:';
+const RESULTS_LIST_TTL_SECONDS = 20;
+const STUDENT_RESULTS_TTL_SECONDS = 20;
 
 @Injectable()
 export class ResultService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private responseCache: ResponseCacheService,
+  ) {}
 
   async findAll(
     requesterRole: Role,
@@ -25,6 +34,17 @@ export class ResultService {
       where = {
         student: { centerId: requesterCenterId },
       };
+    }
+
+    const skipValue = skip ? Number(skip) : 0;
+    const takeValue = take ? Number(take) : 0;
+    const cacheKey = `${RESULTS_LIST_CACHE_PREFIX}role:${requesterRole}:center:${requesterCenterId || 'all'}:skip:${skipValue}:take:${takeValue}`;
+    const cached = await this.responseCache.getJson<{
+      results: unknown[];
+      total: number;
+    }>(cacheKey);
+    if (cached) {
+      return cached;
     }
 
     const [results, total] = await Promise.all([
@@ -51,7 +71,13 @@ export class ResultService {
       this.prisma.examResult.count({ where }),
     ]);
 
-    return { results, total };
+    const payload = { results, total };
+    await this.responseCache.setJson(
+      cacheKey,
+      payload,
+      RESULTS_LIST_TTL_SECONDS,
+    );
+    return payload;
   }
 
   async findById(
@@ -117,7 +143,13 @@ export class ResultService {
       }
     }
 
-    return this.prisma.examResult.findMany({
+    const cacheKey = `${STUDENT_RESULTS_CACHE_PREFIX}student:${studentId}:viewer:${requesterRole}:viewerCenter:${requesterCenterId || 'all'}`;
+    const cached = await this.responseCache.getJson<unknown[]>(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
+    const results = await this.prisma.examResult.findMany({
       where: { studentId },
       include: {
         section: {
@@ -130,6 +162,13 @@ export class ResultService {
       },
       orderBy: { submittedAt: 'desc' },
     });
+
+    await this.responseCache.setJson(
+      cacheKey,
+      results,
+      STUDENT_RESULTS_TTL_SECONDS,
+    );
+    return results;
   }
 
   async updateFromAI(
@@ -146,6 +185,8 @@ export class ResultService {
         feedback: feedback as Prisma.InputJsonValue,
       },
     });
+
+    await this.invalidateResultReadCaches();
   }
 
   async updateWithAIEvaluation(
@@ -192,5 +233,16 @@ export class ResultService {
         }
       }
     }
+
+    await this.invalidateResultReadCaches();
+  }
+
+  private async invalidateResultReadCaches() {
+    await this.responseCache.delByPrefixes([
+      RESULTS_LIST_CACHE_PREFIX,
+      STUDENT_RESULTS_CACHE_PREFIX,
+      'cache:dashboard:stats:v1:',
+      'cache:assignments:grouped:v1:',
+    ]);
   }
 }

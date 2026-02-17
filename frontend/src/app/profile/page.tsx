@@ -3,7 +3,10 @@
 import { ConfirmationModal } from "@/components/ui";
 import { useAuth } from "@/contexts/AuthContext";
 import { api } from "@/lib/api";
-import { Center, ExamResult } from "@/types";
+import { STUDENT_QUERY_TIMINGS } from "@/lib/query/config";
+import { studentQueryKeys } from "@/lib/query/keys";
+import { ExamResult } from "@/types";
+import { useQuery } from "@tanstack/react-query";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -18,6 +21,7 @@ const POINT_RULES: Array<{ minBand: number; points: number }> = [
   { minBand: 6.5, points: 10 },
   { minBand: 6.0, points: 5 },
 ];
+const PROFILE_ENABLED = false;
 
 interface PointsHistoryEntry {
   key: string;
@@ -65,79 +69,56 @@ const formatDateTime = (value?: string | null) => {
 export default function ProfilePage() {
   const { user, isLoading, isAuthenticated, logout } = useAuth();
   const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false);
-  const [centerLogo, setCenterLogo] = useState<string | null>(null);
-  const [loadingProfile, setLoadingProfile] = useState(true);
-  const [profilePoints, setProfilePoints] = useState<number>(user?.points ?? 0);
-  const [results, setResults] = useState<ExamResult[]>([]);
-  const [sessionDetails, setSessionDetails] = useState<{
-    sessionAttendanceMode?: string;
-    sessionScheduledAt?: string;
-    sessionReferralSource?: string;
-    phoneNumber?: string;
-  } | null>(null);
   const router = useRouter();
+
+  const centerQuery = useQuery({
+    queryKey: studentQueryKeys.center(user?.centerId || ""),
+    queryFn: ({ signal }) => api.getCenter(user!.centerId!, { signal }),
+    enabled: !!user?.centerId,
+    staleTime: STUDENT_QUERY_TIMINGS.center.staleTime,
+    gcTime: STUDENT_QUERY_TIMINGS.center.gcTime,
+  });
+
+  const profileQuery = useQuery({
+    queryKey: studentQueryKeys.authProfile(),
+    queryFn: ({ signal }) => api.getProfile({ signal }),
+    enabled: !!user?.id && PROFILE_ENABLED,
+    staleTime: STUDENT_QUERY_TIMINGS.profile.staleTime,
+    gcTime: STUDENT_QUERY_TIMINGS.profile.gcTime,
+    placeholderData: (previousData) => previousData,
+  });
+
+  const resultsQuery = useQuery({
+    queryKey: studentQueryKeys.myResults(),
+    queryFn: ({ signal }) => api.getMyResults({ signal }),
+    enabled: !!user?.id && PROFILE_ENABLED,
+    staleTime: STUDENT_QUERY_TIMINGS.results.staleTime,
+    gcTime: STUDENT_QUERY_TIMINGS.results.gcTime,
+    placeholderData: (previousData) => previousData,
+  });
+
+  const centerLogo = centerQuery.data?.logo || null;
+  const profile = profileQuery.data ?? user;
+  const profilePoints = profile?.points ?? user?.points ?? 0;
+  const sessionDetails = {
+    sessionAttendanceMode: profile?.sessionAttendanceMode,
+    sessionScheduledAt: profile?.sessionScheduledAt,
+    sessionReferralSource: profile?.sessionReferralSource,
+    phoneNumber: profile?.phoneNumber,
+  };
+  const results = useMemo(
+    () => (resultsQuery.data ?? []) as ExamResult[],
+    [resultsQuery.data],
+  );
+  const loadingProfile =
+    (profileQuery.isLoading && !profileQuery.data) ||
+    (resultsQuery.isLoading && !resultsQuery.data);
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
       router.push("/login");
     }
   }, [isLoading, isAuthenticated, router]);
-
-  useEffect(() => {
-    if (user?.centerId) {
-      api
-        .getCenter(user.centerId)
-        .then((center: Center) => {
-          if (center.logo) {
-            setCenterLogo(center.logo);
-          }
-        })
-        .catch(() => undefined);
-    }
-  }, [user?.centerId]);
-
-  useEffect(() => {
-    if (!user?.id) {
-      return;
-    }
-
-    let cancelled = false;
-
-    const loadProfileData = async () => {
-      setLoadingProfile(true);
-      try {
-        const [profile, myResults] = await Promise.all([
-          api.getProfile(),
-          api.getMyResults(),
-        ]);
-
-        if (!cancelled) {
-          setProfilePoints(profile.points ?? 0);
-          setSessionDetails({
-            sessionAttendanceMode: profile.sessionAttendanceMode,
-            sessionScheduledAt: profile.sessionScheduledAt,
-            sessionReferralSource: profile.sessionReferralSource,
-            phoneNumber: profile.phoneNumber,
-          });
-          setResults(myResults);
-        }
-      } catch {
-        if (!cancelled) {
-          setResults([]);
-        }
-      } finally {
-        if (!cancelled) {
-          setLoadingProfile(false);
-        }
-      }
-    };
-
-    void loadProfileData();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [user?.id]);
 
   const scoredResults = useMemo(() => {
     return results
@@ -258,12 +239,12 @@ export default function ProfilePage() {
                 </Link>
               </li>
               <li>
-                <Link
-                  href="/profile"
-                  className="inline-flex rounded-lg bg-black px-3 py-2 text-sm font-medium text-white"
+                <span
+                  aria-disabled="true"
+                  className="inline-flex cursor-not-allowed rounded-lg bg-gray-100 px-3 py-2 text-sm font-medium text-gray-400"
                 >
                   Profile ({profilePoints} pts)
-                </Link>
+                </span>
               </li>
             </ul>
           </nav>
@@ -290,7 +271,20 @@ export default function ProfilePage() {
           </p>
         </div>
 
-        {loadingProfile ? (
+        {!PROFILE_ENABLED ? (
+          <div className="rounded-2xl border border-gray-200 bg-white p-8 text-center">
+            <h3 className="text-lg font-semibold text-gray-900">Profile is temporarily disabled</h3>
+            <p className="mt-2 text-sm text-gray-500">
+              You can continue using Dashboard, Feedback, and Exams.
+            </p>
+            <Link
+              href="/dashboard"
+              className="mt-5 inline-flex rounded-lg bg-black px-4 py-2 text-sm font-medium text-white"
+            >
+              Back to Dashboard
+            </Link>
+          </div>
+        ) : loadingProfile ? (
           <div className="flex items-center justify-center py-12">
             <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-black"></div>
           </div>
