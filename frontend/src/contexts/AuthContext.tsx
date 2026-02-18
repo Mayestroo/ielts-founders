@@ -182,7 +182,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     queryClient.clear();
   };
 
-  const isLoading = profileQuery.isPending && !sessionUser;
+  const isLoading = hasSessionToken && profileQuery.isPending && !sessionUser;
 
   return (
     <AuthContext.Provider

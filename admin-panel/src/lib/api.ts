@@ -1,26 +1,28 @@
 import {
-    Center,
-    CreateAssignmentForm,
-    CreateFullMockForm,
-    CreateCenterForm,
-    CreateExamSectionForm,
-    CreateUserForm,
-    ExamAssignment,
-    ExamResult,
-    ExamSection,
-    ExamSectionOption,
-    GroupedAssignmentsResponse,
-    LoginResponse,
-    Role,
-    StudentSummary,
-    User
+  BulkFullMockResult,
+  Center,
+  CreateAssignmentForm,
+  CreateBulkFullMockForm,
+  CreateCenterForm,
+  CreateExamSectionForm,
+  CreateFullMockForm,
+  CreateUserForm,
+  ExamAssignment,
+  ExamResult,
+  ExamSection,
+  ExamSectionOption,
+  GroupedAssignmentsResponse,
+  LoginResponse,
+  Role,
+  StudentSummary,
+  User
 } from '@/types';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000/api';
 
-class ApiClient {
-  private token: string | null = null;
+const TOKEN_KEY = 'admin_token';
 
+class ApiClient {
   private buildReadOptions(options: ApiReadOptions = {}): RequestInit {
     return {
       signal: options.signal,
@@ -28,11 +30,17 @@ class ApiClient {
   }
 
   setToken(token: string | null) {
-    this.token = token;
+    if (typeof window === 'undefined') return;
+    if (token) {
+      localStorage.setItem(TOKEN_KEY, token);
+    } else {
+      localStorage.removeItem(TOKEN_KEY);
+    }
   }
 
   getToken(): string | null {
-    return this.token;
+    if (typeof window === 'undefined') return null;
+    return localStorage.getItem(TOKEN_KEY);
   }
 
   private async request<T>(
@@ -211,6 +219,7 @@ class ApiClient {
     take?: number,
     search?: string,
     sectionType?: string,
+    fullMockOnly?: boolean,
     options: ApiReadOptions = {},
   ): Promise<GroupedAssignmentsResponse> {
     const params = new URLSearchParams();
@@ -218,6 +227,7 @@ class ApiClient {
     if (take !== undefined) params.append('take', take.toString());
     if (search?.trim()) params.append('search', search.trim());
     if (sectionType) params.append('sectionType', sectionType);
+    if (fullMockOnly) params.append('fullMockOnly', 'true');
     const query = params.toString() ? `?${params.toString()}` : '';
     return this.request<GroupedAssignmentsResponse>(
       `/assignments/grouped${query}`,
@@ -227,10 +237,12 @@ class ApiClient {
 
   async getStudentAssignments(
     studentId: string,
+    fullMockOnly?: boolean,
     options: ApiReadOptions = {},
   ): Promise<ExamAssignment[]> {
+    const query = fullMockOnly ? '?fullMockOnly=true' : '';
     return this.request<ExamAssignment[]>(
-      `/assignments/student/${studentId}`,
+      `/assignments/student/${studentId}${query}`,
       this.buildReadOptions(options),
     );
   }
@@ -246,6 +258,15 @@ class ApiClient {
     data: CreateFullMockForm,
   ): Promise<{ session: unknown; assignments: ExamAssignment[] }> {
     return this.request('/assignments/full-mock', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async createBulkFullMockAssignment(
+    data: CreateBulkFullMockForm,
+  ): Promise<BulkFullMockResult> {
+    return this.request<BulkFullMockResult>('/assignments/full-mock/bulk', {
       method: 'POST',
       body: JSON.stringify(data),
     });
@@ -271,19 +292,19 @@ class ApiClient {
     return this.request<ExamResult>(`/results/${id}`, this.buildReadOptions(options));
   }
 
-  async evaluateWriting(resultId: string): Promise<any> {
+  async evaluateWriting(resultId: string): Promise<unknown> {
     return this.request(`/results/${resultId}/evaluate-writing`, {
       method: 'POST',
     });
   }
 
-  async reassignAssignment(assignmentId: string): Promise<any> {
+  async reassignAssignment(assignmentId: string): Promise<unknown> {
     return this.request(`/assignments/${assignmentId}/reassign`, {
       method: 'POST',
     });
   }
 
-  async deleteAssignment(assignmentId: string): Promise<any> {
+  async deleteAssignment(assignmentId: string): Promise<unknown> {
     return this.request(`/assignments/${assignmentId}`, {
       method: 'DELETE',
     });
@@ -342,14 +363,14 @@ class ApiClient {
           try {
             const response = JSON.parse(xhr.responseText);
             resolve(response);
-          } catch (e) {
+          } catch {
             reject(new Error('Failed to parse upload response'));
           }
         } else {
           try {
             const error = JSON.parse(xhr.responseText);
             reject(new Error(error.message || `Upload failed with status ${xhr.status}`));
-          } catch (e) {
+          } catch {
             reject(new Error(`Upload failed with status ${xhr.status}`));
           }
         }

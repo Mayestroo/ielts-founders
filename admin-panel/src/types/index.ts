@@ -219,6 +219,24 @@ export interface CreateFullMockForm {
   writingSectionId: string;
 }
 
+export interface CreateBulkFullMockForm {
+  studentIds: string[];
+  listeningSectionId: string;
+  readingSectionId: string;
+  writingSectionId: string;
+}
+
+export interface BulkFullMockResult {
+  results: Array<{
+    studentId: string;
+    studentName: string;
+    success: boolean;
+    error?: string;
+  }>;
+  successCount: number;
+  errorCount: number;
+}
+
 export interface WritingSubmission {
   id: string;
   resultId: string;

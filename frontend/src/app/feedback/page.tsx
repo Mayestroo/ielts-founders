@@ -6,11 +6,11 @@ import { api } from "@/lib/api";
 import { STUDENT_QUERY_TIMINGS } from "@/lib/query/config";
 import { studentQueryKeys } from "@/lib/query/keys";
 import { ExamResult, ExamSectionType, Question } from "@/types";
-import { useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 
 type FeedbackSectionType = Extract<ExamSectionType, "LISTENING" | "READING" | "WRITING">;
 
@@ -35,7 +35,6 @@ interface WritingFeedbackSummary {
 }
 
 const SECTION_ORDER: FeedbackSectionType[] = ["LISTENING", "READING", "WRITING"];
-const PROFILE_ENABLED = false;
 
 const SECTION_LABELS: Record<FeedbackSectionType, string> = {
   LISTENING: "Listening",
@@ -47,6 +46,60 @@ const EMPTY_RESULTS_BY_TYPE: Record<FeedbackSectionType, ExamResult | null> = {
   LISTENING: null,
   READING: null,
   WRITING: null,
+};
+
+interface SectionFeedbackMeta {
+  incorrectItems: IncorrectFeedbackItem[];
+  isReady: boolean;
+}
+
+const getLatestResultsByType = (results: ExamResult[]) => {
+  const latestByType: Record<FeedbackSectionType, ExamResult | null> = {
+    LISTENING: null,
+    READING: null,
+    WRITING: null,
+  };
+
+  for (const result of results) {
+    const sectionType = result.section?.type;
+    if (!sectionType || !SECTION_ORDER.includes(sectionType as FeedbackSectionType)) {
+      continue;
+    }
+
+    const typedSection = sectionType as FeedbackSectionType;
+    const existing = latestByType[typedSection];
+
+    if (!existing) {
+      latestByType[typedSection] = result;
+      continue;
+    }
+
+    if (
+      new Date(result.submittedAt).getTime() > new Date(existing.submittedAt).getTime()
+    ) {
+      latestByType[typedSection] = result;
+    }
+  }
+
+  return latestByType;
+};
+
+const hasDetailedSectionData = (result: ExamResult | null) => {
+  return Boolean(result?.section?.questions?.length);
+};
+
+const buildSectionFeedbackMeta = (result: ExamResult | null): SectionFeedbackMeta => {
+  if (!hasDetailedSectionData(result)) {
+    return {
+      incorrectItems: [],
+      isReady: false,
+    };
+  }
+
+  return {
+    incorrectItems: getIncorrectFeedbackItems(result!),
+    isReady: true,
+  };
 };
 
 const isObjectRecord = (value: unknown): value is Record<string, unknown> => {
@@ -297,8 +350,10 @@ const parseWritingFeedback = (feedback: unknown): WritingFeedbackSummary | null 
 
 export default function FeedbackPage() {
   const { user, isLoading, isAuthenticated, logout } = useAuth();
+  const queryClient = useQueryClient();
   const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false);
-  const [expandedSection, setExpandedSection] = useState<FeedbackSectionType | null>("LISTENING");
+  const [expandedSection, setExpandedSection] = useState<FeedbackSectionType | null>(null);
+  const [isSectionPending, startSectionTransition] = useTransition();
   const router = useRouter();
 
   const centerQuery = useQuery({
@@ -309,76 +364,68 @@ export default function FeedbackPage() {
     gcTime: STUDENT_QUERY_TIMINGS.center.gcTime,
   });
 
-  const profileQuery = useQuery({
-    queryKey: studentQueryKeys.authProfile(),
-    queryFn: ({ signal }) => api.getProfile({ signal }),
-    enabled: !!user?.id,
-    staleTime: STUDENT_QUERY_TIMINGS.profile.staleTime,
-    gcTime: STUDENT_QUERY_TIMINGS.profile.gcTime,
-    placeholderData: (previousData) => previousData,
-  });
-
-  const feedbackQuery = useQuery({
-    queryKey: studentQueryKeys.feedbackLatest(),
-    queryFn: async ({ signal }) => {
-      const results = await api.getMyResults({ signal });
-
-      const latestByType: Record<FeedbackSectionType, ExamResult | null> = {
-        LISTENING: null,
-        READING: null,
-        WRITING: null,
-      };
-
-      for (const result of results) {
-        const type = result.section?.type;
-        if (!type || !SECTION_ORDER.includes(type as FeedbackSectionType)) {
-          continue;
-        }
-
-        const sectionType = type as FeedbackSectionType;
-        if (!latestByType[sectionType]) {
-          latestByType[sectionType] = result;
-        }
-      }
-
-      const detailEntries = await Promise.all(
-        SECTION_ORDER.map(async (sectionType) => {
-          const summaryResult = latestByType[sectionType];
-          if (!summaryResult) {
-            return [sectionType, null] as const;
-          }
-
-          try {
-            const detailed = await api.getResult(summaryResult.id, { signal });
-            return [sectionType, detailed] as const;
-          } catch {
-            return [sectionType, summaryResult] as const;
-          }
-        }),
-      );
-
-      return detailEntries.reduce<Record<FeedbackSectionType, ExamResult | null>>(
-        (accumulator, [sectionType, result]) => {
-          accumulator[sectionType] = result;
-          return accumulator;
-        },
-        {
-          LISTENING: null,
-          READING: null,
-          WRITING: null,
-        },
-      );
-    },
+  const resultsQuery = useQuery({
+    queryKey: studentQueryKeys.myResults(),
+    queryFn: ({ signal }) => api.getMyResults({ signal }),
     enabled: !!user?.id,
     staleTime: STUDENT_QUERY_TIMINGS.feedback.staleTime,
     gcTime: STUDENT_QUERY_TIMINGS.feedback.gcTime,
     placeholderData: (previousData) => previousData,
   });
 
+  const summaryResultsByType = useMemo(
+    () => getLatestResultsByType(resultsQuery.data ?? []),
+    [resultsQuery.data],
+  );
+
+  const detailQueries = useQueries({
+    queries: SECTION_ORDER.map((sectionType) => {
+      const summaryResult = summaryResultsByType[sectionType];
+      const resultId = summaryResult?.id;
+
+      return {
+        queryKey: resultId
+          ? studentQueryKeys.result(resultId)
+          : (["student", "results", "detail-placeholder", sectionType] as const),
+        queryFn: ({ signal }: { signal: AbortSignal }) =>
+          api.getResult(resultId as string, { signal }),
+        enabled: Boolean(resultId && expandedSection === sectionType),
+        staleTime: STUDENT_QUERY_TIMINGS.results.staleTime,
+        gcTime: STUDENT_QUERY_TIMINGS.results.gcTime,
+        placeholderData: summaryResult,
+      };
+    }),
+  });
+
+  const resultsByType = useMemo(() => {
+    return SECTION_ORDER.reduce<Record<FeedbackSectionType, ExamResult | null>>(
+      (accumulator, sectionType, index) => {
+        const summaryResult = summaryResultsByType[sectionType];
+        const detailedResult = detailQueries[index]?.data as ExamResult | null | undefined;
+        accumulator[sectionType] = detailedResult ?? summaryResult ?? null;
+        return accumulator;
+      },
+      { ...EMPTY_RESULTS_BY_TYPE },
+    );
+  }, [detailQueries, summaryResultsByType]);
+
+  const detailLoadingByType = useMemo(() => {
+    return SECTION_ORDER.reduce<Record<FeedbackSectionType, boolean>>(
+      (accumulator, sectionType, index) => {
+        const queryState = detailQueries[index];
+        accumulator[sectionType] = Boolean(queryState?.isFetching && !queryState?.data);
+        return accumulator;
+      },
+      {
+        LISTENING: false,
+        READING: false,
+        WRITING: false,
+      },
+    );
+  }, [detailQueries]);
+
   const centerLogo = centerQuery.data?.logo || null;
-  const profilePoints = profileQuery.data?.points ?? user?.points ?? 0;
-  const resultsByType = feedbackQuery.data ?? EMPTY_RESULTS_BY_TYPE;
-  const loadingFeedback = feedbackQuery.isLoading && !feedbackQuery.data;
+  const loadingFeedback = resultsQuery.isLoading && !resultsQuery.data;
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
@@ -386,19 +433,48 @@ export default function FeedbackPage() {
     }
   }, [isLoading, isAuthenticated, router]);
 
+  useEffect(() => {
+    router.prefetch("/dashboard");
+  }, [router]);
+
+  useEffect(() => {
+    const resultIds = SECTION_ORDER
+      .map((sectionType) => summaryResultsByType[sectionType]?.id)
+      .filter((resultId): resultId is string => Boolean(resultId));
+
+    if (resultIds.length === 0) {
+      return;
+    }
+
+    const timeoutIds = resultIds.map((resultId, index) => {
+      return window.setTimeout(() => {
+        void queryClient.prefetchQuery({
+          queryKey: studentQueryKeys.result(resultId),
+          queryFn: ({ signal }) => api.getResult(resultId, { signal }),
+          staleTime: STUDENT_QUERY_TIMINGS.results.staleTime,
+          gcTime: STUDENT_QUERY_TIMINGS.results.gcTime,
+        });
+      }, 200 + index * 200);
+    });
+
+    return () => {
+      timeoutIds.forEach((timeoutId) => window.clearTimeout(timeoutId));
+    };
+  }, [queryClient, summaryResultsByType]);
+
   const feedbackMetaByType = useMemo(() => {
     return {
-      LISTENING: resultsByType.LISTENING
-        ? getIncorrectFeedbackItems(resultsByType.LISTENING)
-        : [],
-      READING: resultsByType.READING ? getIncorrectFeedbackItems(resultsByType.READING) : [],
+      LISTENING: buildSectionFeedbackMeta(resultsByType.LISTENING),
+      READING: buildSectionFeedbackMeta(resultsByType.READING),
     };
   }, [resultsByType]);
 
   const toggleSection = (sectionType: FeedbackSectionType) => {
-    setExpandedSection((current) =>
-      current === sectionType ? null : sectionType,
-    );
+    startSectionTransition(() => {
+      setExpandedSection((current) =>
+        current === sectionType ? null : sectionType,
+      );
+    });
   };
 
   if (isLoading || !isAuthenticated) {
@@ -414,24 +490,24 @@ export default function FeedbackPage() {
       <header className="bg-white border-b border-gray-200">
         <div className="max-w-6xl mx-auto px-4 py-4 flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="w-36 h-12 rounded-xl flex items-center justify-center">
+            <div className="w-40 h-14 rounded-xl flex items-center justify-center">
               {centerLogo ? (
                 <Image
                   src={centerLogo}
                   alt="Center Logo"
-                  width={144}
-                  height={48}
+                  width={160}
+                  height={56}
                   loading="eager"
-                  className="max-h-12 h-auto w-auto object-contain"
+                  className="max-h-14 h-auto w-auto object-contain"
                 />
               ) : (
                 <Image
                   src="/logo.png"
                   alt="logo"
-                  width={144}
-                  height={48}
+                  width={160}
+                  height={56}
                   loading="eager"
-                  className="max-h-12 h-auto w-auto object-contain"
+                  className="max-h-14 h-auto w-auto object-contain"
                 />
               )}
             </div>
@@ -454,23 +530,6 @@ export default function FeedbackPage() {
                 >
                   Feedback
                 </Link>
-              </li>
-              <li>
-                {PROFILE_ENABLED ? (
-                  <Link
-                    href="/profile"
-                    className="inline-flex rounded-lg px-3 py-2 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900"
-                  >
-                    Profile ({profilePoints ?? user?.points ?? 0} pts)
-                  </Link>
-                ) : (
-                  <span
-                    aria-disabled="true"
-                    className="inline-flex cursor-not-allowed rounded-lg bg-gray-100 px-3 py-2 text-sm font-medium text-gray-400"
-                  >
-                    Profile ({profilePoints ?? user?.points ?? 0} pts)
-                  </span>
-                )}
               </li>
             </ul>
           </nav>
@@ -506,6 +565,7 @@ export default function FeedbackPage() {
             {SECTION_ORDER.map((sectionType) => {
               const result = resultsByType[sectionType];
               const isExpanded = expandedSection === sectionType;
+              const isDetailLoading = detailLoadingByType[sectionType];
 
               if (!result) {
                 return (
@@ -515,6 +575,7 @@ export default function FeedbackPage() {
                   >
                     <button
                       type="button"
+                      disabled={isSectionPending}
                       onClick={() => toggleSection(sectionType)}
                       className="w-full text-left"
                     >
@@ -563,6 +624,7 @@ export default function FeedbackPage() {
                   >
                     <button
                       type="button"
+                      disabled={isSectionPending}
                       onClick={() => toggleSection(sectionType)}
                       className="w-full text-left"
                     >
@@ -600,7 +662,11 @@ export default function FeedbackPage() {
 
                     {isExpanded && (
                       <>
-                        {writingFeedback ? (
+                        {isDetailLoading && !writingFeedback ? (
+                          <p className="mt-4 text-sm text-gray-500">
+                            Loading detailed feedback for this section...
+                          </p>
+                        ) : writingFeedback ? (
                           <div className="mt-5 space-y-4">
                             {writingFeedback.overall && (
                               <div className="rounded-xl border border-gray-100 bg-gray-50 p-4 text-sm text-gray-700">
@@ -675,9 +741,14 @@ export default function FeedbackPage() {
                 );
               }
 
-              const incorrectItems = feedbackMetaByType[sectionType];
-              const totalQuestions = result.section?.questions?.length || 0;
-              const correctCount = Math.max(totalQuestions - incorrectItems.length, 0);
+              const sectionMeta = feedbackMetaByType[sectionType];
+              const incorrectItems = sectionMeta.incorrectItems;
+              const totalQuestions = sectionMeta.isReady
+                ? result.section?.questions?.length || 0
+                : 0;
+              const correctCount = sectionMeta.isReady
+                ? Math.max(totalQuestions - incorrectItems.length, 0)
+                : null;
 
               return (
                 <section
@@ -686,6 +757,7 @@ export default function FeedbackPage() {
                 >
                   <button
                     type="button"
+                    disabled={isSectionPending}
                     onClick={() => toggleSection(sectionType)}
                     className="w-full text-left"
                   >
@@ -700,7 +772,11 @@ export default function FeedbackPage() {
                       </div>
                       <div className="flex items-center gap-2">
                         <span className="inline-flex rounded-lg bg-gray-100 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-gray-700">
-                          {correctCount}/{totalQuestions} correct
+                          {sectionMeta.isReady && correctCount !== null
+                            ? `${correctCount}/${totalQuestions} correct`
+                            : isDetailLoading
+                              ? "Loading"
+                              : "Detailed"}
                         </span>
                         <span className="inline-flex rounded-lg bg-gray-900 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-white">
                           {typeof result.bandScore === "number"
@@ -728,7 +804,15 @@ export default function FeedbackPage() {
 
                   {isExpanded && (
                     <>
-                      {incorrectItems.length === 0 ? (
+                      {isDetailLoading ? (
+                        <p className="mt-4 text-sm text-gray-500">
+                          Loading detailed feedback for this section...
+                        </p>
+                      ) : !sectionMeta.isReady ? (
+                        <p className="mt-4 text-sm text-gray-500">
+                          Detailed feedback is being prepared. Please check back shortly.
+                        </p>
+                      ) : incorrectItems.length === 0 ? (
                         <p className="mt-4 rounded-xl border border-emerald-100 bg-emerald-50/70 px-4 py-3 text-sm text-emerald-700">
                           Great work. No incorrect responses found in your latest {" "}
                           {SECTION_LABELS[sectionType].toLowerCase()} attempt.

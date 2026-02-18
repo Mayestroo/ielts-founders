@@ -27,6 +27,7 @@ import { ExamSessionService } from '../exam-runtime/exam-session.service';
 import { SubmissionService } from '../exam-runtime/submission.service';
 import {
   CreateAssignmentDto,
+  CreateBulkFullMockDto,
   CreateExamSectionDto,
   CreateFullMockDto,
   HeartbeatDto,
@@ -168,6 +169,19 @@ export class ExamsController {
     );
   }
 
+  @Post('assignments/full-mock/bulk')
+  @Roles(Role.TEACHER, Role.CENTER_ADMIN)
+  createBulkFullMockAssignment(
+    @Body() dto: CreateBulkFullMockDto,
+    @Request() req: AuthenticatedRequest,
+  ) {
+    return this.assignmentService.createBulkFullMock(
+      dto,
+      req.user.id,
+      req.user.centerId!,
+    );
+  }
+
   @Get('assignments')
   @Roles(Role.TEACHER, Role.CENTER_ADMIN, Role.SUPER_ADMIN)
   findAllAssignments(
@@ -191,6 +205,7 @@ export class ExamsController {
     @Query('take') take?: number,
     @Query('search') search?: string,
     @Query('sectionType') sectionType?: string,
+    @Query('fullMockOnly') fullMockOnly?: string,
   ) {
     let normalizedSectionType: ExamSectionType | undefined;
     if (sectionType) {
@@ -210,6 +225,7 @@ export class ExamsController {
         take,
         search,
         sectionType: normalizedSectionType,
+        fullMockOnly: fullMockOnly === 'true',
       },
     );
   }
@@ -218,12 +234,14 @@ export class ExamsController {
   getStudentAssignments(
     @Param('studentId') studentId: string,
     @Request() req: AuthenticatedRequest,
+    @Query('fullMockOnly') fullMockOnly?: string,
   ) {
     return this.assignmentService.getStudentAssignments(
       studentId,
       req.user.id,
       req.user.role,
       req.user.centerId,
+      fullMockOnly === 'true',
     );
   }
 
@@ -312,6 +330,7 @@ export class ExamsController {
     @Body() body: HeartbeatDto,
     @Request() req: AuthenticatedRequest,
   ) {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-return
     return this.examSessionService.heartbeat(id, req.user.id, body.tabId);
   }
 

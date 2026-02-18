@@ -62,10 +62,16 @@ export function GoogleAuthButton({
   onCredential,
 }: GoogleAuthButtonProps) {
   const buttonRef = useRef<HTMLDivElement>(null);
+  const onCredentialRef = useRef(onCredential);
+  const renderedConfigKeyRef = useRef<string | null>(null);
   const [scriptReady, setScriptReady] = useState(
     typeof window !== "undefined" && Boolean(window.google),
   );
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    onCredentialRef.current = onCredential;
+  }, [onCredential]);
 
   const handleCredential = useCallback(
     (response: GoogleCredentialResponse) => {
@@ -77,7 +83,7 @@ export function GoogleAuthButton({
 
       setError(null);
 
-      void onCredential(token).catch((credentialError) => {
+      void onCredentialRef.current(token).catch((credentialError) => {
         const message =
           credentialError instanceof Error
             ? credentialError.message
@@ -85,11 +91,17 @@ export function GoogleAuthButton({
         setError(message);
       });
     },
-    [onCredential],
+    [],
   );
 
   useEffect(() => {
     if (!scriptReady || !clientId || !window.google || !buttonRef.current) {
+      renderedConfigKeyRef.current = null;
+      return;
+    }
+
+    const configKey = `${clientId}:${text}`;
+    if (renderedConfigKeyRef.current === configKey) {
       return;
     }
 
@@ -109,6 +121,8 @@ export function GoogleAuthButton({
       shape: "pill",
       width: 360,
     });
+
+    renderedConfigKeyRef.current = configKey;
   }, [clientId, handleCredential, scriptReady, text]);
 
   if (!clientId) {

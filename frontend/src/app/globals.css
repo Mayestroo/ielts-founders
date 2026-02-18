@@ -6,8 +6,10 @@
   --exam-bg-color: #ffffff;
   --exam-border-color: #E5E7EB;
   --exam-secondary-bg: #F9FAFB;
-  --exam-active-bg: #000000;
+  --exam-active-bg: #ec1f27;
   --exam-active-text: #ffffff;
+  --button-brand-color: #ec1f27;
+  --button-brand-hover-color: #d41b22;
   color-scheme: light;
   font-family: Arial, sans-serif;
 }
@@ -110,6 +112,39 @@ body {
 
 .high-contrast .text-white {
   color: #000000 !important;
+}
+
+button.bg-black,
+a.bg-black,
+[role="button"].bg-black {
+  background-color: var(--button-brand-color) !important;
+}
+
+button.hover\:bg-gray-900:hover,
+button.hover\:bg-gray-800:hover,
+a.hover\:bg-gray-900:hover,
+a.hover\:bg-gray-800:hover,
+[role="button"].hover\:bg-gray-900:hover,
+[role="button"].hover\:bg-gray-800:hover {
+  background-color: var(--button-brand-hover-color) !important;
+}
+
+button.focus\:ring-black:focus,
+a.focus\:ring-black:focus,
+[role="button"].focus\:ring-black:focus {
+  --tw-ring-color: var(--button-brand-color) !important;
+}
+
+button.shadow-black\/20,
+a.shadow-black\/20,
+[role="button"].shadow-black\/20 {
+  --tw-shadow-color: rgb(236 31 39 / 0.2) !important;
+}
+
+button.shadow-black\/10,
+a.shadow-black\/10,
+[role="button"].shadow-black\/10 {
+  --tw-shadow-color: rgb(236 31 39 / 0.1) !important;
 }
 
 

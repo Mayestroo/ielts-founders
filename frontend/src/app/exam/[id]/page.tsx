@@ -8,10 +8,17 @@ import { WritingSection } from "@/features/exam/sections/WritingSection";
 import { AnswerValue } from "@/features/exam/types";
 import { useAntiCheat, useExamSession } from "@/hooks";
 import { api } from "@/lib/api";
+import {
+  isPartAssignmentId,
+  isTaskAssignmentId,
+  getOriginalAssignmentIdFromPartId,
+  type PartNumber,
+  type TaskNumber,
+} from "@/lib/examParts";
 import { useExamStore } from "@/store";
 import { BreakStatus, ExamAssignment, ExamSection, Question, StartExamResponse } from "@/types";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { RefObject, useCallback, useEffect, useRef, useState } from "react";
+import { RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ConfirmationModal } from "@/components/ui/ConfirmationModal";
 
 function ExamContent({ assignmentId }: { assignmentId: string }) {
@@ -41,6 +48,25 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
   const [isExamCompleted, setIsExamCompleted] = useState(false);
   const wasFullscreenRef = useRef<boolean>(true);
 
+  // Detect if this is a partial assignment (part or task)
+  const isPartialAssignment = useMemo(
+    () => isPartAssignmentId(assignmentId) || isTaskAssignmentId(assignmentId),
+    [assignmentId]
+  );
+  const originalAssignmentId = useMemo(
+    () => (isPartialAssignment ? getOriginalAssignmentIdFromPartId(assignmentId) : assignmentId),
+    [isPartialAssignment, assignmentId]
+  );
+  const assignmentPart = useMemo<PartNumber | null>(() => {
+    if (!isPartialAssignment) return null;
+    const match = assignmentId.match(/-part-(\d)$/);
+    return match ? (parseInt(match[1], 10) as PartNumber) : null;
+  }, [isPartialAssignment, assignmentId]);
+  const assignmentTask = useMemo<TaskNumber | null>(() => {
+    if (!isPartialAssignment) return null;
+    const match = assignmentId.match(/-task-(\d)$/);
+    return match ? (parseInt(match[1], 10) as TaskNumber) : null;
+  }, [isPartialAssignment, assignmentId]);
 
   const audioRef = useRef<HTMLAudioElement>(null) as unknown as RefObject<HTMLAudioElement>;
   const introVideoRef = useRef<HTMLVideoElement>(null) as unknown as RefObject<HTMLVideoElement>;
@@ -167,12 +193,70 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
       setError("");
 
       api
-        .getAssignment(assignmentId)
+        .getAssignment(originalAssignmentId)
         .then(async (data) => {
-          setAssignment(withComputedRemainingTime(data));
+          // Filter section data for partial assignments (parts or tasks)
+          let processedData = data;
+          if (isPartialAssignment && data.section) {
+            const section = data.section;
+            const allQuestions = section.questions || [];
+            
+            if (section.type === "READING" && assignmentPart) {
+              // Handle Reading parts
+              const passages = section.passages || [];
+              if (passages.length >= assignmentPart) {
+                const targetPassage = passages[assignmentPart - 1];
+                const passageQuestions = allQuestions.filter(
+                  (q) => q.passageId === targetPassage.id
+                );
+                
+                processedData = {
+                  ...data,
+                  section: {
+                    ...section,
+                    title: `${section.title} - Part ${assignmentPart}`,
+                    duration: 20,
+                    passages: [targetPassage],
+                    questions: passageQuestions,
+                  },
+                };
+              }
+            } else if (section.type === "LISTENING" && assignmentPart) {
+              // Handle Listening parts - split questions into 4 sections
+              const questionsPerPart = Math.ceil(allQuestions.length / 4);
+              const startIdx = (assignmentPart - 1) * questionsPerPart;
+              const endIdx = Math.min(startIdx + questionsPerPart, allQuestions.length);
+              const partQuestions = allQuestions.slice(startIdx, endIdx);
+              
+              processedData = {
+                ...data,
+                section: {
+                  ...section,
+                  title: `${section.title} - Section ${assignmentPart}`,
+                  duration: 8,
+                  questions: partQuestions,
+                },
+              };
+            } else if (section.type === "WRITING" && assignmentTask) {
+              // Handle Writing tasks - each task is one question
+              const taskQuestion = allQuestions[assignmentTask - 1];
+              if (taskQuestion) {
+                processedData = {
+                  ...data,
+                  section: {
+                    ...section,
+                    title: `${section.title} - Task ${assignmentTask}`,
+                    duration: assignmentTask === 1 ? 20 : 40,
+                    questions: [taskQuestion],
+                  },
+                };
+              }
+            }
+          }
+          setAssignment(withComputedRemainingTime(processedData));
           
           const storedAnswers = useExamStore.getState().answers as Record<string, AnswerValue>;
-          const sectionQuestions = (data.section?.questions || []) as Question[];
+          const sectionQuestions = (processedData.section?.questions || []) as Question[];
           const filteredLocalAnswers = sectionQuestions.length
             ? (Object.fromEntries(
                 Object.entries(storedAnswers).filter(([id]) =>
@@ -188,7 +272,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
             setAnswers({ ...(serverAnswers || {}) });
           };
           const resetLocalSession = () => {
-            useExamStore.getState().resetSession(assignmentId);
+            useExamStore.getState().resetSession(originalAssignmentId);
           };
 
           if (data.status === "IN_PROGRESS") {
@@ -197,28 +281,83 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
             try {
               const tabId = typeof window !== "undefined" ? sessionStorage.getItem('exam_tab_id') : null;
               const reconnectData = await api.reconnectExam(
-                assignmentId, 
+                originalAssignmentId,
                 Object.keys(filteredLocalAnswers).length > 0
-                  ? (filteredLocalAnswers as Record<string, any>)
+                  ? filteredLocalAnswers
                   : undefined,
                 tabId || undefined
               );
-              
+
               if (reconnectData.success && reconnectData.assignment) {
-                setAssignment(withComputedRemainingTime(reconnectData.assignment));
-                applyMergedAnswers(reconnectData.assignment.answers as Record<string, AnswerValue>);
+                // Filter reconnect data for partial assignments
+                let processedReconnectData = reconnectData.assignment;
+                if (isPartialAssignment && reconnectData.assignment.section) {
+                  const section = reconnectData.assignment.section;
+                  const allQuestions = section.questions || [];
+
+                  if (section.type === "READING" && assignmentPart) {
+                    const passages = section.passages || [];
+                    if (passages.length >= assignmentPart) {
+                      const targetPassage = passages[assignmentPart - 1];
+                      const passageQuestions = allQuestions.filter(
+                        (q) => q.passageId === targetPassage.id
+                      );
+
+                      processedReconnectData = {
+                        ...reconnectData.assignment,
+                        section: {
+                          ...section,
+                          title: `${section.title} - Part ${assignmentPart}`,
+                          duration: 20,
+                          passages: [targetPassage],
+                          questions: passageQuestions,
+                        },
+                      };
+                    }
+                  } else if (section.type === "LISTENING" && assignmentPart) {
+                    const questionsPerPart = Math.ceil(allQuestions.length / 4);
+                    const startIdx = (assignmentPart - 1) * questionsPerPart;
+                    const endIdx = Math.min(startIdx + questionsPerPart, allQuestions.length);
+                    const partQuestions = allQuestions.slice(startIdx, endIdx);
+
+                    processedReconnectData = {
+                      ...reconnectData.assignment,
+                      section: {
+                        ...section,
+                        title: `${section.title} - Section ${assignmentPart}`,
+                        duration: 8,
+                        questions: partQuestions,
+                      },
+                    };
+                  } else if (section.type === "WRITING" && assignmentTask) {
+                    const taskQuestion = allQuestions[assignmentTask - 1];
+                    if (taskQuestion) {
+                      processedReconnectData = {
+                        ...reconnectData.assignment,
+                        section: {
+                          ...section,
+                          title: `${section.title} - Task ${assignmentTask}`,
+                          duration: assignmentTask === 1 ? 20 : 40,
+                          questions: [taskQuestion],
+                        },
+                      };
+                    }
+                  }
+                }
+                setAssignment(withComputedRemainingTime(processedReconnectData as ExamAssignment & { remainingTime?: number }));
+                applyMergedAnswers(processedReconnectData.answers as Record<string, AnswerValue>);
               } else {
                 // If reconnect fails, fallback to DB data
-                handleStartResponse(data as StartExamResponse);
-                applyMergedAnswers(data.answers as Record<string, AnswerValue>);
+                handleStartResponse(processedData as StartExamResponse);
+                applyMergedAnswers(processedData.answers as Record<string, AnswerValue>);
               }
             } catch (err) {
               console.error("Reconnect failed during init:", err);
-              handleStartResponse(data as StartExamResponse);
-              applyMergedAnswers(data.answers as Record<string, AnswerValue>);
+              handleStartResponse(processedData as StartExamResponse);
+              applyMergedAnswers(processedData.answers as Record<string, AnswerValue>);
             }
 
-            if (data.section?.type === "LISTENING") {
+            if (processedData.section?.type === "LISTENING") {
               // Only show play overlay if audio hasn't started (approximated by lack of answers or explicit state)
               // For now, simpler to always show it on refresh for Listening
               setShowPlayOverlay(true);
@@ -230,18 +369,33 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
             resetLocalSession();
           }
 
-          if (data.status === "ASSIGNED" || forceShowVideo) {
-            applyServerAnswers(data.answers as Record<string, AnswerValue>);
+          // Only show intro video for offline exams (full mock), not for individual parts/tasks
+          // Partial assignments (Reading parts, Listening sections, Writing tasks) never show intro
+          const isPartialTest = isPartialAssignment;
+          const isOfflineExam = Boolean(data.fullMockSessionId);
+          const shouldShowIntro = !isPartialTest && ((data.status === "ASSIGNED" && isOfflineExam) || forceShowVideo);
+          
+          console.log('[Exam Debug] Intro video check:', {
+            assignmentId,
+            fullMockSessionId: data.fullMockSessionId,
+            isPartialTest,
+            isOfflineExam,
+            shouldShowIntro
+          });
+          
+          if (shouldShowIntro) {
+            applyServerAnswers(processedData.answers as Record<string, AnswerValue>);
             setShowIntroVideo(true);
           } else {
-            applyServerAnswers(data.answers as Record<string, AnswerValue>);
+            applyServerAnswers(processedData.answers as Record<string, AnswerValue>);
+            setShowIntroVideo(false);
           }
         })
         .catch((err) => {
           setError(err.message);
         });
     }
-  }, [assignmentId, forceShowVideo, handleStartResponse, isAuthenticated, withComputedRemainingTime]);
+  }, [assignmentId, originalAssignmentId, isPartialAssignment, assignmentPart, assignmentTask, forceShowVideo, handleStartResponse, isAuthenticated, withComputedRemainingTime]);
 
   const enterFullscreen = useCallback(async () => {
     try {
@@ -580,7 +734,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
       setIsReviewModalOpen(false);
       setIsConfirmModalOpen(false);
     }
-  }, [assignment, isSubmitting, syncAnswers, answers, redirectToBreak, exitExamToDashboard, navigateToNextAssignment, isTransientSubmitFailure, recoverSubmittedStateAfterFailure]);
+  }, [assignment, isSubmitting, syncAnswers, answers, redirectToBreak, exitExamToDashboard, navigateToNextAssignment, isTransientSubmitFailure, recoverSubmittedStateAfterFailure, router, tabId]);
 
   // Keep ref updated
   useEffect(() => {

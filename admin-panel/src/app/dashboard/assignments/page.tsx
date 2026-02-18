@@ -5,8 +5,9 @@ import { api } from '@/lib/api';
 import { ADMIN_QUERY_TIMINGS } from '@/lib/query/config';
 import { adminQueryKeys } from '@/lib/query/keys';
 import {
-  ExamSectionOption,
-  StudentSummary,
+    BulkFullMockResult,
+    ExamSectionOption,
+    StudentSummary,
 } from '@/types';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'next/navigation';
@@ -26,7 +27,9 @@ export default function AssignmentsPage() {
     readingSectionId: '',
     writingSectionId: '',
   });
-  const [isFullMock, setIsFullMock] = useState(offlineModePreset);
+  const [isFullMock] = useState(true);
+  const [selectedStudentIds, setSelectedStudentIds] = useState<Set<string>>(new Set());
+  const [studentSearchTerm, setStudentSearchTerm] = useState('');
 
   // Filtering States
   const [searchTerm, setSearchTerm] = useState('');
@@ -49,14 +52,16 @@ export default function AssignmentsPage() {
     setShowModal(false);
     setFormData({ studentId: '', listeningSectionId: '', readingSectionId: '', writingSectionId: '' });
     setError('');
-    setIsFullMock(false);
+    setSelectedStudentIds(new Set());
+    setStudentSearchTerm('');
   };
 
-  const openAssignModal = (offlineMode = false) => {
+  const openAssignModal = () => {
     setShowModal(true);
     setError('');
     setFormData({ studentId: '', listeningSectionId: '', readingSectionId: '', writingSectionId: '' });
-    setIsFullMock(offlineMode);
+    setSelectedStudentIds(new Set());
+    setStudentSearchTerm('');
   };
 
   const groupedAssignmentsQuery = useQuery({
@@ -72,6 +77,7 @@ export default function AssignmentsPage() {
         pageSize,
         debouncedSearchTerm || undefined,
         typeFilter || undefined,
+        true, // fullMockOnly — admin page only shows offline exams
         { signal },
       ),
     staleTime: ADMIN_QUERY_TIMINGS.list.staleTime,
@@ -100,7 +106,7 @@ export default function AssignmentsPage() {
       ? adminQueryKeys.studentAssignments(selectedStudent.id)
       : ['admin', 'assignments', 'student', 'none'],
     queryFn: ({ signal }) =>
-      api.getStudentAssignments(selectedStudent!.id, { signal }),
+      api.getStudentAssignments(selectedStudent!.id, true, { signal }),
     enabled: showDetailsModal && Boolean(selectedStudent),
     staleTime: ADMIN_QUERY_TIMINGS.list.staleTime,
     gcTime: ADMIN_QUERY_TIMINGS.list.gcTime,
@@ -166,6 +172,46 @@ export default function AssignmentsPage() {
       await queryClient.invalidateQueries({ queryKey: ['admin', 'assignments'] });
     },
   });
+
+  const bulkAssignMutation = useMutation({
+    mutationFn: (payload: {
+      studentIds: string[];
+      listeningSectionId: string;
+      readingSectionId: string;
+      writingSectionId: string;
+    }) => api.createBulkFullMockAssignment(payload),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['admin', 'assignments'] });
+    },
+  });
+
+  // Filter students for multi-select search in modal
+  const filteredStudents = useMemo(() => {
+    if (!studentSearchTerm.trim()) return students;
+    const term = studentSearchTerm.toLowerCase();
+    return students.filter(s => 
+      (s.firstName?.toLowerCase() || '').includes(term) ||
+      (s.lastName?.toLowerCase() || '').includes(term) ||
+      s.username.toLowerCase().includes(term)
+    );
+  }, [students, studentSearchTerm]);
+
+  const toggleStudent = (id: string) => {
+    setSelectedStudentIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleAllStudents = () => {
+    if (selectedStudentIds.size === filteredStudents.length) {
+      setSelectedStudentIds(new Set());
+    } else {
+      setSelectedStudentIds(new Set(filteredStudents.map(s => s.id)));
+    }
+  };
 
   // Group exams by type for the creation form
   const listeningExams = exams.filter(e => e.type === 'LISTENING');
@@ -292,17 +338,47 @@ export default function AssignmentsPage() {
           setError('Full mock requires listening, reading, and writing sections');
           return;
         }
-      } else {
-        const sectionsToAssign = [
-          formData.listeningSectionId,
-          formData.readingSectionId,
-          formData.writingSectionId,
-        ].filter(Boolean);
 
-        if (sectionsToAssign.length === 0) {
-          setError('Please select at least one exam section');
+        if (selectedStudentIds.size === 0) {
+          setError('Please select at least one student');
           return;
         }
+
+        // Use bulk endpoint for multi-student offline exam
+        const result: BulkFullMockResult = await bulkAssignMutation.mutateAsync({
+          studentIds: Array.from(selectedStudentIds),
+          listeningSectionId: formData.listeningSectionId,
+          readingSectionId: formData.readingSectionId,
+          writingSectionId: formData.writingSectionId,
+        });
+
+        if (result.errorCount === 0) {
+          success(`Offline exam assigned to ${result.successCount} student${result.successCount > 1 ? 's' : ''}`);
+        } else if (result.successCount > 0) {
+          showError(
+            `${result.successCount} assigned, ${result.errorCount} failed: ${result.results.filter(r => !r.success).map(r => `${r.studentName}: ${r.error}`).join('; ')}`
+          );
+        } else {
+          setError(
+            `All ${result.errorCount} failed: ${result.results.map(r => `${r.studentName}: ${r.error}`).join('; ')}`
+          );
+          return;
+        }
+
+        closeAssignModal();
+        return;
+      }
+
+      // Single section assignment flow (unchanged)
+      const sectionsToAssign = [
+        formData.listeningSectionId,
+        formData.readingSectionId,
+        formData.writingSectionId,
+      ].filter(Boolean);
+
+      if (sectionsToAssign.length === 0) {
+        setError('Please select at least one exam section');
+        return;
       }
 
       await createAssignmentsMutation.mutateAsync({
@@ -313,7 +389,7 @@ export default function AssignmentsPage() {
         isFullMock,
       });
 
-      success(isFullMock ? 'Full mock assigned' : 'Assignment created');
+      success('Assignment created');
       closeAssignModal();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to assign exam');
@@ -351,20 +427,14 @@ export default function AssignmentsPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold text-slate-900 dark:text-white">Assignments</h1>
+          <h1 className="text-2xl font-semibold text-slate-900 dark:text-white">Offline Exams</h1>
           <p className="text-slate-500 mt-1">
-            Manage exam assignments for students
+            Manage offline exam assignments for center students
             <span className="ml-2 text-xs text-slate-400">{total} groups</span>
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="secondary" onClick={() => openAssignModal(false)}>
-            <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-            </svg>
-            Assign Section Tests
-          </Button>
-          <Button onClick={() => openAssignModal(true)}>
+          <Button onClick={() => openAssignModal()}>
             <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2" />
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5a2 2 0 002 2h2a2 2 0 002-2" />
@@ -697,14 +767,14 @@ export default function AssignmentsPage() {
       {/* Assign Modal - Section-Based (Existing unchanged) */}
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <Card className="w-full max-w-lg">
+          <Card className={`w-full ${isFullMock ? 'max-w-2xl' : 'max-w-lg'}`}>
             <CardHeader>
               <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
                 {isFullMock ? 'Assign Offline Exam' : 'Assign Exam Sections'}
               </h2>
               <p className="text-sm text-gray-500 mt-1">
                 {isFullMock
-                  ? 'Create a full mock bundle for offline center-based exam flow.'
+                  ? 'Select students and exam sections for offline center-based exam flow.'
                   : 'Select section tests to assign to the student'}
               </p>
             </CardHeader>
@@ -719,37 +789,93 @@ export default function AssignmentsPage() {
                     Loading students and exam sections...
                   </div>
                 )}
-                
-                <Select
-                  label="Student"
-                  options={students.map(s => ({ 
-                    value: s.id, 
-                    label: s.firstName ? `${s.firstName} ${s.lastName || ''} (@${s.username})` : s.username 
-                  }))}
-                  value={formData.studentId}
-                  onChange={(e) => setFormData({ ...formData, studentId: e.target.value })}
-                  placeholder="Select a student"
-                  disabled={isReferenceLoading || students.length === 0}
-                  required
-                />
 
-                <div className="rounded-lg border border-gray-200 dark:border-gray-700 p-4">
-                  <label className="flex items-center justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-medium text-gray-900 dark:text-gray-100">Full Mock Bundle</p>
-                      <p className="text-xs text-gray-500 dark:text-gray-400">
-                        Links listening, reading, and writing sections as one offline exam flow.
-                      </p>
+                {/* Multi-student selection for full mock */}
+                {isFullMock ? (
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                        Students
+                        {selectedStudentIds.size > 0 && (
+                          <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-slate-900 text-white">
+                            {selectedStudentIds.size} selected
+                          </span>
+                        )}
+                      </label>
+                      <button
+                        type="button"
+                        onClick={toggleAllStudents}
+                        className="text-xs text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white font-medium"
+                      >
+                        {selectedStudentIds.size === filteredStudents.length && filteredStudents.length > 0
+                          ? 'Deselect All'
+                          : 'Select All'}
+                      </button>
                     </div>
-                    <input
-                      type="checkbox"
-                      checked={isFullMock}
-                      onChange={(e) => setIsFullMock(e.target.checked)}
-                      disabled={isReferenceLoading}
-                      className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300"
-                    />
-                  </label>
-                </div>
+                    <div className="relative mb-2">
+                      <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-400">
+                        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                        </svg>
+                      </span>
+                      <input
+                        type="text"
+                        placeholder="Search students..."
+                        value={studentSearchTerm}
+                        onChange={(e) => setStudentSearchTerm(e.target.value)}
+                        className="w-full pl-9 pr-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:ring-2 focus:ring-slate-300 outline-none"
+                      />
+                    </div>
+                    <div className="max-h-48 overflow-y-auto rounded-lg border border-slate-200 dark:border-slate-700 divide-y divide-slate-100 dark:divide-slate-800">
+                      {filteredStudents.length === 0 ? (
+                        <div className="p-4 text-sm text-slate-500 text-center">
+                          {studentSearchTerm ? 'No students match your search' : 'No students found'}
+                        </div>
+                      ) : (
+                        filteredStudents.map(s => (
+                          <label
+                            key={s.id}
+                            className={`flex items-center gap-3 px-3 py-2.5 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors ${
+                              selectedStudentIds.has(s.id) ? 'bg-slate-50 dark:bg-slate-800/30' : ''
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={selectedStudentIds.has(s.id)}
+                              onChange={() => toggleStudent(s.id)}
+                              className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300"
+                            />
+                            <div className="flex items-center gap-2 min-w-0">
+                              <div className="w-7 h-7 rounded-full bg-slate-900 flex items-center justify-center text-white font-semibold text-xs shrink-0">
+                                {s.firstName?.[0] || s.username[0].toUpperCase()}
+                              </div>
+                              <div className="min-w-0">
+                                <p className="text-sm font-medium text-slate-900 dark:text-white truncate">
+                                  {s.firstName ? `${s.firstName} ${s.lastName || ''}` : s.username}
+                                </p>
+                                <p className="text-xs text-slate-500 truncate">@{s.username}</p>
+                              </div>
+                            </div>
+                          </label>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <Select
+                    label="Student"
+                    options={students.map(s => ({ 
+                      value: s.id, 
+                      label: s.firstName ? `${s.firstName} ${s.lastName || ''} (@${s.username})` : s.username 
+                    }))}
+                    value={formData.studentId}
+                    onChange={(e) => setFormData({ ...formData, studentId: e.target.value })}
+                    placeholder="Select a student"
+                    disabled={isReferenceLoading || students.length === 0}
+                    required
+                  />
+                )}
+
 
                 <div className="border-t border-gray-200 dark:border-gray-700 pt-4 mt-4">
                   <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">Exam Sections</p>
@@ -828,16 +954,17 @@ export default function AssignmentsPage() {
                     type="submit"
                     className="flex-1"
                     disabled={
-                      createAssignmentsMutation.isPending ||
+                      (isFullMock ? bulkAssignMutation.isPending : createAssignmentsMutation.isPending) ||
                       isReferenceLoading ||
                       students.length === 0 ||
-                      exams.length === 0
+                      exams.length === 0 ||
+                      (isFullMock && selectedStudentIds.size === 0)
                     }
                   >
-                    {createAssignmentsMutation.isPending
+                    {(isFullMock ? bulkAssignMutation.isPending : createAssignmentsMutation.isPending)
                       ? 'Assigning...'
                       : isFullMock
-                      ? 'Assign Full Mock'
+                      ? `Assign to ${selectedStudentIds.size} Student${selectedStudentIds.size !== 1 ? 's' : ''}`
                       : 'Assign Sections'}
                   </Button>
                 </div>

@@ -5,16 +5,17 @@ import { ADMIN_QUERY_TIMINGS } from '@/lib/query/config';
 import { adminQueryKeys } from '@/lib/query/keys';
 import { Role, User } from '@/types';
 import {
-  useMutation,
-  useQuery,
-  useQueryClient,
+    useMutation,
+    useQuery,
+    useQueryClient,
 } from '@tanstack/react-query';
 import {
-  createContext,
-  ReactNode,
-  useContext,
-  useEffect,
-  useState,
+    createContext,
+    ReactNode,
+    useCallback,
+    useContext,
+    useMemo,
+    useRef,
 } from 'react';
 
 interface AuthContextType {
@@ -28,55 +29,57 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const isAuthError = (error: unknown) => {
-  if (!(error instanceof Error)) {
-    return false;
-  }
-
-  const message = error.message.toLowerCase();
-  return (
-    message.includes('401') ||
-    message.includes('403') ||
-    message.includes('unauthorized') ||
-    message.includes('forbidden') ||
-    message.includes('session expired')
-  );
-};
-
 export function AuthProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
-  const [sessionUser, setSessionUser] = useState<User | null>(null);
+  const logoutTriggered = useRef(false);
 
   const profileQuery = useQuery({
     queryKey: adminQueryKeys.authProfile(),
     queryFn: ({ signal }) => api.getProfile({ signal }),
     staleTime: ADMIN_QUERY_TIMINGS.profile.staleTime,
     gcTime: ADMIN_QUERY_TIMINGS.profile.gcTime,
+    retry: (failureCount, error) => {
+      // Never retry auth errors
+      if (error instanceof Error) {
+        const msg = error.message.toLowerCase();
+        if (msg.includes('401') || msg.includes('unauthorized') || msg.includes('forbidden')) {
+          return false;
+        }
+      }
+      return failureCount < 2;
+    },
   });
 
-  useEffect(() => {
-    if (profileQuery.data) {
-      setSessionUser(profileQuery.data);
-    }
-  }, [profileQuery.data]);
+  // Derive auth state directly from the query — no intermediate useState
+  // This eliminates the race condition where isPending=false but sessionUser
+  // hasn't been set yet by a useEffect.
+  const user: User | null = profileQuery.data ?? null;
+  const isLoading = profileQuery.isPending;
+  const isAuthenticated = !!user;
 
-  useEffect(() => {
-    if (!profileQuery.error) {
-      return;
+  // Handle auth errors: clear token when we get a definitive auth failure
+  if (profileQuery.isError && !logoutTriggered.current) {
+    const error = profileQuery.error;
+    if (error instanceof Error) {
+      const msg = error.message.toLowerCase();
+      const isAuthError =
+        msg.includes('401') ||
+        msg.includes('403') ||
+        msg.includes('unauthorized') ||
+        msg.includes('forbidden') ||
+        msg.includes('session expired');
+      if (isAuthError) {
+        logoutTriggered.current = true;
+        api.logout();
+        queryClient.removeQueries({ queryKey: adminQueryKeys.authProfile() });
+      }
     }
+  }
 
-    if (isAuthError(profileQuery.error)) {
-      api.logout();
-      setSessionUser(null);
-      queryClient.removeQueries({ queryKey: adminQueryKeys.authProfile() });
-      return;
-    }
-
-    console.warn(
-      'Profile fetch failed but keeping session (transient error):',
-      profileQuery.error,
-    );
-  }, [profileQuery.error, queryClient]);
+  // Reset the logout flag when the query succeeds
+  if (profileQuery.isSuccess) {
+    logoutTriggered.current = false;
+  }
 
   const loginMutation = useMutation({
     mutationFn: ({ username, password }: { username: string; password: string }) =>
@@ -84,36 +87,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     retry: 0,
   });
 
-  const login = async (username: string, password: string) => {
+  const login = useCallback(async (username: string, password: string) => {
     const response = await loginMutation.mutateAsync({ username, password });
-    setSessionUser(response.user);
+    logoutTriggered.current = false;
     queryClient.setQueryData(adminQueryKeys.authProfile(), response.user);
-  };
+  }, [loginMutation, queryClient]);
 
-  const logout = () => {
+  const logout = useCallback(() => {
     api.logout();
-    setSessionUser(null);
     queryClient.clear();
-  };
+  }, [queryClient]);
 
-  const hasRole = (...roles: Role[]) => {
-    if (!sessionUser) return false;
-    return roles.includes(sessionUser.role);
-  };
+  const hasRole = useCallback((...roles: Role[]) => {
+    if (!user) return false;
+    return roles.includes(user.role);
+  }, [user]);
 
-  const isLoading = profileQuery.isPending && !sessionUser;
+  const value = useMemo(() => ({
+    user,
+    isLoading,
+    isAuthenticated,
+    login,
+    logout,
+    hasRole,
+  }), [user, isLoading, isAuthenticated, login, logout, hasRole]);
 
   return (
-    <AuthContext.Provider
-      value={{
-        user: sessionUser,
-        isLoading,
-        isAuthenticated: !!sessionUser,
-        login,
-        logout,
-        hasRole,
-      }}
-    >
+    <AuthContext.Provider value={value}>
       {children}
     </AuthContext.Provider>
   );

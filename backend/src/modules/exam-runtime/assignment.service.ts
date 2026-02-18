@@ -12,15 +12,23 @@ import {
   Prisma,
   Role,
 } from '@prisma/client';
+import { CreateAssignmentDto } from '../exams/dto/create-assignment.dto';
+import { CreateFullMockDto } from '../exams/dto/create-full-mock.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import { ResponseCacheService } from '../redis';
 import { SessionService } from '../session/session.service';
-import { CreateAssignmentDto } from '../exams/dto/create-assignment.dto';
-import { CreateFullMockDto } from '../exams/dto/create-full-mock.dto';
 
 const ASSIGNMENTS_GROUPED_CACHE_PREFIX = 'cache:assignments:grouped:v1:';
 const ASSIGNMENTS_GROUPED_TTL_SECONDS = 20;
-const FREE_SECTION_ASSIGNMENT_LIMIT = 3;
+
+// Free assignment limits per section type
+// These determine how many tests are auto-assigned as FREE
+const SECTION_ASSIGNMENT_LIMITS: Record<ExamSectionType, number> = {
+  [ExamSectionType.READING]: 2, // 1 complete + 1 split into 3 parts = 4 items
+  [ExamSectionType.LISTENING]: 2, // 1 complete + 1 split into 4 parts = 5 items
+  [ExamSectionType.WRITING]: 2, // 1 complete + 1 split into 2 tasks = 3 items
+};
+
 const AUTO_ASSIGN_SECTION_TYPES: ExamSectionType[] = [
   ExamSectionType.LISTENING,
   ExamSectionType.READING,
@@ -80,6 +88,7 @@ interface GroupedAssignmentsQuery {
   take?: number;
   search?: string;
   sectionType?: ExamSectionType;
+  fullMockOnly?: boolean;
 }
 
 interface AssignmentPreviewRow {
@@ -333,6 +342,108 @@ export class AssignmentService {
     return result;
   }
 
+  async createBulkFullMock(
+    dto: {
+      studentIds: string[];
+      listeningSectionId: string;
+      readingSectionId: string;
+      writingSectionId: string;
+    },
+    assignerId: string,
+    centerId: string,
+  ) {
+    const {
+      studentIds,
+      listeningSectionId,
+      readingSectionId,
+      writingSectionId,
+    } = dto;
+
+    // Validate sections once upfront
+    const sectionIds = [listeningSectionId, readingSectionId, writingSectionId];
+    const sections = await this.prisma.examSection.findMany({
+      where: { id: { in: sectionIds } },
+      select: { id: true, type: true, title: true, centerId: true },
+    });
+
+    if (sections.length !== sectionIds.length) {
+      throw new BadRequestException('One or more sections not found');
+    }
+
+    const sectionById = new Map(sections.map((s) => [s.id, s]));
+    const expectedTypes = new Map([
+      [listeningSectionId, 'LISTENING'],
+      [readingSectionId, 'READING'],
+      [writingSectionId, 'WRITING'],
+    ] as const);
+
+    for (const [sectionId, expectedType] of expectedTypes.entries()) {
+      const section = sectionById.get(sectionId);
+      if (!section || section.type !== expectedType) {
+        throw new BadRequestException(
+          `Section ${sectionId} must be of type ${expectedType}`,
+        );
+      }
+      if (section.centerId !== centerId) {
+        throw new ForbiddenException(
+          `Section ${sectionId} must belong to your center`,
+        );
+      }
+    }
+
+    // Process each student individually, collecting results
+    const results: Array<{
+      studentId: string;
+      studentName: string;
+      success: boolean;
+      error?: string;
+    }> = [];
+
+    for (const studentId of studentIds) {
+      try {
+        await this.createFullMock(
+          { studentId, listeningSectionId, readingSectionId, writingSectionId },
+          assignerId,
+          centerId,
+        );
+        // Get student name for the response
+        const student = await this.prisma.user.findUnique({
+          where: { id: studentId },
+          select: { firstName: true, lastName: true, username: true },
+        });
+        const studentName = student?.firstName
+          ? `${student.firstName} ${student.lastName || ''}`.trim()
+          : student?.username || studentId;
+
+        results.push({ studentId, studentName, success: true });
+      } catch (err) {
+        const errorMessage =
+          err instanceof Error ? err.message : 'Unknown error';
+        // Get student name even on failure
+        const student = await this.prisma.user.findUnique({
+          where: { id: studentId },
+          select: { firstName: true, lastName: true, username: true },
+        });
+        const studentName = student?.firstName
+          ? `${student.firstName} ${student.lastName || ''}`.trim()
+          : student?.username || studentId;
+
+        results.push({
+          studentId,
+          studentName,
+          success: false,
+          error: errorMessage,
+        });
+      }
+    }
+
+    return {
+      results,
+      successCount: results.filter((r) => r.success).length,
+      errorCount: results.filter((r) => !r.success).length,
+    };
+  }
+
   async findAll(
     requesterRole: Role,
     requesterCenterId: string | null,
@@ -414,7 +525,7 @@ export class AssignmentService {
         : 10;
     const search = query.search?.trim() || '';
 
-    const cacheKey = `${ASSIGNMENTS_GROUPED_CACHE_PREFIX}role:${requesterRole}:center:${requesterCenterId || 'all'}:skip:${skip}:take:${take}:search:${encodeURIComponent(search.toLowerCase())}:section:${query.sectionType || 'ALL'}`;
+    const cacheKey = `${ASSIGNMENTS_GROUPED_CACHE_PREFIX}role:${requesterRole}:center:${requesterCenterId || 'all'}:skip:${skip}:take:${take}:search:${encodeURIComponent(search.toLowerCase())}:section:${query.sectionType || 'ALL'}:fmo:${query.fullMockOnly ? '1' : '0'}`;
     const cached = await this.responseCache.getJson<{
       groups: unknown[];
       total: number;
@@ -468,6 +579,10 @@ export class AssignmentService {
       assignmentWhere.section = { type: query.sectionType };
     }
 
+    if (query.fullMockOnly) {
+      assignmentWhere.fullMockSessionId = { not: null };
+    }
+
     const [groupRows, total] = await Promise.all([
       this.prisma.examAssignment.groupBy({
         by: ['studentId'],
@@ -518,6 +633,7 @@ export class AssignmentService {
             ...(query.sectionType
               ? { section: { type: query.sectionType } }
               : {}),
+            ...(query.fullMockOnly ? { fullMockSessionId: { not: null } } : {}),
           },
           _count: { _all: true },
         }),
@@ -567,6 +683,11 @@ export class AssignmentService {
             ${
               query.sectionType
                 ? Prisma.sql`AND es."type" = ${query.sectionType}`
+                : Prisma.empty
+            }
+            ${
+              query.fullMockOnly
+                ? Prisma.sql`AND ea."fullMockSessionId" IS NOT NULL`
                 : Prisma.empty
             }
         ) ranked
@@ -695,6 +816,7 @@ export class AssignmentService {
     requesterId: string,
     requesterRole: Role,
     requesterCenterId: string | null,
+    fullMockOnly = false,
   ) {
     if (requesterRole === Role.STUDENT && requesterId !== studentId) {
       throw new ForbiddenException('You can only view your own assignments');
@@ -723,8 +845,13 @@ export class AssignmentService {
       }
     }
 
+    const where: Prisma.ExamAssignmentWhereInput = { studentId };
+    if (fullMockOnly) {
+      where.fullMockSessionId = { not: null };
+    }
+
     return this.prisma.examAssignment.findMany({
-      where: { studentId },
+      where,
       select: {
         id: true,
         studentId: true,
@@ -743,6 +870,8 @@ export class AssignmentService {
             title: true,
             type: true,
             duration: true,
+            passages: true,
+            questions: true,
           },
         },
       },
@@ -817,8 +946,10 @@ export class AssignmentService {
     const createData: Prisma.ExamAssignmentCreateManyInput[] = [];
 
     AUTO_ASSIGN_SECTION_TYPES.forEach((sectionType) => {
-      let remainingSlots =
-        FREE_SECTION_ASSIGNMENT_LIMIT - currentCounts[sectionType];
+      // Use section-specific limits from configuration
+      const limit = SECTION_ASSIGNMENT_LIMITS[sectionType];
+
+      let remainingSlots = limit - currentCounts[sectionType];
       if (remainingSlots <= 0) {
         return;
       }
@@ -1223,21 +1354,25 @@ export class AssignmentService {
     }
   }
 
-  private sanitizeSectionForStudent(section: any) {
+  private sanitizeSectionForStudent<T extends Record<string, unknown>>(
+    section: T,
+  ): T {
     if (!section || !Array.isArray(section.questions)) {
       return section;
     }
 
-    const sanitizedQuestions = section.questions.map((question: unknown) => {
-      if (!question || typeof question !== 'object') {
-        return question;
-      }
+    const sanitizedQuestions = (section.questions as unknown[]).map(
+      (question: unknown) => {
+        if (!question || typeof question !== 'object') {
+          return question;
+        }
 
-      const q = question as Record<string, unknown>;
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      const { correctAnswer, correctAnswers, ...safeQuestion } = q;
-      return safeQuestion;
-    });
+        const q = question as Record<string, unknown>;
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const { correctAnswer, correctAnswers, ...safeQuestion } = q;
+        return safeQuestion;
+      },
+    );
 
     return {
       ...section,

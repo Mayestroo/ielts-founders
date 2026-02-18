@@ -5,12 +5,24 @@ import { useAuth } from "@/contexts/AuthContext";
 import { api } from "@/lib/api";
 import { STUDENT_QUERY_TIMINGS } from "@/lib/query/config";
 import { studentQueryKeys } from "@/lib/query/keys";
+import {
+  transformAssignments,
+  getDisplayAssignmentTier,
+  type DisplayAssignment,
+} from "@/lib/examParts";
 import { AssignmentStatus, ExamAssignment, ExamSectionType } from "@/types";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState, type MouseEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  useTransition,
+  type MouseEvent,
+} from "react";
 
 const getStatusPillClasses = (status: AssignmentStatus) => {
   if (status === "SUBMITTED") {
@@ -70,7 +82,6 @@ const PLAN_OPTIONS: Array<{ key: TierFilter; label: string }> = [
   { key: "FREE", label: "Free" },
   { key: "PREMIUM", label: "Premium" },
 ];
-const PROFILE_ENABLED = false;
 
 const toTimestamp = (value: string) => new Date(value).getTime();
 
@@ -128,9 +139,12 @@ const buildFreeAccess = (assignments: ExamAssignment[]) => {
 
 export default function DashboardPage() {
   const { user, isLoading, isAuthenticated, logout } = useAuth();
+  const queryClient = useQueryClient();
   const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false);
   const [selectedSection, setSelectedSection] = useState<DashboardSection>("OFFLINE_EXAM");
   const [selectedPlan, setSelectedPlan] = useState<TierFilter>("ALL");
+  const [isSectionPending, startSectionTransition] = useTransition();
+  const [isPlanPending, startPlanTransition] = useTransition();
   const [isPremiumModalOpen, setIsPremiumModalOpen] = useState(false);
   const [selectedPremiumAssignment, setSelectedPremiumAssignment] =
     useState<ExamAssignment | null>(null);
@@ -168,7 +182,6 @@ export default function DashboardPage() {
   );
   const loadingAssignments = assignmentsQuery.isLoading && !assignmentsQuery.data;
   const centerLogo = centerQuery.data?.logo || null;
-  const profilePoints = profileQuery.data?.points ?? user?.points ?? 0;
   const premiumProfile = profileQuery.data as (typeof profileQuery.data & PremiumFlags) | undefined;
   const isPremiumUser = Boolean(
     premiumProfile?.premiumActive ?? premiumProfile?.isPremium ?? false,
@@ -300,44 +313,158 @@ export default function DashboardPage() {
     );
   }, [assignments]);
 
-  const sectionAssignments = useMemo(() => {
-    if (selectedSection === "OFFLINE_EXAM") {
-      return sortedAssignments.filter((assignment) => Boolean(assignment.fullMockSessionId));
+  // Transform assignments into display items (complete + parts) for each section type
+  const readingDisplayAssignments = useMemo(() => {
+    const readingAssignments = assignments.filter((a) => a.section?.type === "READING");
+    return transformAssignments(readingAssignments, "READING");
+  }, [assignments]);
+
+  const listeningDisplayAssignments = useMemo(() => {
+    const listeningAssignments = assignments.filter((a) => a.section?.type === "LISTENING");
+    return transformAssignments(listeningAssignments, "LISTENING");
+  }, [assignments]);
+
+  const writingDisplayAssignments = useMemo(() => {
+    const writingAssignments = assignments.filter((a) => a.section?.type === "WRITING");
+    return transformAssignments(writingAssignments, "WRITING");
+  }, [assignments]);
+
+  // Get tier for a display assignment
+  const getDisplayItemTier = useCallback((displayItem: DisplayAssignment): "FREE" | "PREMIUM" => {
+    const sectionType = displayItem.displaySection.type;
+    let allDisplayAssignments: DisplayAssignment[] = [];
+    
+    switch (sectionType) {
+      case "READING":
+        allDisplayAssignments = readingDisplayAssignments;
+        break;
+      case "LISTENING":
+        allDisplayAssignments = listeningDisplayAssignments;
+        break;
+      case "WRITING":
+        allDisplayAssignments = writingDisplayAssignments;
+        break;
     }
+    
+    return getDisplayAssignmentTier(displayItem, allDisplayAssignments);
+  }, [readingDisplayAssignments, listeningDisplayAssignments, writingDisplayAssignments]);
 
-    if (selectedSection === "SPEAKING") {
-      return [];
+  // Get current section's display assignments based on selected section
+  const currentSectionDisplayAssignments = useMemo(() => {
+    switch (selectedSection) {
+      case "READING":
+        return readingDisplayAssignments;
+      case "LISTENING":
+        return listeningDisplayAssignments;
+      case "WRITING":
+        return writingDisplayAssignments;
+      default:
+        return [];
     }
+  }, [selectedSection, readingDisplayAssignments, listeningDisplayAssignments, writingDisplayAssignments]);
 
-    return sortedAssignments
-      .filter((assignment) => assignment.section?.type === selectedSection)
-      .slice(0, FREE_TEST_LIMITS[selectedSection]);
-  }, [selectedSection, sortedAssignments]);
-
-  const filteredAssignments = useMemo(() => {
+  // Filter display assignments by plan
+  const filteredDisplayAssignmentsByPlan = useMemo<Record<TierFilter, DisplayAssignment[]>>(() => {
+    const all = currentSectionDisplayAssignments;
+    
     if (selectedPlan === "ALL") {
+      return { ALL: all, FREE: all, PREMIUM: all };
+    }
+    
+    const free: DisplayAssignment[] = [];
+    const premium: DisplayAssignment[] = [];
+
+    for (const item of all) {
+      const tier = getDisplayItemTier(item);
+      if (tier === "FREE") {
+        free.push(item);
+      } else {
+        premium.push(item);
+      }
+    }
+
+    return {
+      ALL: all,
+      FREE: free,
+      PREMIUM: premium,
+    };
+  }, [currentSectionDisplayAssignments, selectedPlan, getDisplayItemTier]);
+
+  const filteredDisplayAssignments = filteredDisplayAssignmentsByPlan[selectedPlan];
+
+  // Handle non-sectioned assignments (Offline Exam and legacy sections)
+  const sectionAssignmentsBySection = useMemo<Record<DashboardSection, ExamAssignment[]>>(() => {
+    const offlineExam: ExamAssignment[] = [];
+
+    for (const assignment of sortedAssignments) {
+      if (assignment.fullMockSessionId) {
+        offlineExam.push(assignment);
+      }
+    }
+
+    return {
+      OFFLINE_EXAM: offlineExam,
+      READING: [],
+      LISTENING: [],
+      WRITING: [],
+      SPEAKING: [],
+    };
+  }, [sortedAssignments]);
+
+  const sectionAssignments = sectionAssignmentsBySection[selectedSection];
+
+  // Filter assignments by plan for non-Reading sections (legacy logic for Listening/Writing without parts)
+  const filteredAssignmentsByPlan = useMemo<Record<TierFilter, ExamAssignment[]>>(() => {
+    const free: ExamAssignment[] = [];
+    const premium: ExamAssignment[] = [];
+
+    for (const assignment of sectionAssignments) {
+      if (assignmentTierById.get(assignment.id) === "PREMIUM") {
+        premium.push(assignment);
+      } else {
+        free.push(assignment);
+      }
+    }
+
+    return {
+      ALL: sectionAssignments,
+      FREE: free,
+      PREMIUM: premium,
+    };
+  }, [assignmentTierById, sectionAssignments]);
+
+  const filteredAssignments = filteredAssignmentsByPlan[selectedPlan];
+
+  const displayedAssignments = useMemo(() => {
+    if (selectedSection === "OFFLINE_EXAM") {
       return sectionAssignments;
     }
 
-    return sectionAssignments.filter(
-      (assignment) => assignmentTierById.get(assignment.id) === selectedPlan,
-    );
-  }, [assignmentTierById, sectionAssignments, selectedPlan]);
-
-  const freeUsageSummary = useMemo(() => {
-    return {
-      listening: `${freeAccess.sectionUsage.LISTENING}/${FREE_TEST_LIMITS.LISTENING}`,
-      reading: `${freeAccess.sectionUsage.READING}/${FREE_TEST_LIMITS.READING}`,
-      writing: `${freeAccess.sectionUsage.WRITING}/${FREE_TEST_LIMITS.WRITING}`,
-      fullMock: `${freeAccess.freeFullMockCount}/${FREE_FULL_MOCK_LIMIT}`,
-    };
-  }, [freeAccess.freeFullMockCount, freeAccess.sectionUsage]);
+    return filteredAssignments;
+  }, [filteredAssignments, sectionAssignments, selectedSection]);
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
       router.push("/login");
     }
   }, [isLoading, isAuthenticated, router]);
+
+  useEffect(() => {
+    router.prefetch("/feedback");
+  }, [router]);
+
+  useEffect(() => {
+    if (!user?.id) {
+      return;
+    }
+
+    void queryClient.prefetchQuery({
+      queryKey: studentQueryKeys.myResults(),
+      queryFn: ({ signal }) => api.getMyResults({ signal }),
+      staleTime: STUDENT_QUERY_TIMINGS.results.staleTime,
+      gcTime: STUDENT_QUERY_TIMINGS.results.gcTime,
+    });
+  }, [queryClient, user?.id]);
 
   if (isLoading || !isAuthenticated) {
     return (
@@ -353,24 +480,24 @@ export default function DashboardPage() {
       <header className="sticky top-0 z-40 border-b border-gray-200 bg-white/95 backdrop-blur">
         <div className="max-w-6xl mx-auto px-4 py-4 flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="w-36 h-12 rounded-xl flex items-center justify-center">
+            <div className="w-40 h-14 rounded-xl flex items-center justify-center">
               {centerLogo ? (
                 <Image
                   src={centerLogo}
                   alt="Center Logo"
-                  width={144}
-                  height={48}
+                  width={160}
+                  height={56}
                   loading="eager"
-                  className="max-h-12 h-auto w-auto object-contain"
+                  className="max-h-14 h-auto w-auto object-contain"
                 />
               ) : (
                 <Image
                   src="/logo.png"
                   alt="logo"
-                  width={144}
-                  height={48}
+                  width={160}
+                  height={56}
                   loading="eager"
-                  className="max-h-12 h-auto w-auto object-contain"
+                  className="max-h-14 h-auto w-auto object-contain"
                 />
               )}
             </div>
@@ -394,23 +521,6 @@ export default function DashboardPage() {
                   Feedback
                 </Link>
               </li>
-              <li>
-                {PROFILE_ENABLED ? (
-                  <Link
-                    href="/profile"
-                    className="inline-flex rounded-lg px-3 py-2 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900"
-                  >
-                    Profile ({profilePoints ?? user?.points ?? 0} pts)
-                  </Link>
-                ) : (
-                  <span
-                    aria-disabled="true"
-                    className="inline-flex cursor-not-allowed rounded-lg bg-gray-100 px-3 py-2 text-sm font-medium text-gray-400"
-                  >
-                    Profile ({profilePoints ?? user?.points ?? 0} pts)
-                  </span>
-                )}
-              </li>
             </ul>
           </nav>
 
@@ -433,9 +543,16 @@ export default function DashboardPage() {
         <div className="grid gap-6 md:grid-cols-12">
           <aside className="space-y-4 md:col-span-3 lg:col-span-2 md:sticky md:top-24 md:self-start">
             <div className="rounded-3xl border border-gray-200 bg-white p-4 shadow-sm">
-              <p className="px-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
-                Sections
-              </p>
+              <div className="flex items-center justify-between px-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                  Sections
+                </p>
+                {isSectionPending && (
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+                    Updating
+                  </span>
+                )}
+              </div>
               <div className="mt-3 space-y-2">
                 {SECTION_OPTIONS.map((section) => {
                   const isActive = selectedSection === section.key;
@@ -443,8 +560,12 @@ export default function DashboardPage() {
                     <button
                       key={section.key}
                       type="button"
-                      disabled={section.comingSoon}
-                      onClick={() => setSelectedSection(section.key)}
+                      disabled={section.comingSoon || isSectionPending}
+                      onClick={() =>
+                        startSectionTransition(() => {
+                          setSelectedSection(section.key);
+                        })
+                      }
                       className={`w-full rounded-xl px-3 py-2.5 text-left text-sm font-medium transition-colors ${
                         isActive
                           ? "bg-black text-white"
@@ -465,51 +586,35 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            <div className="rounded-3xl border border-gray-200 bg-white p-4 shadow-sm">
-              <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                Free Quota
-              </p>
-              <div className="mt-3 space-y-2 text-sm text-gray-700">
-                <p>Listening: {freeUsageSummary.listening}</p>
-                <p>Reading: {freeUsageSummary.reading}</p>
-                <p>Writing: {freeUsageSummary.writing}</p>
-                <p>Full Mock: {freeUsageSummary.fullMock}</p>
-              </div>
-              <div className="mt-4 rounded-xl bg-gray-50 p-3 text-xs text-gray-600">
-                {isPremiumUser
-                  ? "Premium is active on your account."
-                  : "After free tests are used, remaining tests require Premium."}
-              </div>
-            </div>
           </aside>
 
           <div className="md:col-span-9 lg:col-span-10">
-            <div className="mb-6">
-              <h2 className="text-2xl font-bold text-gray-900">Your Exams</h2>
-              <p className="text-gray-500 mt-1">
-                Offline Exam contains your currently assigned tests.
-              </p>
-            </div>
-
-            <div className="mb-6 grid grid-cols-3 rounded-2xl border border-gray-200 bg-white p-1">
-              {PLAN_OPTIONS.map((plan) => {
-                const activePlan = selectedPlan === plan.key;
-                return (
-                  <button
-                    key={plan.key}
-                    type="button"
-                    onClick={() => setSelectedPlan(plan.key)}
-                    className={`rounded-xl px-3 py-2 text-sm font-medium transition-colors ${
-                      activePlan
-                        ? "bg-black text-white"
-                        : "text-gray-600 hover:bg-gray-100"
-                    }`}
-                  >
-                    {plan.label}
-                  </button>
-                );
-              })}
-            </div>
+            {selectedSection !== "OFFLINE_EXAM" && (
+              <div className="mb-6 grid grid-cols-3 rounded-2xl border border-gray-200 bg-white p-1">
+                {PLAN_OPTIONS.map((plan) => {
+                  const activePlan = selectedPlan === plan.key;
+                  return (
+                    <button
+                      key={plan.key}
+                      type="button"
+                      disabled={isPlanPending}
+                      onClick={() =>
+                        startPlanTransition(() => {
+                          setSelectedPlan(plan.key);
+                        })
+                      }
+                      className={`rounded-xl px-3 py-2 text-sm font-medium transition-colors ${
+                        activePlan
+                          ? "bg-black text-white"
+                          : "text-gray-600 hover:bg-gray-100"
+                      }`}
+                    >
+                      {plan.label}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
 
             {loadingAssignments ? (
           <div className="flex items-center justify-center py-12">
@@ -518,7 +623,7 @@ export default function DashboardPage() {
         ) : (
           <>
             {selectedSection === "OFFLINE_EXAM" && (
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
               <div className="rounded-2xl border border-gray-200 bg-white p-5">
                 <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
                   Total Tests
@@ -548,15 +653,6 @@ export default function DashboardPage() {
 
               <div className="rounded-2xl border border-gray-200 bg-white p-5">
                 <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                  Assigned
-                </p>
-                <p className="mt-3 text-3xl font-bold text-gray-900">
-                  {studentStats.assignedTests}
-                </p>
-              </div>
-
-              <div className="rounded-2xl border border-gray-200 bg-white p-5">
-                <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
                   Average Score
                 </p>
                 <p className="mt-3 text-3xl font-bold text-gray-900">
@@ -568,7 +664,9 @@ export default function DashboardPage() {
               </div>
             )}
 
-            {filteredAssignments.length === 0 ? (
+            {(selectedSection === "READING" || selectedSection === "LISTENING" || selectedSection === "WRITING"
+              ? filteredDisplayAssignments.length === 0
+              : displayedAssignments.length === 0) ? (
               <div className="text-center py-12">
                 <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-gray-800 flex items-center justify-center">
                   <svg
@@ -585,9 +683,21 @@ export default function DashboardPage() {
                     />
                   </svg>
                 </div>
-                <p className="text-gray-400">No tests found for this filter</p>
+                <p className="text-gray-400">
+                  {selectedSection === "OFFLINE_EXAM"
+                    ? "No tests found in Offline Exam"
+                    : selectedSection === "READING"
+                    ? "No reading tests available"
+                    : selectedSection === "LISTENING"
+                    ? "No listening tests available"
+                    : selectedSection === "WRITING"
+                    ? "No writing tests available"
+                    : "No tests found for this filter"}
+                </p>
                 <p className="text-gray-500 text-sm mt-1">
-                  Try another section or plan tab.
+                  {selectedSection === "OFFLINE_EXAM"
+                    ? "Try another section."
+                    : "Tests will appear here once assigned."}
                 </p>
               </div>
             ) : (
@@ -773,108 +883,224 @@ export default function DashboardPage() {
                   </div>
                 )}
 
-                <div className="max-w-6xl mx-auto mt-8 mb-16 px-4">
-                  <div className="bg-white rounded-3xl border border-gray-100 p-6 shadow-sm">
-                    <div className="flex items-center justify-between gap-4">
-                      <h3 className="text-xl font-bold text-gray-900">Your Tests</h3>
-                      <p className="text-sm text-gray-500">
-                        {filteredAssignments.length} total
-                      </p>
-                    </div>
+                {(selectedSection === "READING" || selectedSection === "LISTENING" || selectedSection === "WRITING") && (
+                  <div className="max-w-6xl mx-auto mt-8 mb-16 px-4">
+                    <div className="bg-white rounded-3xl border border-gray-100 p-6 shadow-sm">
+                      <div className="flex items-center justify-between gap-4">
+                        <h3 className="text-xl font-bold text-gray-900">
+                          {selectedSection === "READING" && "Reading Tests"}
+                          {selectedSection === "LISTENING" && "Listening Tests"}
+                          {selectedSection === "WRITING" && "Writing Tests"}
+                        </h3>
+                        <p className="text-sm text-gray-500">
+                          {filteredDisplayAssignments.length} total
+                        </p>
+                      </div>
 
-                    <div className="mt-6 space-y-4">
-                      {filteredAssignments.map((assignment) => {
-                        const hasScore =
-                          assignment.status === "SUBMITTED" &&
-                          typeof assignment.score === "number";
-                        const assignmentTier =
-                          assignmentTierById.get(assignment.id) || "FREE";
-                        const requiresPremium =
-                          assignmentTier === "PREMIUM" && !isPremiumUser;
+                      <div className="mt-6 space-y-4">
+                        {filteredDisplayAssignments.map((item) => {
+                          const hasScore =
+                            item.status === "SUBMITTED" && typeof item.score === "number";
+                          const itemTier = getDisplayItemTier(item);
+                          const requiresPremium = itemTier === "PREMIUM" && !isPremiumUser;
 
-                        return (
-                          <div
-                            key={assignment.id}
-                            className="rounded-2xl border border-gray-100 p-4"
-                          >
-                            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-                              <div>
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">
-                                    {assignment.section?.type || "TEST"}
-                                  </p>
-                                  <span
-                                    className={`inline-flex rounded-lg px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide ${
-                                      assignmentTier === "FREE"
-                                        ? "bg-emerald-100 text-emerald-700"
-                                        : "bg-amber-100 text-amber-700"
-                                    }`}
-                                  >
-                                    {assignmentTier}
-                                  </span>
-                                  {assignment.fullMockSessionId && (
-                                    <span className="inline-flex rounded-lg bg-gray-100 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-gray-600">
-                                      Full Mock
+                          return (
+                            <div
+                              key={item.id}
+                              className="rounded-2xl border border-gray-100 p-4"
+                            >
+                              <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                                <div>
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">
+                                      {selectedSection}
+                                    </p>
+                                    <span
+                                      className={`inline-flex rounded-lg px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide ${
+                                        itemTier === "FREE"
+                                          ? "bg-emerald-100 text-emerald-700"
+                                          : "bg-amber-100 text-amber-700"
+                                      }`}
+                                    >
+                                      {itemTier}
+                                    </span>
+                                    {item.isPart && (
+                                      <span className="inline-flex rounded-lg bg-blue-100 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-blue-700">
+                                        {selectedSection === "LISTENING" ? "Section" : "Part"} {item.partInfo?.part}
+                                      </span>
+                                    )}
+                                    {item.isTask && (
+                                      <span className="inline-flex rounded-lg bg-purple-100 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-purple-700">
+                                        Task {item.taskInfo?.task}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <h4 className="mt-1 text-lg font-semibold text-gray-900">
+                                    {item.displaySection.title}
+                                  </h4>
+                                  <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-gray-500">
+                                    <span>
+                                      {item.isPart
+                                        ? `${item.partInfo?.duration} mins · ${item.partInfo?.questionCount} questions`
+                                        : item.isTask
+                                        ? `${item.taskInfo?.duration} mins · 1 task`
+                                        : `${item.displaySection.duration} mins · Full Test`}
+                                    </span>
+                                    <span>{formatAssignmentDate(item.createdAt)}</span>
+                                  </div>
+                                </div>
+
+                                <div className="flex flex-wrap items-center gap-3">
+                                  {hasScore && (
+                                    <span className="inline-flex rounded-lg bg-gray-100 px-2.5 py-1 text-xs font-semibold text-gray-700">
+                                      Score: {Number(item.score).toFixed(1)}
                                     </span>
                                   )}
+
+                                  {item.status === "SUBMITTED" ? (
+                                    <span className="inline-flex rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-500">
+                                      Submitted
+                                    </span>
+                                  ) : requiresPremium ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const originalAssignment = assignments.find(
+                                          (a) => a.id === item.originalAssignmentId
+                                        );
+                                        if (originalAssignment) {
+                                          handlePremiumLockedClick(originalAssignment);
+                                        }
+                                      }}
+                                      className="inline-flex rounded-lg bg-amber-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-amber-600"
+                                    >
+                                      Unlock Premium
+                                    </button>
+                                  ) : (
+                                    <Link
+                                      href={`/exam/${item.id}`}
+                                      onClick={(event) =>
+                                        handleStartExamClick(event, item.id)
+                                      }
+                                      className="inline-flex rounded-lg bg-black px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-gray-800"
+                                    >
+                                      {item.status === "IN_PROGRESS" ? "Continue" : "Start"}
+                                    </Link>
+                                  )}
                                 </div>
-                                <h4 className="mt-1 text-lg font-semibold text-gray-900">
-                                  {assignment.section?.title || "Untitled Test"}
-                                </h4>
-                                <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-gray-500">
-                                  <span>
-                                    {assignment.section?.duration
-                                      ? `${assignment.section.duration} mins`
-                                      : "Duration not set"}
-                                  </span>
-                                  <span>{formatAssignmentDate(assignment.createdAt)}</span>
-                                </div>
-                              </div>
-
-                              <div className="flex flex-wrap items-center gap-3">
-                                <span className={getStatusPillClasses(assignment.status)}>
-                                  {assignment.status.replace(/_/g, " ")}
-                                </span>
-
-                                {hasScore && (
-                                  <span className="inline-flex rounded-lg bg-gray-100 px-2.5 py-1 text-xs font-semibold text-gray-700">
-                                    Score: {Number(assignment.score).toFixed(1)}
-                                  </span>
-                                )}
-
-                                {assignment.status === "SUBMITTED" ? (
-                                  <span className="inline-flex rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-500">
-                                    Submitted
-                                  </span>
-                                ) : requiresPremium ? (
-                                  <button
-                                    type="button"
-                                    onClick={() => handlePremiumLockedClick(assignment)}
-                                    className="inline-flex rounded-lg bg-amber-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-amber-600"
-                                  >
-                                    Unlock Premium
-                                  </button>
-                                ) : (
-                                  <Link
-                                    href={`/exam/${assignment.id}`}
-                                    onClick={(event) =>
-                                      handleStartExamClick(event, assignment.id)
-                                    }
-                                    className="inline-flex rounded-lg bg-black px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-gray-800"
-                                  >
-                                    {assignment.status === "IN_PROGRESS"
-                                      ? "Continue"
-                                      : "Start"}
-                                  </Link>
-                                )}
                               </div>
                             </div>
-                          </div>
-                        );
-                      })}
+                          );
+                        })}
+                      </div>
                     </div>
                   </div>
-                </div>
+                )}
+
+                {selectedSection !== "OFFLINE_EXAM" && selectedSection !== "READING" && (
+                  <div className="max-w-6xl mx-auto mt-8 mb-16 px-4">
+                    <div className="bg-white rounded-3xl border border-gray-100 p-6 shadow-sm">
+                      <div className="flex items-center justify-between gap-4">
+                        <h3 className="text-xl font-bold text-gray-900">Your Tests</h3>
+                        <p className="text-sm text-gray-500">
+                          {displayedAssignments.length} total
+                        </p>
+                      </div>
+
+                      <div className="mt-6 space-y-4">
+                        {displayedAssignments.map((assignment) => {
+                          const hasScore =
+                            assignment.status === "SUBMITTED" &&
+                            typeof assignment.score === "number";
+                          const assignmentTier =
+                            assignmentTierById.get(assignment.id) || "FREE";
+                          const requiresPremium =
+                            assignmentTier === "PREMIUM" && !isPremiumUser;
+
+                          return (
+                            <div
+                              key={assignment.id}
+                              className="rounded-2xl border border-gray-100 p-4"
+                            >
+                              <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                                <div>
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">
+                                      {assignment.section?.type || "TEST"}
+                                    </p>
+                                    <span
+                                      className={`inline-flex rounded-lg px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide ${
+                                        assignmentTier === "FREE"
+                                          ? "bg-emerald-100 text-emerald-700"
+                                          : "bg-amber-100 text-amber-700"
+                                      }`}
+                                    >
+                                      {assignmentTier}
+                                    </span>
+                                    {assignment.fullMockSessionId && (
+                                      <span className="inline-flex rounded-lg bg-gray-100 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-gray-600">
+                                        Full Mock
+                                      </span>
+                                    )}
+                                  </div>
+                                  <h4 className="mt-1 text-lg font-semibold text-gray-900">
+                                    {assignment.section?.title || "Untitled Test"}
+                                  </h4>
+                                  <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-gray-500">
+                                    <span>
+                                      {assignment.section?.duration
+                                        ? `${assignment.section.duration} mins`
+                                        : "Duration not set"}
+                                    </span>
+                                    <span>{formatAssignmentDate(assignment.createdAt)}</span>
+                                  </div>
+                                </div>
+
+                                <div className="flex flex-wrap items-center gap-3">
+                                  <span className={getStatusPillClasses(assignment.status)}>
+                                    {assignment.status.replace(/_/g, " ")}
+                                  </span>
+
+                                  {hasScore && (
+                                    <span className="inline-flex rounded-lg bg-gray-100 px-2.5 py-1 text-xs font-semibold text-gray-700">
+                                      Score: {Number(assignment.score).toFixed(1)}
+                                    </span>
+                                  )}
+
+                                  {assignment.status === "SUBMITTED" ? (
+                                    <span className="inline-flex rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-500">
+                                      Submitted
+                                    </span>
+                                  ) : requiresPremium ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => handlePremiumLockedClick(assignment)}
+                                      className="inline-flex rounded-lg bg-amber-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-amber-600"
+                                    >
+                                      Unlock Premium
+                                    </button>
+                                  ) : (
+                                    <Link
+                                      href={`/exam/${assignment.id}`}
+                                      onClick={(event) =>
+                                        handleStartExamClick(event, assignment.id)
+                                      }
+                                      className="inline-flex rounded-lg bg-black px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-gray-800"
+                                    >
+                                      {assignment.status === "IN_PROGRESS"
+                                        ? "Continue"
+                                        : "Start"}
+                                    </Link>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                )}
               </>
             )}
           </>

@@ -103,7 +103,7 @@ const menuItems: {
     ),
   },
   {
-    label: "Assignments",
+    label: "Offline Exams",
     href: "/dashboard/assignments",
     roles: ["TEACHER", "CENTER_ADMIN"],
     icon: (
@@ -310,7 +310,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
                 : pathname.includes("/exams")
                 ? "Exam Sections"
                 : pathname.includes("/assignments")
-                ? "Assignments"
+                ? "Offline Exams"
                 : pathname.includes("/results")
                 ? "Results"
                 : pathname.includes("/downloads")
