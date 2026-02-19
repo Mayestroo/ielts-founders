@@ -5,7 +5,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { api } from "@/lib/api";
 import { STUDENT_QUERY_TIMINGS } from "@/lib/query/config";
 import { studentQueryKeys } from "@/lib/query/keys";
-import { ExamResult, ExamSectionType, Question } from "@/types";
+import { ExamAssignment, ExamResult, ExamSectionType, Question } from "@/types";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import Image from "next/image";
 import Link from "next/link";
@@ -46,6 +46,20 @@ const EMPTY_RESULTS_BY_TYPE: Record<FeedbackSectionType, ExamResult | null> = {
   LISTENING: null,
   READING: null,
   WRITING: null,
+};
+
+const buildFullMockSectionIdSet = (assignments: ExamAssignment[]) => {
+  const fullMockSectionIds = new Set<string>();
+
+  for (const assignment of assignments) {
+    if (!assignment.fullMockSessionId || !assignment.section?.id) {
+      continue;
+    }
+
+    fullMockSectionIds.add(assignment.section.id);
+  }
+
+  return fullMockSectionIds;
 };
 
 interface SectionFeedbackMeta {
@@ -373,9 +387,35 @@ export default function FeedbackPage() {
     placeholderData: (previousData) => previousData,
   });
 
+  const assignmentsQuery = useQuery({
+    queryKey: studentQueryKeys.myAssignments(),
+    queryFn: ({ signal }) => api.getMyAssignments({ signal }),
+    enabled: !!user?.id,
+    staleTime: STUDENT_QUERY_TIMINGS.assignments.staleTime,
+    gcTime: STUDENT_QUERY_TIMINGS.assignments.gcTime,
+    placeholderData: (previousData) => previousData,
+  });
+
+  const fullMockSectionIds = useMemo(
+    () => buildFullMockSectionIdSet(assignmentsQuery.data ?? []),
+    [assignmentsQuery.data],
+  );
+
+  const fullCdiResults = useMemo(() => {
+    return (resultsQuery.data ?? []).filter((result) => {
+      const sectionType = result.section?.type as FeedbackSectionType | undefined;
+      if (!sectionType || !SECTION_ORDER.includes(sectionType)) {
+        return false;
+      }
+
+      const sectionId = result.section?.id || result.sectionId;
+      return Boolean(sectionId && fullMockSectionIds.has(sectionId));
+    });
+  }, [resultsQuery.data, fullMockSectionIds]);
+
   const summaryResultsByType = useMemo(
-    () => getLatestResultsByType(resultsQuery.data ?? []),
-    [resultsQuery.data],
+    () => getLatestResultsByType(fullCdiResults),
+    [fullCdiResults],
   );
 
   const detailQueries = useQueries({
@@ -425,7 +465,9 @@ export default function FeedbackPage() {
   }, [detailQueries]);
 
   const centerLogo = centerQuery.data?.logo || null;
-  const loadingFeedback = resultsQuery.isLoading && !resultsQuery.data;
+  const loadingFeedback =
+    (resultsQuery.isLoading && !resultsQuery.data) ||
+    (assignmentsQuery.isLoading && !assignmentsQuery.data);
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
@@ -531,6 +573,14 @@ export default function FeedbackPage() {
                   Feedback
                 </Link>
               </li>
+              <li>
+                <Link
+                  href="/history"
+                  className="inline-flex rounded-lg px-3 py-2 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900"
+                >
+                  History
+                </Link>
+              </li>
             </ul>
           </nav>
 
@@ -552,7 +602,7 @@ export default function FeedbackPage() {
         <div className="mb-8">
           <h2 className="text-2xl font-bold text-gray-900">Feedback</h2>
           <p className="text-gray-500 mt-1">
-            Review your latest Listening, Reading, and Writing performance.
+            Review your latest Full CDI at Founders performance.
           </p>
         </div>
 

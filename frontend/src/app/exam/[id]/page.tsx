@@ -1,6 +1,8 @@
 "use client";
 
+import { ConfirmationModal } from "@/components/ui/ConfirmationModal";
 import { useAuth } from "@/contexts/AuthContext";
+import { useSettings } from "@/contexts/SettingsContext";
 import { useExamParts } from "@/features/exam/hooks/useExamParts";
 import { ListeningSection } from "@/features/exam/sections/ListeningSection";
 import { ReadingSection } from "@/features/exam/sections/ReadingSection";
@@ -9,20 +11,156 @@ import { AnswerValue } from "@/features/exam/types";
 import { useAntiCheat, useExamSession } from "@/hooks";
 import { api } from "@/lib/api";
 import {
-  isPartAssignmentId,
-  isTaskAssignmentId,
-  getOriginalAssignmentIdFromPartId,
-  type PartNumber,
-  type TaskNumber,
+    getOriginalAssignmentIdFromPartId,
+    isPartAssignmentId,
+    isTaskAssignmentId,
+    type PartNumber,
+    type TaskNumber,
 } from "@/lib/examParts";
 import { useExamStore } from "@/store";
-import { BreakStatus, ExamAssignment, ExamSection, Question, StartExamResponse } from "@/types";
+import {
+    BreakStatus,
+    ExamAssignment,
+    ExamResult,
+    ExamSection,
+    Question,
+    StartExamResponse,
+} from "@/types";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ConfirmationModal } from "@/components/ui/ConfirmationModal";
+
+interface AttemptHistoryItem {
+  attempt: number;
+  score: number | null;
+  totalScore: number | null;
+  bandScore: number | null;
+  submittedAt: string;
+}
+
+interface PracticeSubmitMeta {
+  resultId: string | null;
+  score: number | null;
+  totalScore: number | null;
+  bandScore: number | null;
+  note: string | null;
+}
+
+interface PracticeAnswerRow {
+  questionId: string;
+  questionNumber: number;
+  studentAnswer: string;
+  correctAnswer: string;
+  hasCorrectAnswer: boolean;
+  isCorrect: boolean | null;
+}
+
+const normalizeAnswerValue = (value: unknown): string =>
+  String(value ?? "").trim().toLowerCase();
+
+const hasAnswerValue = (value: unknown): boolean => {
+  if (value === undefined || value === null) {
+    return false;
+  }
+
+  if (typeof value === "string") {
+    return value.trim().length > 0;
+  }
+
+  if (Array.isArray(value)) {
+    return value.length > 0;
+  }
+
+  if (typeof value === "object") {
+    return Object.keys(value as Record<string, unknown>).length > 0;
+  }
+
+  return true;
+};
+
+const formatAnswerValue = (value: unknown): string => {
+  if (!hasAnswerValue(value)) {
+    return "N/A";
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((entry) => String(entry)).join(", ");
+  }
+
+  if (typeof value === "object") {
+    return Object.entries(value as Record<string, unknown>)
+      .map(([key, entry]) => `${key}: ${String(entry)}`)
+      .join(", ");
+  }
+
+  return String(value);
+};
+
+const resolveQuestionCorrectAnswer = (question: Question): unknown => {
+  if (!("correctAnswer" in question)) {
+    return undefined;
+  }
+
+  const correctAnswer = (question as { correctAnswer?: unknown }).correctAnswer;
+  if (
+    (question.type === "MATCHING" ||
+      question.type === "PLAN_MAP_LABELING" ||
+      question.type === "DIAGRAM_LABELING") &&
+    correctAnswer &&
+    typeof correctAnswer === "object" &&
+    !Array.isArray(correctAnswer)
+  ) {
+    return (correctAnswer as Record<string, unknown>)[question.id] ?? correctAnswer;
+  }
+
+  return correctAnswer;
+};
+
+const isAnswerCorrect = (studentAnswer: unknown, correctAnswer: unknown): boolean => {
+  if (!hasAnswerValue(studentAnswer) || !hasAnswerValue(correctAnswer)) {
+    return false;
+  }
+
+  if (Array.isArray(correctAnswer)) {
+    const studentValues = Array.isArray(studentAnswer)
+      ? studentAnswer
+      : [studentAnswer];
+    const studentSet = new Set(studentValues.map(normalizeAnswerValue));
+    const correctSet = new Set(correctAnswer.map(normalizeAnswerValue));
+
+    if (studentSet.size !== correctSet.size) {
+      return false;
+    }
+
+    for (const value of studentSet) {
+      if (!correctSet.has(value)) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  if (
+    typeof studentAnswer === "object" &&
+    studentAnswer !== null &&
+    !Array.isArray(studentAnswer) &&
+    typeof correctAnswer === "object" &&
+    correctAnswer !== null &&
+    !Array.isArray(correctAnswer)
+  ) {
+    return Object.entries(correctAnswer as Record<string, unknown>).every(
+      ([key, expected]) =>
+        normalizeAnswerValue((studentAnswer as Record<string, unknown>)[key]) ===
+        normalizeAnswerValue(expected),
+    );
+  }
+
+  return normalizeAnswerValue(studentAnswer) === normalizeAnswerValue(correctAnswer);
+};
 
 function ExamContent({ assignmentId }: { assignmentId: string }) {
   const { isLoading, isAuthenticated } = useAuth();
+  const { timerEnabled } = useSettings();
   const router = useRouter();
   const searchParams = useSearchParams();
   const forceShowVideo = searchParams.get("showVideo") === "1";
@@ -46,6 +184,20 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
   const [isFullscreen, setIsFullscreen] = useState(true); // Default to true to avoid flash on load until checked
   const [showExitWarningModal, setShowExitWarningModal] = useState(false);
   const [isExamCompleted, setIsExamCompleted] = useState(false);
+  const [showPartResults, setShowPartResults] = useState(false);
+  const [pendingNavigation, setPendingNavigation] = useState<{
+    nextAssignmentId: string | null;
+    breakEndsAt?: string | null;
+    fullMockSessionId?: string | null;
+  } | null>(null);
+  const [attemptHistory, setAttemptHistory] = useState<AttemptHistoryItem[]>([]);
+  const [isAttemptHistoryLoading, setIsAttemptHistoryLoading] = useState(false);
+  const [practiceSubmitMeta, setPracticeSubmitMeta] =
+    useState<PracticeSubmitMeta | null>(null);
+  const [practiceResultDetail, setPracticeResultDetail] =
+    useState<ExamResult | null>(null);
+  const [isPracticeResultLoading, setIsPracticeResultLoading] = useState(false);
+  const [showCorrectAnswers, setShowCorrectAnswers] = useState(true);
   const wasFullscreenRef = useRef<boolean>(true);
 
   // Detect if this is a partial assignment (part or task)
@@ -68,12 +220,203 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
     return match ? (parseInt(match[1], 10) as TaskNumber) : null;
   }, [isPartialAssignment, assignmentId]);
 
+  // Reusable helper: filter a full assignment down to the relevant part/task section.
+  // Also caps remainingTime and endTime so the timer reflects the part's duration,
+  // not the full section duration (e.g. 20 min for Reading part, not 60 min).
+  const filterSectionForPart = useCallback(
+    (data: ExamAssignment & { remainingTime?: number }): ExamAssignment & { remainingTime?: number } => {
+      if (!isPartialAssignment || !data.section) return data;
+      const section = data.section;
+      const allQuestions = section.questions || [];
+
+      // Helper: after filtering the section with a new partDuration,
+      // cap remainingTime and endTime to the part's allowed window.
+      const capTimingForPart = (
+        filtered: ExamAssignment & { remainingTime?: number },
+        partDurationMinutes: number
+      ): ExamAssignment & { remainingTime?: number } => {
+        const maxSeconds = partDurationMinutes * 60;
+        const result = { ...filtered };
+
+        // Cap remainingTime to the part's max duration
+        if (typeof result.remainingTime === "number") {
+          result.remainingTime = Math.min(result.remainingTime, maxSeconds);
+        }
+
+        // Recompute endTime from startTime + partDuration (if startTime exists)
+        if (result.startTime) {
+          const startMs = new Date(result.startTime).getTime();
+          if (Number.isFinite(startMs)) {
+            const partEndMs = startMs + maxSeconds * 1000;
+            result.endTime = new Date(partEndMs).toISOString();
+          }
+        }
+
+        return result;
+      };
+
+      if (section.type === "READING" && assignmentPart) {
+        const passages = section.passages || [];
+        if (passages.length >= assignmentPart) {
+          const targetPassage = passages[assignmentPart - 1];
+          const passageQuestions = allQuestions.filter(
+            (q) => q.passageId === targetPassage.id
+          );
+          return capTimingForPart({
+            ...data,
+            section: {
+              ...section,
+              title: `${section.title} - Part ${assignmentPart}`,
+              duration: 20,
+              passages: [targetPassage],
+              questions: passageQuestions,
+            },
+          }, 20);
+        }
+      } else if (section.type === "LISTENING" && assignmentPart) {
+        const rangeStart = (assignmentPart - 1) * 10 + 1;
+        const rangeEnd = assignmentPart * 10;
+        const partQuestions = allQuestions.filter((q) => {
+          const qNum = parseInt(q.id.replace(/\D/g, '')) || 0;
+          return qNum >= rangeStart && qNum <= rangeEnd;
+        });
+        return capTimingForPart({
+          ...data,
+          section: {
+            ...section,
+            title: `${section.title} - Section ${assignmentPart}`,
+            duration: 8,
+            questions: partQuestions,
+          },
+        }, 8);
+      } else if (section.type === "WRITING" && assignmentTask) {
+        const taskDuration = assignmentTask === 1 ? 20 : 40;
+        const taskQuestion = allQuestions[assignmentTask - 1];
+        if (taskQuestion) {
+          return capTimingForPart({
+            ...data,
+            section: {
+              ...section,
+              title: `${section.title} - Task ${assignmentTask}`,
+              duration: taskDuration,
+              questions: [taskQuestion],
+            },
+          }, taskDuration);
+        }
+      }
+      return data;
+    },
+    [isPartialAssignment, assignmentPart, assignmentTask]
+  );
+
   const audioRef = useRef<HTMLAudioElement>(null) as unknown as RefObject<HTMLAudioElement>;
   const introVideoRef = useRef<HTMLVideoElement>(null) as unknown as RefObject<HTMLVideoElement>;
   const introContainerRef = useRef<HTMLDivElement>(null) as unknown as RefObject<HTMLDivElement>;
   const rightPanelRef = useRef<HTMLDivElement>(null) as unknown as RefObject<HTMLDivElement>;
+  const isStartingRef = useRef(false);
 
   const isExamStarted = assignment?.status === "IN_PROGRESS";
+  const requiresProctoring = Boolean(assignment?.fullMockSessionId);
+  const isPracticeMode = !requiresProctoring;
+  const isTimerActive = requiresProctoring || timerEnabled;
+
+  const resolvePracticeAttemptType = useCallback(() => {
+    if (!isPartialAssignment) {
+      return "Full";
+    }
+
+    if (assignmentPart) {
+      return `Part ${assignmentPart}`;
+    }
+
+    if (assignmentTask) {
+      return `Task ${assignmentTask}`;
+    }
+
+    return "Full";
+  }, [isPartialAssignment, assignmentPart, assignmentTask]);
+
+  const exitExamToDashboard = useCallback(async () => {
+    setIsExamCompleted(true);
+    if (document.fullscreenElement) {
+      try {
+        await document.exitFullscreen();
+      } catch (exitErr) {
+        console.warn("Failed to exit fullscreen:", exitErr);
+      }
+    }
+    router.push("/dashboard");
+  }, [router]);
+
+  const navigateToNextAssignment = useCallback(
+    async (currentAssignmentId: string) => {
+      const allAssignments = await api.getMyAssignments();
+      
+      // For partial exams, we only want to navigate to the same section type
+      // unless we are in a full mock session (which we handle in handleFinalSubmit anyway)
+      const allowedTypes = isPartialAssignment && assignment?.section?.type 
+        ? [assignment.section.type] 
+        : ["LISTENING", "READING", "WRITING"];
+
+      const nextAssignment = allowedTypes
+        .map((type) => allAssignments.find((a) => a.section?.type === type))
+        .find((a) => a && a.status !== "SUBMITTED" && a.id !== currentAssignmentId);
+
+      if (nextAssignment) {
+        router.push(`/exam/${nextAssignment.id}?showVideo=1`);
+        return;
+      }
+
+      await exitExamToDashboard();
+    },
+    [router, exitExamToDashboard, isPartialAssignment, assignment?.section?.type],
+  );
+
+  const redirectToBreak = useCallback(
+    (assignmentIdToStart: string, breakEndsAt: string) => {
+      const params = new URLSearchParams({
+        next: assignmentIdToStart,
+        endsAt: breakEndsAt,
+      });
+      router.push(`/exam/break?${params.toString()}`);
+    },
+    [router],
+  );
+
+  const handleContinuePart = useCallback(() => {
+    setShowPartResults(false);
+    setPendingNavigation(null);
+
+    if (!pendingNavigation || !pendingNavigation.nextAssignmentId) {
+      return;
+    }
+
+    // Check if we are jumping sections in partial mode
+    if (isPartialAssignment && !pendingNavigation.fullMockSessionId) {
+      const nextOriginalId =
+        isPartAssignmentId(pendingNavigation.nextAssignmentId) ||
+        isTaskAssignmentId(pendingNavigation.nextAssignmentId)
+          ? getOriginalAssignmentIdFromPartId(pendingNavigation.nextAssignmentId)
+          : pendingNavigation.nextAssignmentId;
+
+      if (nextOriginalId !== originalAssignmentId) {
+        exitExamToDashboard();
+        return;
+      }
+    }
+
+    if (pendingNavigation.breakEndsAt) {
+      redirectToBreak(
+        pendingNavigation.nextAssignmentId,
+        pendingNavigation.breakEndsAt,
+      );
+      return;
+    }
+
+    router.push(`/exam/${pendingNavigation.nextAssignmentId}?showVideo=1`);
+  }, [pendingNavigation, redirectToBreak, router, exitExamToDashboard, isPartialAssignment, originalAssignmentId]);
+
+
 
   const withComputedRemainingTime = useCallback(
     (nextAssignment: ExamAssignment & { remainingTime?: number }) => {
@@ -121,17 +464,24 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
   const handleFinalSubmitRef = useRef<() => void>(() => {});
 
   const handleSyncError = useCallback((err: Error) => {
+    if (!requiresProctoring || showPartResults) {
+      return;
+    }
     console.error("Session sync error:", err);
     setSessionError({ type: "sync_error", message: err.message });
-  }, []);
+  }, [requiresProctoring, showPartResults]);
 
   const handleSessionExpired = useCallback(() => {
+    if (!requiresProctoring || showPartResults) {
+      return;
+    }
+
     setSessionError({
       type: "session_expired",
       message: "Your exam session has expired. Your answers have been submitted.",
     });
     handleFinalSubmitRef.current();
-  }, []);
+  }, [requiresProctoring, showPartResults]);
 
   const handleTabConflict = useCallback(() => {
     setSessionError({
@@ -147,7 +497,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
 
   const { syncAnswers, tabId } = useExamSession({
     assignmentId: assignment?.id || null,
-    enabled: isExamStarted,
+    enabled: isExamStarted && requiresProctoring && !showPartResults,
     heartbeatIntervalMs: adaptiveHeartbeatIntervalMs,
     syncDebounceMs: adaptiveSyncDebounceMs,
     onSyncError: handleSyncError,
@@ -155,18 +505,9 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
     onTabConflict: handleTabConflict,
   });
 
-  useAntiCheat();
+  useAntiCheat(requiresProctoring);
 
-  const redirectToBreak = useCallback(
-    (assignmentIdToStart: string, breakEndsAt: string) => {
-      const params = new URLSearchParams({
-        next: assignmentIdToStart,
-        endsAt: breakEndsAt,
-      });
-      router.push(`/exam/break?${params.toString()}`);
-    },
-    [router],
-  );
+
 
   const handleStartResponse = useCallback(
     (data: StartExamResponse) => {
@@ -175,9 +516,10 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
         redirectToBreak(breakData.assignmentId, breakData.breakEndsAt);
         return;
       }
-      setAssignment(withComputedRemainingTime(data as ExamAssignment & { remainingTime?: number }));
+      const filtered = filterSectionForPart(data as ExamAssignment & { remainingTime?: number });
+      setAssignment(withComputedRemainingTime(filtered));
     },
-    [redirectToBreak, withComputedRemainingTime],
+    [redirectToBreak, withComputedRemainingTime, filterSectionForPart],
   );
 
   useEffect(() => {
@@ -191,69 +533,19 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
       setAssignment(null);
       setAnswers({});
       setError("");
+      setShowPartResults(false);
+      setPendingNavigation(null);
+      setAttemptHistory([]);
+      setPracticeSubmitMeta(null);
+      setPracticeResultDetail(null);
+      setIsPracticeResultLoading(false);
+      setShowCorrectAnswers(true);
 
       api
         .getAssignment(originalAssignmentId)
         .then(async (data) => {
           // Filter section data for partial assignments (parts or tasks)
-          let processedData = data;
-          if (isPartialAssignment && data.section) {
-            const section = data.section;
-            const allQuestions = section.questions || [];
-            
-            if (section.type === "READING" && assignmentPart) {
-              // Handle Reading parts
-              const passages = section.passages || [];
-              if (passages.length >= assignmentPart) {
-                const targetPassage = passages[assignmentPart - 1];
-                const passageQuestions = allQuestions.filter(
-                  (q) => q.passageId === targetPassage.id
-                );
-                
-                processedData = {
-                  ...data,
-                  section: {
-                    ...section,
-                    title: `${section.title} - Part ${assignmentPart}`,
-                    duration: 20,
-                    passages: [targetPassage],
-                    questions: passageQuestions,
-                  },
-                };
-              }
-            } else if (section.type === "LISTENING" && assignmentPart) {
-              // Handle Listening parts - split questions into 4 sections
-              const questionsPerPart = Math.ceil(allQuestions.length / 4);
-              const startIdx = (assignmentPart - 1) * questionsPerPart;
-              const endIdx = Math.min(startIdx + questionsPerPart, allQuestions.length);
-              const partQuestions = allQuestions.slice(startIdx, endIdx);
-              
-              processedData = {
-                ...data,
-                section: {
-                  ...section,
-                  title: `${section.title} - Section ${assignmentPart}`,
-                  duration: 8,
-                  questions: partQuestions,
-                },
-              };
-            } else if (section.type === "WRITING" && assignmentTask) {
-              // Handle Writing tasks - each task is one question
-              const taskQuestion = allQuestions[assignmentTask - 1];
-              if (taskQuestion) {
-                processedData = {
-                  ...data,
-                  section: {
-                    ...section,
-                    title: `${section.title} - Task ${assignmentTask}`,
-                    duration: assignmentTask === 1 ? 20 : 40,
-                    questions: [taskQuestion],
-                  },
-                };
-              }
-            }
-          }
-          setAssignment(withComputedRemainingTime(processedData));
+          const processedData = filterSectionForPart(data);
           
           const storedAnswers = useExamStore.getState().answers as Record<string, AnswerValue>;
           const sectionQuestions = (processedData.section?.questions || []) as Question[];
@@ -275,8 +567,52 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
             useExamStore.getState().resetSession(originalAssignmentId);
           };
 
+          // For practice-mode SUBMITTED assignments, restart them eagerly.
+          // IMPORTANT: We must NOT setAssignment with the stale SUBMITTED data first,
+          // because the old endTime is in the past, causing remainingTime=0,
+          // which triggers handleTimerExpire -> handleFinalSubmit -> re-submit loop.
+          //
+          // Also handle expired IN_PROGRESS practice exams the same way:
+          // If endTime is in the past, the timer would immediately expire and auto-submit,
+          // creating the same loop. So we restart them eagerly too.
+          const isPractice = !data.fullMockSessionId;
+          const isExpiredInProgress = data.status === "IN_PROGRESS" && isPractice && data.endTime && new Date(data.endTime).getTime() < Date.now();
+
+          if ((data.status === "SUBMITTED" && isPractice) || isExpiredInProgress) {
+            resetLocalSession();
+            try {
+              const startResponse = await api.startExam(originalAssignmentId);
+              if ((startResponse as BreakStatus).breakEndsAt) {
+                const breakData = startResponse as BreakStatus;
+                redirectToBreak(breakData.assignmentId, breakData.breakEndsAt);
+                return;
+              }
+              const restartedData = filterSectionForPart(startResponse as ExamAssignment & { remainingTime?: number });
+              setAssignment(withComputedRemainingTime(restartedData));
+              applyServerAnswers({});
+              setShowIntroVideo(false);
+            } catch (startErr) {
+              console.error("Failed to restart expired/submitted practice exam:", startErr);
+              setError("Failed to start exam. Please try again.");
+            }
+            return;
+          }
+
+          // Safe to set assignment for non-expired, non-SUBMITTED statuses
+          setAssignment(withComputedRemainingTime(processedData));
+
           if (data.status === "IN_PROGRESS") {
             setShowIntroVideo(false);
+
+            if (!processedData.fullMockSessionId) {
+              applyMergedAnswers(processedData.answers as Record<string, AnswerValue>);
+
+              if (processedData.section?.type === "LISTENING") {
+                setShowPlayOverlay(true);
+              }
+              return;
+            }
+
             // Restore from Redis session for active exams
             try {
               const tabId = typeof window !== "undefined" ? sessionStorage.getItem('exam_tab_id') : null;
@@ -290,61 +626,8 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
 
               if (reconnectData.success && reconnectData.assignment) {
                 // Filter reconnect data for partial assignments
-                let processedReconnectData = reconnectData.assignment;
-                if (isPartialAssignment && reconnectData.assignment.section) {
-                  const section = reconnectData.assignment.section;
-                  const allQuestions = section.questions || [];
-
-                  if (section.type === "READING" && assignmentPart) {
-                    const passages = section.passages || [];
-                    if (passages.length >= assignmentPart) {
-                      const targetPassage = passages[assignmentPart - 1];
-                      const passageQuestions = allQuestions.filter(
-                        (q) => q.passageId === targetPassage.id
-                      );
-
-                      processedReconnectData = {
-                        ...reconnectData.assignment,
-                        section: {
-                          ...section,
-                          title: `${section.title} - Part ${assignmentPart}`,
-                          duration: 20,
-                          passages: [targetPassage],
-                          questions: passageQuestions,
-                        },
-                      };
-                    }
-                  } else if (section.type === "LISTENING" && assignmentPart) {
-                    const questionsPerPart = Math.ceil(allQuestions.length / 4);
-                    const startIdx = (assignmentPart - 1) * questionsPerPart;
-                    const endIdx = Math.min(startIdx + questionsPerPart, allQuestions.length);
-                    const partQuestions = allQuestions.slice(startIdx, endIdx);
-
-                    processedReconnectData = {
-                      ...reconnectData.assignment,
-                      section: {
-                        ...section,
-                        title: `${section.title} - Section ${assignmentPart}`,
-                        duration: 8,
-                        questions: partQuestions,
-                      },
-                    };
-                  } else if (section.type === "WRITING" && assignmentTask) {
-                    const taskQuestion = allQuestions[assignmentTask - 1];
-                    if (taskQuestion) {
-                      processedReconnectData = {
-                        ...reconnectData.assignment,
-                        section: {
-                          ...section,
-                          title: `${section.title} - Task ${assignmentTask}`,
-                          duration: assignmentTask === 1 ? 20 : 40,
-                          questions: [taskQuestion],
-                        },
-                      };
-                    }
-                  }
-                }
-                setAssignment(withComputedRemainingTime(processedReconnectData as ExamAssignment & { remainingTime?: number }));
+                const processedReconnectData = filterSectionForPart(reconnectData.assignment as ExamAssignment & { remainingTime?: number });
+                setAssignment(withComputedRemainingTime(processedReconnectData));
                 applyMergedAnswers(processedReconnectData.answers as Record<string, AnswerValue>);
               } else {
                 // If reconnect fails, fallback to DB data
@@ -358,8 +641,6 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
             }
 
             if (processedData.section?.type === "LISTENING") {
-              // Only show play overlay if audio hasn't started (approximated by lack of answers or explicit state)
-              // For now, simpler to always show it on refresh for Listening
               setShowPlayOverlay(true);
             }
             return;
@@ -369,19 +650,19 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
             resetLocalSession();
           }
 
-          // Only show intro video for offline exams (full mock), not for individual parts/tasks
-          // Partial assignments (Reading parts, Listening sections, Writing tasks) never show intro
-          const isPartialTest = isPartialAssignment;
-          const isOfflineExam = Boolean(data.fullMockSessionId);
-          const shouldShowIntro = !isPartialTest && ((data.status === "ASSIGNED" && isOfflineExam) || forceShowVideo);
-          
-          console.log('[Exam Debug] Intro video check:', {
-            assignmentId,
-            fullMockSessionId: data.fullMockSessionId,
-            isPartialTest,
-            isOfflineExam,
-            shouldShowIntro
-          });
+          // Intro videos are only for offline full-mock exams.
+          // Online section/part/task assignments should always skip intro.
+          const isPartialTest = isPartAssignmentId(assignmentId) || isTaskAssignmentId(assignmentId);
+          const isOfflineExam = Boolean(processedData.fullMockSessionId);
+
+          // Show intro video only when:
+          // 1. The assignment belongs to an offline full-mock flow
+          // 2. It's not a partial test, or it's the first part/task
+          // 3. Exam is ASSIGNED or explicitly forced via query param
+          const shouldShowIntro =
+            isOfflineExam &&
+            (!isPartialTest || assignmentPart === 1 || assignmentTask === 1) &&
+            (data.status === "ASSIGNED" || forceShowVideo);
           
           if (shouldShowIntro) {
             applyServerAnswers(processedData.answers as Record<string, AnswerValue>);
@@ -395,10 +676,11 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
           setError(err.message);
         });
     }
-  }, [assignmentId, originalAssignmentId, isPartialAssignment, assignmentPart, assignmentTask, forceShowVideo, handleStartResponse, isAuthenticated, withComputedRemainingTime]);
+  }, [assignmentId, originalAssignmentId, isPartialAssignment, assignmentPart, assignmentTask, forceShowVideo, handleStartResponse, isAuthenticated, withComputedRemainingTime, filterSectionForPart, redirectToBreak]);
 
   const enterFullscreen = useCallback(async () => {
     try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const userActivation = (navigator as any)?.userActivation;
       if (userActivation && !userActivation.isActive) {
         return;
@@ -411,6 +693,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
       // specific Logic to prevent Escape key from exiting fullscreen (Chrome/Edge only)
       // This requires the feature policy 'keyboard-map' and secure context
       // We re-apply this lock whenever we try to enter/re-enter fullscreen
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const nav = navigator as any;
       if (nav?.keyboard?.lock) {
         try {
@@ -427,6 +710,10 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
 
   // Attempt fullscreen on first user interaction if not already fullscreen
   useEffect(() => {
+    if (!requiresProctoring) {
+      return;
+    }
+
     const handlePointerDown = () => {
       if (!document.fullscreenElement && (showIntroVideo || isExamStarted || assignment?.status === "ASSIGNED")) {
         enterFullscreen();
@@ -435,21 +722,25 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
 
     window.addEventListener("pointerdown", handlePointerDown, { capture: true });
     return () => window.removeEventListener("pointerdown", handlePointerDown, { capture: true });
-  }, [enterFullscreen, showIntroVideo, isExamStarted, assignment?.status]);
+  }, [enterFullscreen, showIntroVideo, isExamStarted, assignment?.status, requiresProctoring]);
 
   const handleStartExam = useCallback(async () => {
     if (sessionError) return;
-    if (!document.fullscreenElement) {
+    if (isStartingRef.current) return;
+    if (requiresProctoring && !document.fullscreenElement) {
       console.log("Blocking startExam - not in fullscreen");
       return;
     }
+    isStartingRef.current = true;
     try {
-      const data = await api.startExam(assignmentId);
+      const data = await api.startExam(originalAssignmentId);
       handleStartResponse(data);
     } catch (err) {
       console.error("Failed to start exam:", err);
+    } finally {
+      isStartingRef.current = false;
     }
-  }, [assignmentId, handleStartResponse, sessionError]);
+  }, [originalAssignmentId, handleStartResponse, sessionError, requiresProctoring]);
 
   const handleVideoEnded = useCallback(() => {
     if (sessionError) return;
@@ -464,7 +755,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
   useEffect(() => {
     if (
       !showIntroVideo &&
-      isFullscreen &&
+      (requiresProctoring ? isFullscreen : true) &&
       assignment?.status === "ASSIGNED" &&
       !sessionError &&
       !isLoading &&
@@ -473,7 +764,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
     ) {
       handleStartExam();
     }
-  }, [showIntroVideo, isFullscreen, assignment?.status, assignment?.section?.type, sessionError, isLoading, handleStartExam, showPlayOverlay]);
+  }, [showIntroVideo, isFullscreen, assignment?.status, assignment?.section?.type, sessionError, isLoading, handleStartExam, showPlayOverlay, requiresProctoring]);
 
   useEffect(() => {
     if (showIntroVideo && introVideoRef.current) {
@@ -497,7 +788,14 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
       setIsFullscreen(isFs);
       
       // Show warning if user exits fullscreen during active exam
-      if (wasFs && !isFs && isExamStarted && !isExamCompleted && !showIntroVideo) {
+      if (
+        requiresProctoring &&
+        wasFs &&
+        !isFs &&
+        isExamStarted &&
+        !isExamCompleted &&
+        !showIntroVideo
+      ) {
         setShowExitWarningModal(true);
       }
     };
@@ -512,7 +810,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
     return () => {
       document.removeEventListener("fullscreenchange", handleFullscreenChange);
     };
-  }, [isExamStarted, isExamCompleted, showIntroVideo]);
+  }, [isExamStarted, isExamCompleted, showIntroVideo, requiresProctoring]);
 
   // If fullscreen is restored, ensure the warning modal closes
   useEffect(() => {
@@ -523,6 +821,10 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
 
   // Block Escape key globally
   useEffect(() => {
+    if (!requiresProctoring) {
+      return;
+    }
+
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault();
@@ -539,25 +841,32 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
       window.removeEventListener("keydown", handleKeyDown, { capture: true });
       window.removeEventListener("keyup", handleKeyDown, { capture: true });
     };
-  }, []);
+  }, [requiresProctoring]);
   // Re-acquire lock on any user interaction to be safe, if we are in fullscreen
   useEffect(() => {
+    if (!requiresProctoring) {
+      return;
+    }
+
     const handleInteraction = () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const nav = navigator as any;
       if (document.fullscreenElement && nav?.keyboard?.lock) {
+         // eslint-disable-next-line @typescript-eslint/no-explicit-any
          nav.keyboard.lock(["Escape"]).catch((e: any) => console.log("Silent lock update failed", e));
       }
     };
 
     window.addEventListener("click", handleInteraction);
     return () => window.removeEventListener("click", handleInteraction);
-  }, []);
+  }, [requiresProctoring]);
 
 
 
   const handleAnswerChange = useCallback(
     (questionId: string, value: AnswerValue) => {
       // Sync with Zustand store for persistent local backup
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       useExamStore.getState().setAnswer(questionId, value as any);
 
       setAnswers((prev) => {
@@ -608,34 +917,9 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
     [assignment?.section?.type]
   );
 
-  const exitExamToDashboard = useCallback(async () => {
-    setIsExamCompleted(true);
-    if (document.fullscreenElement) {
-      try {
-        await document.exitFullscreen();
-      } catch (exitErr) {
-        console.warn("Failed to exit fullscreen:", exitErr);
-      }
-    }
-    router.push("/dashboard");
-  }, [router]);
 
-  const navigateToNextAssignment = useCallback(
-    async (currentAssignmentId: string) => {
-      const allAssignments = await api.getMyAssignments();
-      const nextAssignment = ["LISTENING", "READING", "WRITING"]
-        .map((type) => allAssignments.find((a) => a.section?.type === type))
-        .find((a) => a && a.status !== "SUBMITTED" && a.id !== currentAssignmentId);
 
-      if (nextAssignment) {
-        router.push(`/exam/${nextAssignment.id}?showVideo=1`);
-        return;
-      }
 
-      await exitExamToDashboard();
-    },
-    [router, exitExamToDashboard],
-  );
 
   const isTransientSubmitFailure = useCallback((err: unknown) => {
     if (!(err instanceof Error)) {
@@ -663,6 +947,11 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
           return false;
         }
 
+        if (isPracticeMode) {
+          await exitExamToDashboard();
+          return true;
+        }
+
         const hasPendingAssignment = allAssignments.some(
           (item) => item.status !== "SUBMITTED" && item.id !== currentAssignmentId,
         );
@@ -679,12 +968,134 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
         return false;
       }
     },
-    [navigateToNextAssignment, exitExamToDashboard],
+    [navigateToNextAssignment, exitExamToDashboard, isPracticeMode],
   );
+
+  const loadPracticeAttemptHistory = useCallback(async () => {
+    if (requiresProctoring || !assignment?.section?.type) {
+      return;
+    }
+
+    const sectionType = assignment.section.type;
+    const startedAtMs = assignment.startTime
+      ? new Date(assignment.startTime).getTime()
+      : new Date(assignment.createdAt).getTime();
+    const questionIds = new Set((assignment.section.questions || []).map((q) => q.id));
+
+    setIsAttemptHistoryLoading(true);
+
+    try {
+      const results = await api.getMyResults();
+      const relevantResults = results
+        .filter((result) => {
+          if (result.section?.type !== sectionType) {
+            return false;
+          }
+
+          const submittedAtMs = new Date(result.submittedAt).getTime();
+          if (Number.isFinite(startedAtMs) && submittedAtMs + 1000 < startedAtMs) {
+            return false;
+          }
+
+          if (!isPartialAssignment) {
+            return true;
+          }
+
+          const answerMap = (result.answers || {}) as Record<string, unknown>;
+          const answerKeys = Object.keys(answerMap).filter(
+            (key) => !key.startsWith("_"),
+          );
+
+          if (assignmentTask) {
+            const taskKeys = assignmentTask === 1
+              ? new Set(["w1", "task1"])
+              : new Set(["w2", "task2"]);
+            return (
+              answerKeys.some((key) => taskKeys.has(key)) ||
+              answerKeys.some((key) => questionIds.has(key))
+            );
+          }
+
+          if (answerKeys.length === 0) {
+            return false;
+          }
+
+          const matchingCount = answerKeys.filter((key) => questionIds.has(key)).length;
+          return matchingCount > 0 && matchingCount === answerKeys.length;
+        })
+        .sort(
+          (left, right) =>
+            new Date(left.submittedAt).getTime() - new Date(right.submittedAt).getTime(),
+        );
+
+      const history: AttemptHistoryItem[] = relevantResults.map((result, index) => ({
+        attempt: index + 1,
+        score: typeof result.score === "number" ? Number(result.score) : null,
+        totalScore:
+          typeof result.totalScore === "number" ? Number(result.totalScore) : null,
+        bandScore: typeof result.bandScore === "number" ? Number(result.bandScore) : null,
+        submittedAt: result.submittedAt,
+      }));
+
+      setAttemptHistory(history);
+    } catch (historyError) {
+      console.warn("Failed to load practice attempt history:", historyError);
+    } finally {
+      setIsAttemptHistoryLoading(false);
+    }
+  }, [requiresProctoring, assignment, isPartialAssignment, assignmentTask]);
+
+  const loadPracticeResultDetail = useCallback(async (resultId?: string | null) => {
+    if (!resultId) {
+      setPracticeResultDetail(null);
+      setIsPracticeResultLoading(false);
+      return;
+    }
+
+    setIsPracticeResultLoading(true);
+
+    try {
+      const result = await api.getResult(resultId);
+      setPracticeResultDetail(result);
+    } catch (resultError) {
+      console.warn("Failed to load submitted result detail:", resultError);
+      setPracticeResultDetail(null);
+    } finally {
+      setIsPracticeResultLoading(false);
+    }
+  }, []);
 
   const handleFinalSubmit = useCallback(async () => {
     if (!assignment || isSubmitting) return;
     setIsSubmitting(true);
+
+    let assignmentForSubmit: ExamAssignment & { remainingTime?: number } = assignment;
+
+    if (assignmentForSubmit.status !== "IN_PROGRESS") {
+      try {
+        const startResponse = await api.startExam(originalAssignmentId);
+
+        if ((startResponse as BreakStatus).status === "BREAK") {
+          handleStartResponse(startResponse);
+          setIsSubmitting(false);
+          return;
+        }
+
+        const startedAssignment = withComputedRemainingTime(
+          filterSectionForPart(startResponse as ExamAssignment & { remainingTime?: number }),
+        );
+        setAssignment(startedAssignment);
+        assignmentForSubmit = startedAssignment;
+      } catch (startError) {
+        const startErrorMessage =
+          startError instanceof Error
+            ? startError.message
+            : "Exam is not active. Please try again.";
+        setError(startErrorMessage);
+        setIsSubmitting(false);
+        return;
+      }
+    }
 
     try {
       await syncAnswers(answers);
@@ -693,7 +1104,57 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
     }
 
     try {
-      const submitResult = await api.submitExam(assignment.id, answers, tabId);
+      const attemptQuestions = Array.isArray(assignmentForSubmit.section?.questions)
+        ? assignmentForSubmit.section.questions
+        : [];
+      const attemptQuestionCount = attemptQuestions.length;
+
+      const submitAnswers: Record<string, unknown> = {
+        ...answers,
+        _attemptType: isPracticeMode ? resolvePracticeAttemptType() : "Full",
+        _attemptMode: isPracticeMode ? "standalone" : "full-mock",
+        _fullMockSessionId: assignmentForSubmit.fullMockSessionId ?? null,
+        _attemptQuestionCount: attemptQuestionCount,
+      };
+
+      const submitResult = await api.submitExam(
+        assignmentForSubmit.id,
+        submitAnswers,
+        tabId,
+        isPracticeMode,
+      );
+
+      const isOfflineMock = Boolean(submitResult.fullMockSessionId);
+
+      if (isPracticeMode && !isOfflineMock && !submitResult.breakEndsAt) {
+        const submitMeta: PracticeSubmitMeta = {
+          resultId: submitResult.resultId ?? null,
+          score: typeof submitResult.score === "number" ? submitResult.score : null,
+          totalScore:
+            typeof submitResult.totalScore === "number"
+              ? submitResult.totalScore
+              : null,
+          bandScore:
+            typeof submitResult.bandScore === "number"
+              ? submitResult.bandScore
+              : null,
+          note: submitResult.note || null,
+        };
+
+        setPendingNavigation({
+          nextAssignmentId: null,
+          breakEndsAt: submitResult.breakEndsAt,
+          fullMockSessionId: submitResult.fullMockSessionId,
+        });
+        setPracticeSubmitMeta(submitMeta);
+        setShowPartResults(true);
+        setShowIntroVideo(false);
+        setShowCorrectAnswers(true);
+        void loadPracticeResultDetail(submitMeta.resultId);
+        void loadPracticeAttemptHistory();
+        setIsSubmitting(false);
+        return;
+      }
 
       if (submitResult.nextAssignmentId) {
         if (submitResult.breakEndsAt) {
@@ -712,11 +1173,19 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
         return;
       }
 
-      await navigateToNextAssignment(assignment.id);
+      // If no next assignment, we are done.
+      // Even here, maybe we want to show results before dashboard?
+      // Requirement says: "ensuring that only the final part submission triggers a redirect to the feedback page"
+      // So if this is the final part, we redirect (which navigateToNextAssignment or exitExamToDashboard will do).
+      // So no change here for final part.
+
+      await navigateToNextAssignment(assignmentForSubmit.id);
     } catch (err) {
       if (isTransientSubmitFailure(err)) {
         setError("Submit response not confirmed. Verifying latest exam state...");
-        const recovered = await recoverSubmittedStateAfterFailure(assignment.id);
+        const recovered = await recoverSubmittedStateAfterFailure(
+          assignmentForSubmit.id,
+        );
 
         if (recovered) {
           return;
@@ -734,7 +1203,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
       setIsReviewModalOpen(false);
       setIsConfirmModalOpen(false);
     }
-  }, [assignment, isSubmitting, syncAnswers, answers, redirectToBreak, exitExamToDashboard, navigateToNextAssignment, isTransientSubmitFailure, recoverSubmittedStateAfterFailure, router, tabId]);
+  }, [assignment, isSubmitting, originalAssignmentId, handleStartResponse, withComputedRemainingTime, filterSectionForPart, syncAnswers, answers, tabId, isPracticeMode, resolvePracticeAttemptType, loadPracticeAttemptHistory, loadPracticeResultDetail, redirectToBreak, exitExamToDashboard, navigateToNextAssignment, isTransientSubmitFailure, recoverSubmittedStateAfterFailure, router]);
 
   // Keep ref updated
   useEffect(() => {
@@ -747,8 +1216,11 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
   }, [assignment]);
 
   const handleTimerExpire = useCallback(() => {
+    if (!isTimerActive || showPartResults) {
+      return;
+    }
     handleFinalSubmit();
-  }, [handleFinalSubmit]);
+  }, [handleFinalSubmit, showPartResults, isTimerActive]);
 
   const handleSessionError = useCallback(() => {
     if (sessionError?.type === "tab_conflict") {
@@ -773,8 +1245,108 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
     currentQuestionId,
   });
 
-  const questions = (section?.questions || []) as Question[];
-  const passages = (section?.passages || []) as { id: string; title: string; content: string }[];
+  const questions = useMemo(
+    () => (section?.questions || []) as Question[],
+    [section?.questions],
+  );
+  const passages = useMemo(
+    () =>
+      (section?.passages || []) as {
+        id: string;
+        title: string;
+        content: string;
+      }[],
+    [section?.passages],
+  );
+
+  const practiceQuestions = useMemo(() => {
+    const resultQuestions = (practiceResultDetail?.section?.questions || []) as Question[];
+    const baseQuestions = resultQuestions.length > 0 ? resultQuestions : questions;
+
+    if (!isPartialAssignment || questions.length === 0) {
+      return baseQuestions;
+    }
+
+    const visibleQuestionIds = new Set(questions.map((question) => question.id));
+    return baseQuestions.filter((question) => visibleQuestionIds.has(question.id));
+  }, [practiceResultDetail, questions, isPartialAssignment]);
+
+  const practiceAnswerMap = useMemo<Record<string, unknown>>(
+    () =>
+      ((practiceResultDetail?.answers as Record<string, unknown> | undefined) ||
+        (answers as Record<string, unknown>)),
+    [practiceResultDetail, answers],
+  );
+
+  const practiceAnswerRows = useMemo<PracticeAnswerRow[]>(() => {
+    return practiceQuestions.map((question, index) => {
+      const idMatch = question.id.match(/\d+/);
+      const questionNumber = idMatch ? Number(idMatch[0]) : index + 1;
+      const studentAnswerRaw = practiceAnswerMap[question.id];
+      const correctAnswerRaw = resolveQuestionCorrectAnswer(question);
+      const hasCorrectAnswer = hasAnswerValue(correctAnswerRaw);
+
+      return {
+        questionId: question.id,
+        questionNumber,
+        studentAnswer: formatAnswerValue(studentAnswerRaw),
+        correctAnswer: formatAnswerValue(correctAnswerRaw),
+        hasCorrectAnswer,
+        isCorrect: hasCorrectAnswer
+          ? isAnswerCorrect(studentAnswerRaw, correctAnswerRaw)
+          : null,
+      };
+    });
+  }, [practiceQuestions, practiceAnswerMap]);
+
+  const objectiveRows = useMemo(
+    () => practiceAnswerRows.filter((row) => row.hasCorrectAnswer),
+    [practiceAnswerRows],
+  );
+
+  const practiceScoreText = useMemo(() => {
+    if (objectiveRows.length > 0) {
+      const correctCount = objectiveRows.filter((row) => row.isCorrect).length;
+      return `${correctCount}/${objectiveRows.length}`;
+    }
+
+    if (
+      practiceSubmitMeta &&
+      typeof practiceSubmitMeta.score === "number" &&
+      typeof practiceSubmitMeta.totalScore === "number"
+    ) {
+      return `${practiceSubmitMeta.score.toFixed(1)}/${practiceSubmitMeta.totalScore.toFixed(1)}`;
+    }
+
+    if (practiceSubmitMeta && typeof practiceSubmitMeta.bandScore === "number") {
+      return `Band ${practiceSubmitMeta.bandScore.toFixed(1)}`;
+    }
+
+    return "Pending";
+  }, [objectiveRows, practiceSubmitMeta]);
+
+  const writingResponses = useMemo(() => {
+    if (section?.type !== "WRITING") {
+      return [];
+    }
+
+    const entries = [
+      {
+        label: "Task 1",
+        value:
+          (practiceAnswerMap["w1"] as string | undefined) ||
+          (practiceAnswerMap["task1"] as string | undefined),
+      },
+      {
+        label: "Task 2",
+        value:
+          (practiceAnswerMap["w2"] as string | undefined) ||
+          (practiceAnswerMap["task2"] as string | undefined),
+      },
+    ];
+
+    return entries.filter((entry) => hasAnswerValue(entry.value));
+  }, [section?.type, practiceAnswerMap]);
 
   const handlePartClick = useCallback(
     (partNumber: number) => {
@@ -810,26 +1382,229 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
     );
   }
 
-  const timerStart = isFullscreen && isExamStarted && !showIntroVideo;
+  const timerStart =
+    isTimerActive &&
+    (requiresProctoring ? isFullscreen : true) &&
+    isExamStarted &&
+    !showIntroVideo &&
+    !showPartResults;
+
+  if (showPartResults && isPracticeMode) {
+    const hasNextStep = Boolean(pendingNavigation?.nextAssignmentId);
+    const primaryButtonLabel = hasNextStep ? "Continue" : "Back to Dashboard";
+
+    return (
+      <div className="min-h-screen bg-gray-100 py-8 px-4">
+        <div className="mx-auto max-w-5xl rounded-3xl border border-gray-200 bg-white p-6 shadow-sm md:p-10">
+          <div className="mx-auto max-w-3xl text-center">
+            <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-emerald-50">
+              <svg
+                className="h-9 w-9 text-emerald-500"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2.5}
+                  d="M5 13l4 4L19 7"
+                />
+              </svg>
+            </div>
+            <h2 className="text-3xl font-bold text-gray-900">Test Complete!</h2>
+            <p className="mt-2 text-sm text-gray-500">Here are your results</p>
+          </div>
+
+          <div className="mx-auto mt-6 max-w-4xl rounded-2xl bg-gray-50 p-5">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-lg font-medium text-gray-700">Your Score</p>
+              <p className="text-4xl font-bold text-red-500">{practiceScoreText}</p>
+            </div>
+            {practiceSubmitMeta?.note && (
+              <p className="mt-2 text-sm text-gray-600">{practiceSubmitMeta.note}</p>
+            )}
+          </div>
+
+          {isPracticeResultLoading ? (
+            <div className="mx-auto mt-8 flex max-w-4xl items-center justify-center rounded-2xl border border-gray-200 bg-gray-50 py-10">
+              <div className="text-center">
+                <div className="mx-auto mb-3 h-8 w-8 animate-spin rounded-full border-b-2 border-t-2 border-black"></div>
+                <p className="text-sm text-gray-500">Loading detailed answers...</p>
+              </div>
+            </div>
+          ) : (
+            <>
+              {practiceAnswerRows.length > 0 && (
+                <section className="mx-auto mt-8 max-w-4xl rounded-2xl border border-gray-200 bg-white p-4 md:p-6">
+                  <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                    <h3 className="text-3xl font-semibold text-gray-900">Answer Sheet</h3>
+                    {objectiveRows.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setShowCorrectAnswers((previousState) => !previousState)
+                        }
+                        className="inline-flex items-center gap-2 rounded-full border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-100"
+                      >
+                        <span
+                          className={`h-5 w-9 rounded-full p-0.5 transition-colors ${
+                            showCorrectAnswers ? "bg-red-500" : "bg-gray-300"
+                          }`}
+                        >
+                          <span
+                            className={`block h-4 w-4 rounded-full bg-white transition-transform ${
+                              showCorrectAnswers ? "translate-x-4" : "translate-x-0"
+                            }`}
+                          />
+                        </span>
+                        Show Correct Answers
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                    {practiceAnswerRows.map((row) => (
+                      <article
+                        key={row.questionId}
+                        className="rounded-xl border border-gray-200 bg-gray-50 p-3"
+                      >
+                        <div className="flex items-start gap-3">
+                          <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-300 text-sm font-bold text-white">
+                            {row.questionNumber}
+                          </div>
+                          <div className="min-w-0 text-sm">
+                            <p className="text-gray-700">
+                              Your: <span className="font-medium text-gray-900">{row.studentAnswer}</span>
+                              {row.hasCorrectAnswer && row.isCorrect === false && (
+                                <span className="ml-2 font-semibold text-red-500">x</span>
+                              )}
+                              {row.hasCorrectAnswer && row.isCorrect === true && (
+                                <span className="ml-2 font-semibold text-emerald-500">✓</span>
+                              )}
+                            </p>
+                            {showCorrectAnswers && row.hasCorrectAnswer && (
+                              <p className="mt-1 text-emerald-600">
+                                Correct: <span className="font-medium">{row.correctAnswer}</span>
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              {section.type === "WRITING" && writingResponses.length > 0 && (
+                <section className="mx-auto mt-8 max-w-4xl rounded-2xl border border-gray-200 bg-white p-4 md:p-6">
+                  <h3 className="text-xl font-semibold text-gray-900">Submitted Responses</h3>
+                  <div className="mt-4 space-y-4">
+                    {writingResponses.map((entry) => (
+                      <article
+                        key={entry.label}
+                        className="rounded-xl border border-gray-200 bg-gray-50 p-4"
+                      >
+                        <h4 className="text-sm font-bold uppercase tracking-wide text-gray-600">
+                          {entry.label}
+                        </h4>
+                        <p className="mt-2 whitespace-pre-wrap text-sm text-gray-800">
+                          {String(entry.value)}
+                        </p>
+                      </article>
+                    ))}
+                  </div>
+                </section>
+              )}
+            </>
+          )}
+
+          <section className="mx-auto mt-8 max-w-4xl rounded-2xl border border-gray-200 bg-white p-4 md:p-6">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <h3 className="text-lg font-semibold text-gray-900">Attempt History</h3>
+              {isAttemptHistoryLoading && (
+                <span className="text-xs text-gray-500">Updating...</span>
+              )}
+            </div>
+
+            {attemptHistory.length === 0 ? (
+              <p className="text-sm text-gray-500">
+                Attempt history will appear after submissions.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {attemptHistory
+                  .slice()
+                  .reverse()
+                  .map((entry) => (
+                    <div
+                      key={`${entry.attempt}-${entry.submittedAt}`}
+                      className="rounded-xl border border-gray-100 bg-gray-50 px-3 py-2"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-semibold text-gray-700">
+                          Attempt {entry.attempt}
+                        </span>
+                        <span className="text-[11px] text-gray-500">
+                          {new Date(entry.submittedAt).toLocaleString()}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-sm font-semibold text-gray-900">
+                        {typeof entry.score === "number"
+                          ? `Score: ${entry.score.toFixed(1)}${typeof entry.totalScore === "number" ? ` / ${entry.totalScore.toFixed(1)}` : ""}`
+                          : "Score pending"}
+                      </p>
+                      {typeof entry.bandScore === "number" && (
+                        <p className="text-xs text-gray-600">Band: {entry.bandScore.toFixed(1)}</p>
+                      )}
+                    </div>
+                  ))}
+              </div>
+            )}
+          </section>
+
+          <div className="mx-auto mt-8 flex max-w-4xl justify-end">
+            <button
+              type="button"
+              onClick={() => {
+                if (hasNextStep) {
+                  handleContinuePart();
+                  return;
+                }
+
+                setShowPartResults(false);
+                void exitExamToDashboard();
+              }}
+              className="inline-flex items-center rounded-xl bg-black px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-gray-800"
+            >
+              {primaryButtonLabel}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <>
       {/* Fullscreen Exit Warning Modal */}
-      <ConfirmationModal
-        isOpen={showExitWarningModal}
-        onClose={() => setShowExitWarningModal(false)}
-        onConfirm={() => {
-          setShowExitWarningModal(false);
-          enterFullscreen();
-        }}
-        title="Warning: Exit Fullscreen?"
-        message="You are about to exit fullscreen mode. If you exit now, your exam progress may be lost and your results could be invalidated. Please stay in fullscreen to continue the exam safely."
-        confirmText="Stay in Fullscreen"
-        cancelText={null}
-        variant="danger"
-        dismissible={false}
-      />
-      
+      {requiresProctoring && (
+        <ConfirmationModal
+          isOpen={showExitWarningModal}
+          onClose={() => setShowExitWarningModal(false)}
+          onConfirm={() => {
+            setShowExitWarningModal(false);
+            enterFullscreen();
+          }}
+          title="Warning: Exit Fullscreen?"
+          message="You are about to exit fullscreen mode. If you exit now, your exam progress may be lost and your results could be invalidated. Please stay in fullscreen to continue the exam safely."
+          confirmText="Stay in Fullscreen"
+          cancelText={null}
+          variant="danger"
+          dismissible={false}
+        />
+      )}
+
       <div>
         {section.type === "READING" ? (
           <ReadingSection
@@ -872,6 +1647,9 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
             sessionError={sessionError}
             onSessionResolve={handleSessionError}
             timerStart={timerStart}
+            showTimer={isTimerActive}
+            showPartResults={showPartResults}
+            onContinue={handleContinuePart}
           />
         ) : section.type === "WRITING" ? (
           <WritingSection
@@ -901,6 +1679,9 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
             sessionError={sessionError}
             onSessionResolve={() => setSessionError(null)}
             timerStart={timerStart}
+            showTimer={isTimerActive}
+            showPartResults={showPartResults}
+            onContinue={handleContinuePart}
           />
         ) : (
           <ListeningSection
@@ -950,6 +1731,9 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
             sessionError={sessionError}
             onSessionResolve={handleSessionError}
             timerStart={timerStart}
+            showTimer={isTimerActive}
+            showPartResults={showPartResults}
+            onContinue={handleContinuePart}
           />
         )}
       </div>

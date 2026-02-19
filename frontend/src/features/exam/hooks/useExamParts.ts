@@ -1,5 +1,5 @@
-import { useMemo } from 'react';
 import { Question } from '@/types';
+import { useMemo } from 'react';
 import { AnswerValue, ExamPart, Passage } from '../types';
 import { getEffectivePoints } from '../utils';
 
@@ -34,9 +34,11 @@ export const useExamParts = ({
   const parts = useMemo<ExamPart[]>(() => {
     if (!section?.type) return [];
 
+    let generatedParts: ExamPart[] = [];
+
     if (section.type === 'READING') {
       let globalIndex = 0;
-      return passages.map((passage, index) => {
+      generatedParts = passages.map((passage, index) => {
         const partQuestions = questions.filter(
           (question) => question.passageId === passage.id
         );
@@ -69,7 +71,7 @@ export const useExamParts = ({
             id: question.id,
             number: displayLabel,
             isAnswered: Array.isArray(answers[question.id])
-              ? (answers[question.id] as any[]).length > 0
+              ? (answers[question.id] as string[]).length > 0
               : !!answers[question.id],
           };
         });
@@ -84,10 +86,8 @@ export const useExamParts = ({
           questions: navQuestions,
         };
       });
-    }
-
-    if (section.type === 'WRITING') {
-      return questions.map((question, index) => ({
+    } else if (section.type === 'WRITING') {
+      generatedParts = questions.map((question, index) => ({
         number: index + 1,
         questionCount: 1,
         answeredCount: answers[question.id] ? 1 : 0,
@@ -100,69 +100,71 @@ export const useExamParts = ({
           },
         ],
       }));
-    }
+    } else {
+      const partRanges = [
+        { start: 1, end: 10 },
+        { start: 11, end: 20 },
+        { start: 21, end: 30 },
+        { start: 31, end: 40 },
+      ];
 
-    const partRanges = [
-      { start: 1, end: 10 },
-      { start: 11, end: 20 },
-      { start: 21, end: 30 },
-      { start: 31, end: 40 },
-    ];
+      generatedParts = partRanges.map((range, index) => {
+        const partQuestions = questions.filter((question) => {
+          const questionNumber = parseInt(question.id.replace(/\D/g, '')) || 0;
+          return questionNumber >= range.start && questionNumber <= range.end;
+        });
 
-    return partRanges.map((range, index) => {
-      const partQuestions = questions.filter((question) => {
-        const questionNumber = parseInt(question.id.replace(/\D/g, '')) || 0;
-        return questionNumber >= range.start && questionNumber <= range.end;
-      });
+        if (partQuestions.length === 0) {
+          return {
+            number: index + 1,
+            questionCount: 0,
+            answeredCount: 0,
+            startQuestionNumber: range.start,
+            questions: [],
+          };
+        }
 
-      if (partQuestions.length === 0) {
+        const answeredCount = partQuestions.reduce((sum, question) => {
+          const answer = answers[question.id];
+          const points = getEffectivePoints(question);
+          if (question.type === 'MCQ_MULTIPLE' && Array.isArray(answer)) {
+            return sum + Math.min(answer.length, points);
+          }
+          return sum + (answer ? points : 0);
+        }, 0);
+
+        const totalPoints = partQuestions.reduce(
+          (sum, question) => sum + getEffectivePoints(question),
+          0
+        );
+
+        const navQuestions = partQuestions.map((question) => {
+          const match = question.id.match(/\d+/);
+          const start = match ? parseInt(match[0]) : 0;
+          const points = getEffectivePoints(question);
+          const displayLabel =
+            points > 1 ? `${start}-${start + points - 1}` : start;
+
+          return {
+            id: question.id,
+            number: displayLabel,
+            isAnswered: Array.isArray(answers[question.id])
+              ? (answers[question.id] as string[]).length > 0
+              : !!answers[question.id],
+          };
+        });
+
         return {
           number: index + 1,
-          questionCount: 0,
-          answeredCount: 0,
+          questionCount: totalPoints,
+          answeredCount,
           startQuestionNumber: range.start,
-          questions: [],
-        };
-      }
-
-      const answeredCount = partQuestions.reduce((sum, question) => {
-        const answer = answers[question.id];
-        const points = getEffectivePoints(question);
-        if (question.type === 'MCQ_MULTIPLE' && Array.isArray(answer)) {
-          return sum + Math.min(answer.length, points);
-        }
-        return sum + (answer ? points : 0);
-      }, 0);
-
-      const totalPoints = partQuestions.reduce(
-        (sum, question) => sum + getEffectivePoints(question),
-        0
-      );
-
-      const navQuestions = partQuestions.map((question) => {
-        const match = question.id.match(/\d+/);
-        const start = match ? parseInt(match[0]) : 0;
-        const points = getEffectivePoints(question);
-        const displayLabel =
-          points > 1 ? `${start}-${start + points - 1}` : start;
-
-        return {
-          id: question.id,
-          number: displayLabel,
-          isAnswered: Array.isArray(answers[question.id])
-            ? (answers[question.id] as string[]).length > 0
-            : !!answers[question.id],
+          questions: navQuestions,
         };
       });
-
-      return {
-        number: index + 1,
-        questionCount: totalPoints,
-        answeredCount,
-        startQuestionNumber: range.start,
-        questions: navQuestions,
-      };
-    });
+    }
+    
+    return generatedParts.filter(part => part.questionCount > 0);
   }, [answers, passages, questions, section]);
 
   const currentPartNumber = useMemo(() => {

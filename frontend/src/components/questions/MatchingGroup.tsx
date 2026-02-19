@@ -16,6 +16,7 @@ interface MatchingGroupProps {
   optionsLabel?: string;
   imageUrl?: string;
   sectionType?: string;
+  showResults?: boolean;
 }
 
 export function MatchingGroup({
@@ -29,6 +30,7 @@ export function MatchingGroup({
   optionsLabel = "Options",
   imageUrl,
   sectionType,
+  showResults = false,
 }: MatchingGroupProps) {
   const scrollRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const [dragOverId, setDragOverId] = useState<string | null>(null);
@@ -48,11 +50,13 @@ export function MatchingGroup({
   }, [currentQuestionId]);
 
   const handleDragStart = (e: React.DragEvent, optionId: string) => {
+    if (showResults) return;
     e.dataTransfer.setData("text/plain", optionId);
     e.dataTransfer.effectAllowed = "copy";
   };
 
   const handleDragOver = (e: React.DragEvent, questionId: string) => {
+    if (showResults) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = "copy";
     setDragOverId(questionId);
@@ -63,6 +67,7 @@ export function MatchingGroup({
   };
 
   const handleDrop = (e: React.DragEvent, questionId: string) => {
+    if (showResults) return;
     e.preventDefault();
     setDragOverId(null);
     const optionId = e.dataTransfer.getData("text/plain");
@@ -112,6 +117,9 @@ export function MatchingGroup({
                 .replace(/[:\s]*\[BLANK\][:\s]*/i, "")
                 .trim();
 
+              const correctAnswer = (q as any).correctAnswer;
+              const isCorrect = value === correctAnswer;
+
               return (
                 <div
                   key={q.id}
@@ -144,61 +152,75 @@ export function MatchingGroup({
                   )}
 
                   {/* Dotted Drop Zone */}
-                  <button
-                    onClick={() => onQuestionClick(q.id)}
-                    onDragOver={(e) => handleDragOver(e, q.id)}
-                    onDragLeave={handleDragLeave}
-                    onDrop={(e) => handleDrop(e, q.id)}
-                    className={`
-                    relative flex items-center justify-center w-32 h-10
-                    transition-all duration-200 rounded-lg border
-                    ${
-                      isFilled
-                        ? "border-[#2D8EFF] bg-white ring-0 group/filled shadow-sm"
-                        : "border-gray-800 bg-white hover:border-[#2D8EFF]"
-                    }
-                    ${
-                      isActive && !isFilled
-                        ? "border-[#2D8EFF] ring-1 ring-[#2D8EFF]/20"
-                        : ""
-                    }
-                    ${isDragOver ? "scale-105 border-[#2D8EFF] bg-blue-50" : ""}
-                  `}
-                  >
-                    {value ? (
-                      <>
-                        <span className="text-black font-normal text-lg">
-                          {value}
+                  <div className="flex flex-col items-center gap-1">
+                    <button
+                      onClick={() => !showResults && onQuestionClick(q.id)}
+                      onDragOver={(e) => handleDragOver(e, q.id)}
+                      onDragLeave={handleDragLeave}
+                      onDrop={(e) => handleDrop(e, q.id)}
+                      disabled={showResults}
+                      className={`
+                      relative flex items-center justify-center w-32 h-10
+                      transition-all duration-200 rounded-lg border
+                      ${
+                        showResults
+                          ? isCorrect
+                            ? "border-green-500 bg-green-50"
+                            : "border-red-500 bg-red-50"
+                          : isFilled
+                            ? "border-[#2D8EFF] bg-white ring-0 group/filled shadow-sm"
+                            : "border-gray-800 bg-white hover:border-[#2D8EFF]"
+                      }
+                      ${
+                        isActive && !isFilled && !showResults
+                          ? "border-[#2D8EFF] ring-1 ring-[#2D8EFF]/20"
+                          : ""
+                      }
+                      ${isDragOver ? "scale-105 border-[#2D8EFF] bg-blue-50" : ""}
+                    `}
+                    >
+                      {value ? (
+                        <>
+                          <span className={`font-normal text-lg ${showResults ? (isCorrect ? 'text-green-700' : 'text-red-700') : 'text-black'}`}>
+                            {value}
+                          </span>
+                          {!showResults && (
+                            <div
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onChange(q.id, "");
+                              }}
+                              className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 rounded-full text-white flex items-center justify-center opacity-0 group-hover/filled:opacity-100 transition-opacity hover:bg-red-600 shadow-sm z-10"
+                              title="Remove answer"
+                            >
+                              <svg
+                                className="w-3 h-3"
+                                fill="none"
+                                viewBox="0 0 24 24"
+                                stroke="currentColor"
+                              >
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  strokeWidth={3}
+                                  d="M6 18L18 6M6 6l12 12"
+                                />
+                              </svg>
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <span className="text-black font-bold text-sm select-none">
+                          {displayNum}
                         </span>
-                        <div
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onChange(q.id, "");
-                          }}
-                          className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 rounded-full text-white flex items-center justify-center opacity-0 group-hover/filled:opacity-100 transition-opacity hover:bg-red-600 shadow-sm z-10"
-                          title="Remove answer"
-                        >
-                          <svg
-                            className="w-3 h-3"
-                            fill="none"
-                            viewBox="0 0 24 24"
-                            stroke="currentColor"
-                          >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              strokeWidth={3}
-                              d="M6 18L18 6M6 6l12 12"
-                            />
-                          </svg>
-                        </div>
-                      </>
-                    ) : (
-                      <span className="text-black font-bold text-sm select-none">
-                        {displayNum}
+                      )}
+                    </button>
+                    {showResults && !isCorrect && (
+                      <span className="text-[11px] font-bold text-green-600 uppercase tracking-tight">
+                        Correct: {correctAnswer}
                       </span>
                     )}
-                  </button>
+                  </div>
                 </div>
               );
             })}

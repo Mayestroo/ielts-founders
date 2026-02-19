@@ -20,14 +20,14 @@ export class PrismaService
   constructor() {
     const connectionString = `${process.env.DATABASE_URL}`;
 
-    // Connection pooling optimized for 20+ concurrent users
+    // Connection pooling optimized for production (6 cores, ~200-300 concurrent requests)
     const pool = new Pool({
       connectionString,
-      max: 20, // Maximum number of clients in the pool (for 20+ concurrent users)
-      min: 5, // Minimum number of clients to maintain
-      idleTimeoutMillis: 300000, // Close idle connections after 5 minutes
-      connectionTimeoutMillis: 10000, // Connection timeout
-      allowExitOnIdle: false, // Keep connections alive
+      max: 20, // 20 connections per instance * 6 instances = 120 total (within Postgres limits)
+      min: 5,
+      idleTimeoutMillis: 10000, // Close idle connections faster
+      connectionTimeoutMillis: 2000, // Fail fast on connection issues
+      allowExitOnIdle: false,
     });
 
     const adapter = new PrismaPg(pool);

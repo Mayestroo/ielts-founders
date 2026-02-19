@@ -1,10 +1,6 @@
 // Backward compatibility - re-export from examParts.ts
 export {
-  transformAssignments as transformReadingAssignments,
-  getDisplayAssignmentTier,
-  isPartAssignmentId,
-  getOriginalAssignmentIdFromPartId,
-  type DisplayAssignment,
-  type PartInfo,
-  type ReadingPart,
+    getDisplayAssignmentTier, getOriginalAssignmentIdFromPartId, isPartAssignmentId, transformAssignments as transformReadingAssignments, type DisplayAssignment,
+    type PartInfo
 } from "./examParts";
+

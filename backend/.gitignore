@@ -26,3 +26,7 @@ nest-debug.log*
 
 # misc
 .DS_Store
+
+# local analysis/runtime artifacts
+depcheck_results.json
+*.rdb

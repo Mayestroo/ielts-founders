@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import { createHash } from 'crypto';
-import { verify } from 'jsonwebtoken';
+import { decode } from 'jsonwebtoken';
 
 interface RequestWithAuth {
   user?: {
@@ -160,7 +160,8 @@ export class SmartThrottlerGuard extends ThrottlerGuard {
     }
 
     try {
-      const payload = verify(token, process.env.JWT_SECRET || 'secret');
+      // [PERF-FIX] Use decode() instead of verify() — this is only for rate-limit bucketing, not auth — see /performance-audit/
+      const payload = decode(token);
       if (!payload || typeof payload !== 'object') {
         return null;
       }

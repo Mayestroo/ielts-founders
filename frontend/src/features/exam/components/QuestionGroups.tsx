@@ -23,6 +23,7 @@ interface QuestionGroupsProps {
   sectionType: string;
   onAnswerChange: (questionId: string, value: AnswerValue) => void;
   onQuestionFocus: (questionId: string) => void;
+  showResults?: boolean;
 }
 
 export function QuestionGroups({
@@ -32,6 +33,7 @@ export function QuestionGroups({
   sectionType,
   onAnswerChange,
   onQuestionFocus,
+  showResults = false,
 }: QuestionGroupsProps) {
   const renderQuestion = (question: Question, index: number) => {
     const value = answers[question.id] ?? '';
@@ -44,6 +46,12 @@ export function QuestionGroups({
     return (
       <div key={question.id} id={`question-${question.id}`}>
         {(() => {
+          let correctAnswer: string | string[] | undefined;
+          
+          if ('correctAnswer' in question) {
+            correctAnswer = (question as { correctAnswer?: string | string[] }).correctAnswer;
+          }
+
           switch (question.type) {
             case 'MCQ_SINGLE':
             case 'MCQ_MULTIPLE':
@@ -59,6 +67,8 @@ export function QuestionGroups({
                   isActive={isActive}
                   onFocus={() => onQuestionFocus(question.id)}
                   sectionType={sectionType}
+                  showResult={showResults}
+                  correctAnswer={correctAnswer}
                 />
               );
             case 'TRUE_FALSE_NOT_GIVEN':
@@ -74,6 +84,8 @@ export function QuestionGroups({
                   isActive={isActive}
                   onFocus={() => onQuestionFocus(question.id)}
                   sectionType={sectionType}
+                  showResult={showResults}
+                  correctAnswer={correctAnswer as string}
                 />
               );
             case 'FILL_BLANK':
@@ -102,6 +114,8 @@ export function QuestionGroups({
                   onFocus={() => onQuestionFocus(question.id)}
                   hideBullet={true}
                   sectionType={sectionType}
+                  showResult={showResults}
+                  correctAnswer={correctAnswer as string}
                 />
               );
             case 'SHORT_ANSWER':
@@ -116,6 +130,8 @@ export function QuestionGroups({
                   isActive={isActive}
                   onFocus={() => onQuestionFocus(question.id)}
                   sectionType={sectionType}
+                  showResult={showResults}
+                  correctAnswer={correctAnswer as string}
                 />
               );
             default:
@@ -263,6 +279,7 @@ export function QuestionGroups({
               }
               imageUrl={firstQuestion.imageUrl}
               sectionType={sectionType}
+              showResults={showResults}
             />
           )}
 
@@ -274,6 +291,7 @@ export function QuestionGroups({
               currentQuestionId={currentQuestionId}
               onQuestionClick={onQuestionFocus}
               sectionType={sectionType}
+              showResults={showResults}
             />
           )}
 
@@ -285,6 +303,7 @@ export function QuestionGroups({
               currentQuestionId={currentQuestionId}
               onQuestionClick={onQuestionFocus}
               sectionType={sectionType}
+              showResults={showResults}
             />
           )}
 
@@ -296,6 +315,7 @@ export function QuestionGroups({
               currentQuestionId={currentQuestionId}
               onQuestionClick={onQuestionFocus}
               sectionType={sectionType}
+              showResults={showResults}
             />
           )}
 

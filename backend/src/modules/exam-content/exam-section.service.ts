@@ -191,6 +191,7 @@ export class ExamSectionService {
     await this.responseCache.delByPrefixes([
       'cache:dashboard:stats:v1:',
       'cache:assignments:grouped:v1:',
+      'cache:assignments:student:v1:',
       'cache:results:list:v1:',
       'cache:results:student:v1:',
     ]);

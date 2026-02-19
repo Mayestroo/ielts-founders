@@ -247,6 +247,7 @@ export class ExamsController {
 
   @Get('assignments/my')
   @Roles(Role.STUDENT)
+  @Throttle({ default: { ttl: 60000, limit: 6000 } })
   getMyAssignments(@Request() req: AuthenticatedRequest) {
     return this.assignmentService.getStudentAssignments(
       req.user.id,
@@ -278,7 +279,7 @@ export class ExamsController {
 
   @Post('assignments/:id/submit')
   @Roles(Role.STUDENT)
-  @Throttle({ default: { ttl: 60000, limit: 5 } })
+  @Throttle({ default: { ttl: 60000, limit: 60 } })
   submitAnswers(
     @Param('id') id: string,
     @Body() submitDto: SubmitAnswersDto,
@@ -398,6 +399,7 @@ export class ExamsController {
 
   @Get('results/my')
   @Roles(Role.STUDENT)
+  @Throttle({ default: { ttl: 60000, limit: 6000 } })
   getMyResults(@Request() req: AuthenticatedRequest) {
     return this.resultService.getStudentResults(
       req.user.id,
@@ -408,6 +410,7 @@ export class ExamsController {
   }
 
   @Get('results/:id')
+  @Throttle({ default: { ttl: 60000, limit: 3000 } })
   getResultById(@Param('id') id: string, @Request() req: AuthenticatedRequest) {
     return this.resultService.findById(
       id,

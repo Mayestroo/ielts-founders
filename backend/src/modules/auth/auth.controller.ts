@@ -1,14 +1,14 @@
 import {
-  Body,
-  Controller,
-  Get,
-  HttpCode,
-  HttpStatus,
-  Req,
-  Res,
-  Post,
-  Request,
-  UseGuards,
+    Body,
+    Controller,
+    Get,
+    HttpCode,
+    HttpStatus,
+    Post,
+    Req,
+    Request,
+    Res,
+    UseGuards,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { Throttle } from '@nestjs/throttler';
@@ -20,7 +20,11 @@ import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 
 interface AuthenticatedRequest {
-  user: { id: string };
+  user: {
+    id: string;
+    role: string;
+    centerId: string | null;
+  };
 }
 
 const ACCESS_COOKIE = 'access_token';
@@ -139,7 +143,7 @@ export class AuthController {
   @UseGuards(AuthGuard('jwt'))
   @Get('profile')
   async getProfile(@Request() req: AuthenticatedRequest) {
-    return this.authService.getProfile(req.user.id);
+    return this.authService.getProfile(req.user.id, req.user.role);
   }
 
   @Post('refresh')

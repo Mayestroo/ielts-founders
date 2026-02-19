@@ -8,7 +8,15 @@ interface SettingsModalProps {
 }
 
 export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
-  const { contrast, setContrast, fontSize, setFontSize } = useSettings();
+  const {
+    contrast,
+    setContrast,
+    fontSize,
+    setFontSize,
+    timerEnabled,
+    setTimerEnabled,
+  } = useSettings();
+  const fontSizes: Array<14 | 16 | 18 | 20> = [14, 16, 18, 20];
 
   if (!isOpen) return null;
 
@@ -99,10 +107,10 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
               </div>
               
               <div className="flex items-center justify-between gap-1 p-1 bg-gray-50 rounded-xl border border-gray-100">
-                {[14, 16, 18, 20].map((size) => (
+                {fontSizes.map((size) => (
                   <button
                     key={size}
-                    onClick={() => setFontSize(size as any)}
+                    onClick={() => setFontSize(size)}
                     style={{ 
                       backgroundColor: fontSize === size ? 'var(--exam-active-bg)' : 'transparent',
                       color: fontSize === size ? 'var(--exam-active-text)' : 'inherit'
@@ -120,6 +128,50 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                 <span className="text-[10px] font-bold text-gray-400 uppercase tracking-tighter">Small</span>
                 <span className="text-[10px] font-bold text-gray-400 uppercase tracking-tighter text-right">Large</span>
               </div>
+            </div>
+
+            {/* Timer Setting */}
+            <div>
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-8 h-8 rounded-lg bg-gray-50 flex items-center justify-center">
+                  <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </div>
+                <span className="font-semibold text-gray-700">Timer</span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 p-1 bg-gray-50 rounded-xl border border-gray-100">
+                <button
+                  onClick={() => setTimerEnabled(true)}
+                  style={{
+                    backgroundColor: timerEnabled ? 'var(--exam-active-bg)' : 'transparent',
+                    color: timerEnabled ? 'var(--exam-active-text)' : 'inherit',
+                  }}
+                  className={`
+                    py-3 rounded-lg transition-all text-sm font-bold uppercase tracking-wide
+                    ${timerEnabled ? 'shadow-sm ring-1 ring-black/5' : 'text-gray-500 hover:text-gray-900'}
+                  `}
+                >
+                  On
+                </button>
+                <button
+                  onClick={() => setTimerEnabled(false)}
+                  style={{
+                    backgroundColor: !timerEnabled ? 'var(--exam-active-bg)' : 'transparent',
+                    color: !timerEnabled ? 'var(--exam-active-text)' : 'inherit',
+                  }}
+                  className={`
+                    py-3 rounded-lg transition-all text-sm font-bold uppercase tracking-wide
+                    ${!timerEnabled ? 'shadow-sm ring-1 ring-black/5' : 'text-gray-500 hover:text-gray-900'}
+                  `}
+                >
+                  Off
+                </button>
+              </div>
+              <p className="mt-2 text-xs text-gray-500">
+                Full CDI at Founders always keeps timer enabled.
+              </p>
             </div>
           </div>
         </div>

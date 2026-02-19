@@ -1,0 +1,30 @@
+# Dependencies & build output
+node_modules
+.next
+out
+build
+coverage
+
+# Tests
+test
+tests
+**/*.test.*
+**/*.spec.*
+
+# Env and logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Local tooling
+.vscode
+.idea
+.DS_Store
+*.tsbuildinfo
+
+# VCS & docs
+.git
+.gitignore
+README.md

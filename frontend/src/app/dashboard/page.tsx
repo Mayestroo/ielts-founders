@@ -44,6 +44,21 @@ const formatAssignmentDate = (timestamp: string) => {
   });
 };
 
+const getActionLabel = (
+  status: AssignmentStatus,
+  isFullMock: boolean,
+) => {
+  if (status === "SUBMITTED") {
+    return "Practice Again";
+  }
+
+  if (status === "IN_PROGRESS" && isFullMock) {
+    return "Continue";
+  }
+
+  return "Start";
+};
+
 type DashboardSection =
   | "OFFLINE_EXAM"
   | "READING"
@@ -70,7 +85,7 @@ const PAYMENT_TELEGRAM =
   process.env.NEXT_PUBLIC_PREMIUM_TELEGRAM || "@ielts_founders";
 
 const SECTION_OPTIONS: Array<{ key: DashboardSection; label: string; comingSoon?: boolean }> = [
-  { key: "OFFLINE_EXAM", label: "Offline Exam" },
+  { key: "OFFLINE_EXAM", label: "Full CDI at Founders" },
   { key: "READING", label: "Reading" },
   { key: "LISTENING", label: "Listening" },
   { key: "WRITING", label: "Writing" },
@@ -224,9 +239,15 @@ export default function DashboardPage() {
   }, []);
 
   const handleStartExamClick = useCallback(
-    async (event: MouseEvent<HTMLAnchorElement>, assignmentId: string) => {
+    async (
+      event: MouseEvent<HTMLAnchorElement>,
+      assignmentId: string,
+      requiresFullscreen: boolean,
+    ) => {
       event.preventDefault();
-      await requestFullscreen();
+      if (requiresFullscreen) {
+        await requestFullscreen();
+      }
       router.push(`/exam/${assignmentId}`);
     },
     [requestFullscreen, router]
@@ -519,6 +540,14 @@ export default function DashboardPage() {
                   className="inline-flex rounded-lg px-3 py-2 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900"
                 >
                   Feedback
+                </Link>
+              </li>
+              <li>
+                <Link
+                  href="/history"
+                  className="inline-flex rounded-lg px-3 py-2 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900"
+                >
+                  History
                 </Link>
               </li>
             </ul>
@@ -826,7 +855,7 @@ export default function DashboardPage() {
                                 <Link
                                   href={`/exam/${nextAssignment.id}`}
                                   onClick={(event) =>
-                                    handleStartExamClick(event, nextAssignment.id)
+                                    handleStartExamClick(event, nextAssignment.id, true)
                                   }
                                   className="px-20 py-5 rounded-full bg-black text-white font-bold text-lg hover:bg-gray-800 transition-all shadow-xl shadow-black/10 hover:scale-[1.02] active:scale-[0.98] group flex items-center gap-3"
                                 >
@@ -957,11 +986,7 @@ export default function DashboardPage() {
                                     </span>
                                   )}
 
-                                  {item.status === "SUBMITTED" ? (
-                                    <span className="inline-flex rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-500">
-                                      Submitted
-                                    </span>
-                                  ) : requiresPremium ? (
+                                  {requiresPremium ? (
                                     <button
                                       type="button"
                                       onClick={() => {
@@ -980,11 +1005,11 @@ export default function DashboardPage() {
                                     <Link
                                       href={`/exam/${item.id}`}
                                       onClick={(event) =>
-                                        handleStartExamClick(event, item.id)
+                                        handleStartExamClick(event, item.id, false)
                                       }
                                       className="inline-flex rounded-lg bg-black px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-gray-800"
                                     >
-                                      {item.status === "IN_PROGRESS" ? "Continue" : "Start"}
+                                      {getActionLabel(item.status, false)}
                                     </Link>
                                   )}
                                 </div>
@@ -1067,7 +1092,7 @@ export default function DashboardPage() {
                                     </span>
                                   )}
 
-                                  {assignment.status === "SUBMITTED" ? (
+                                  {assignment.status === "SUBMITTED" && assignment.fullMockSessionId ? (
                                     <span className="inline-flex rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-500">
                                       Submitted
                                     </span>
@@ -1083,13 +1108,18 @@ export default function DashboardPage() {
                                     <Link
                                       href={`/exam/${assignment.id}`}
                                       onClick={(event) =>
-                                        handleStartExamClick(event, assignment.id)
+                                        handleStartExamClick(
+                                          event,
+                                          assignment.id,
+                                          Boolean(assignment.fullMockSessionId),
+                                        )
                                       }
                                       className="inline-flex rounded-lg bg-black px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-gray-800"
                                     >
-                                      {assignment.status === "IN_PROGRESS"
-                                        ? "Continue"
-                                        : "Start"}
+                                      {getActionLabel(
+                                        assignment.status,
+                                        Boolean(assignment.fullMockSessionId),
+                                      )}
                                     </Link>
                                   )}
                                 </div>

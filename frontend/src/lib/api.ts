@@ -4,9 +4,9 @@ import {
     ExamResult,
     HeartbeatResponse,
     LoginResponse,
+    ReconnectResponse,
     RegisterPayload,
     RegisterWithGooglePayload,
-    ReconnectResponse,
     StartExamResponse,
     SubmitExamResponse,
     SyncResponse,
@@ -261,6 +261,13 @@ class ApiClient {
     method: string | undefined,
     status: number,
   ) {
+    const normalizedMethod = (method || "GET").toUpperCase();
+
+    // Avoid retry storms for write operations when throttled.
+    if (status === 429 && normalizedMethod === "POST") {
+      return false;
+    }
+
     const retryableStatuses = [408, 425, 429, 500, 502, 503, 504];
     if (!retryableStatuses.includes(status)) {
       return false;
@@ -428,12 +435,13 @@ class ApiClient {
 
   async submitExam(
     assignmentId: string,
-    answers: Record<string, string | string[] | Record<string, string>>,
+    answers: Record<string, unknown>,
     tabId: string,
+    isPartial?: boolean,
   ): Promise<SubmitExamResponse> {
     return this.request<SubmitExamResponse>(`/assignments/${assignmentId}/submit`, {
       method: "POST",
-      body: JSON.stringify({ answers, tabId }),
+      body: JSON.stringify({ answers, tabId, isPartial }),
       timeoutMs: 20000,
       retries: 2,
     });

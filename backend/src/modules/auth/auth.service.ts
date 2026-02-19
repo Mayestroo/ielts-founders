@@ -1,20 +1,22 @@
 import {
-  ConflictException,
-  Injectable,
-  UnauthorizedException,
+    ConflictException,
+    Injectable,
+    UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import {
-  Role,
-  SessionAttendanceMode,
-  SessionReferralSource,
+    Role,
+    SessionAttendanceMode,
+    SessionReferralSource,
 } from '@prisma/client';
-import { randomUUID, createHash } from 'crypto';
 import * as bcrypt from 'bcrypt';
+import { createHash, randomUUID } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
-import { LoginDto } from './dto/login.dto';
+import { ResponseCacheService } from '../redis/response-cache.service';
+
 import { GoogleRegisterDto } from './dto/google-register.dto';
+import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 
 interface RefreshPayload {
@@ -30,6 +32,7 @@ interface AuthUser {
   username: string;
   role: string;
   centerId: string | null;
+  premiumActive?: boolean;
   firstName?: string | null;
   lastName?: string | null;
   sessionAttendanceMode?: SessionAttendanceMode;
@@ -80,6 +83,7 @@ export class AuthService {
     private prisma: PrismaService,
     private jwtService: JwtService,
     private configService: ConfigService,
+    private responseCache: ResponseCacheService,
   ) {
     this.refreshSecret =
       configService.get<string>('JWT_REFRESH_SECRET') ||
@@ -222,6 +226,8 @@ export class AuthService {
         lastName: user.lastName,
         role: user.role,
         centerId: user.centerId,
+        premiumActive: user.premiumActive ?? false,
+        isPremium: user.premiumActive ?? false,
         sessionAttendanceMode: user.sessionAttendanceMode,
         sessionScheduledAt: user.sessionScheduledAt ?? null,
         sessionReferralSource: user.sessionReferralSource ?? null,
@@ -622,11 +628,15 @@ export class AuthService {
     }
   }
 
-  async getProfile(userId: string) {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      include: { center: true },
-    });
+  async getProfile(userId: string, role: string) {
+    // [PERF-FIX] Parallelize DB fetch and points calculation — see /performance-audit/
+    const [user, points] = await Promise.all([
+      this.prisma.user.findUnique({
+        where: { id: userId },
+        include: { center: true },
+      }),
+      this.calculateUserPoints(userId, role),
+    ]);
 
     if (!user) {
       throw new UnauthorizedException('User not found');
@@ -634,10 +644,11 @@ export class AuthService {
 
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { password: _password, center, ...result } = user;
-    const points = await this.calculateUserPoints(user.id, user.role);
 
     return {
       ...result,
+      premiumActive: user.premiumActive ?? false,
+      isPremium: user.premiumActive ?? false,
       center: this.sanitizeCenter(center),
       sessionAttendanceMode: user.sessionAttendanceMode,
       sessionScheduledAt: user.sessionScheduledAt,

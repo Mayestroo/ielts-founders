@@ -33,6 +33,7 @@ interface ReadingSectionProps {
   introContainerRef: RefObject<HTMLDivElement>;
   isVideoAutoplayBlocked: boolean;
   timerStart?: boolean;
+  showTimer?: boolean;
   onVideoAutoplayBlockedChange: (blocked: boolean) => void;
   onVideoEnded: () => void;
   onRequestFullscreen: () => Promise<void>;
@@ -50,6 +51,8 @@ interface ReadingSectionProps {
   onConfirmClose: () => void;
   sessionError: { type: string; message: string } | null;
   onSessionResolve: () => void;
+  showPartResults?: boolean;
+  onContinue?: () => void;
 }
 
 export function ReadingSection({
@@ -92,6 +95,9 @@ export function ReadingSection({
   sessionError,
   onSessionResolve,
   timerStart,
+  showTimer = true,
+  showPartResults = false,
+  onContinue,
 }: ReadingSectionProps) {
   return (
     <div className="h-screen overflow-hidden bg-white flex flex-col exam-content">
@@ -101,6 +107,7 @@ export function ReadingSection({
         sectionType={section.type}
         onTimerExpire={onTimerExpire}
         autoStart={timerStart && !sessionError}
+        showTimer={showTimer}
         onOpenSettings={onOpenSettings}
       />
       <SettingsModal isOpen={isSettingsOpen} onClose={onCloseSettings} />
@@ -151,6 +158,7 @@ export function ReadingSection({
                     sectionType={section.type}
                     onAnswerChange={onAnswerChange}
                     onQuestionFocus={onQuestionFocus}
+                    showResults={showPartResults}
                   />
                 )}
               </div>
@@ -167,6 +175,8 @@ export function ReadingSection({
         onPartClick={onPartClick}
         onSubmit={onSubmit}
         isSubmitting={isSubmitting}
+        showPartResults={showPartResults}
+        onContinue={onContinue}
       />
 
       <ReviewAndConfirmModals

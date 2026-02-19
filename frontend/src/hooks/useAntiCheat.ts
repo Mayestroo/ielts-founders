@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect } from 'react';
 
-export function useAntiCheat() {
+export function useAntiCheat(enabled = true) {
   // Disable right-click context menu
   const handleContextMenu = useCallback((e: MouseEvent) => {
     e.preventDefault();
@@ -54,6 +54,11 @@ export function useAntiCheat() {
   }, []);
 
   useEffect(() => {
+    if (!enabled) {
+      enableSelection();
+      return;
+    }
+
     document.addEventListener('contextmenu', handleContextMenu);
     document.addEventListener('keydown', handleKeyDown);
     document.addEventListener('copy', handleCopy);
@@ -67,7 +72,7 @@ export function useAntiCheat() {
       document.removeEventListener('paste', handlePaste);
       enableSelection();
     };
-  }, [handleContextMenu, handleKeyDown, handleCopy, handlePaste, disableSelection, enableSelection]);
+  }, [enabled, handleContextMenu, handleKeyDown, handleCopy, handlePaste, disableSelection, enableSelection]);
 
   return {
     enableSelection,

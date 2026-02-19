@@ -14,6 +14,8 @@ interface FillBlankProps {
   hideBullet?: boolean;
   variant?: 'default' | 'inline';
   sectionType?: string;
+  showResult?: boolean;
+  correctAnswer?: string;
 }
 
 export function FillBlankQuestion({ 
@@ -27,7 +29,9 @@ export function FillBlankQuestion({
   onFocus,
   hideBullet = false,
   variant = 'default',
-  sectionType
+  sectionType,
+  showResult = false,
+  correctAnswer
 }: FillBlankProps) {
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -43,50 +47,67 @@ export function FillBlankQuestion({
   // Split text by placeholder (e.g., _____, [BLANK], or [blank])
   const parts = questionText.split(/_{3,}|\[BLANK\]|\[blank\]/i);
 
-  const renderInput = () => (
-    <span className="inline-flex mx-1 align-middle">
-      <div className={`
-        relative flex items-center min-w-[80px] h-[22px] transition-all duration-200 
-        ${isActive 
-          ? 'bg-white border border-[#2D8EFF]' 
-          : 'bg-white border border-gray-400'}
-        rounded-sm group/input
-      `}>
-        {/* Question Number - Centered and hidden when value exists */}
-        {!value && (
-          <span className="absolute inset-0 flex items-center justify-center text-[10px] font-bold pointer-events-none transition-colors text-black">
-            {questionNumber}
+  const renderInput = () => {
+    const isCorrect = value.trim().toLowerCase() === (correctAnswer || '').trim().toLowerCase();
+    
+    return (
+      <span className="inline-flex flex-col items-center mx-1 align-middle">
+        <div className={`
+          relative flex items-center min-w-[80px] h-[22px] transition-all duration-200 
+          ${isActive 
+            ? 'bg-white border border-[#2D8EFF]' 
+            : showResult
+              ? isCorrect
+                ? 'bg-green-50 border border-green-300'
+                : 'bg-red-50 border border-red-300'
+              : 'bg-white border border-gray-400'}
+          rounded-sm group/input
+        `}>
+          {/* Question Number - Centered and hidden when value exists */}
+          {!value && (
+            <span className="absolute inset-0 flex items-center justify-center text-[10px] font-bold pointer-events-none transition-colors text-black">
+              {questionNumber}
+            </span>
+          )}
+          
+          <input
+            ref={inputRef}
+            id={id}
+            type="text"
+            value={value}
+            disabled={showResult}
+            onChange={(e) => onChange(e.target.value)}
+            onFocus={onFocus}
+            className={`
+              w-full h-full px-2 py-0 outline-none text-center
+              font-normal text-gray-900 bg-transparent text-base
+              ${isActive ? 'caret-black' : ''}
+              ${showResult ? 'cursor-default' : ''}
+              ${showResult && isCorrect ? 'text-green-700 font-bold' : ''}
+              ${showResult && !isCorrect ? 'text-red-700 font-bold' : ''}
+            `}
+            spellCheck="false"
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="off"
+            {...({ "data-gramm": "false" } as any)}
+            {...({ "data-enable-grammarly": "false" } as any)}
+          />
+          
+          {isOverLimit && !showResult && (
+            <span className="absolute -top-10 left-1/2 -translate-x-1/2 px-2 py-1 bg-black text-white text-[10px] font-bold rounded shadow-lg whitespace-nowrap z-10 pointer-events-none">
+              {wordCount}/{wordLimit} words
+            </span>
+          )}
+        </div>
+        {showResult && !isCorrect && variant === 'inline' && (
+          <span className="text-[10px] font-bold text-green-600 uppercase leading-none mt-0.5 whitespace-nowrap">
+            {correctAnswer}
           </span>
         )}
-        
-        <input
-          ref={inputRef}
-          id={id}
-          type="text"
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          onFocus={onFocus}
-          className={`
-            w-full h-full px-2 py-0 outline-none text-center
-            font-normal text-gray-900 bg-transparent text-base
-            ${isActive ? 'caret-black' : ''}
-          `}
-          spellCheck="false"
-          autoComplete="off"
-          autoCorrect="off"
-          autoCapitalize="off"
-          {...({ "data-gramm": "false" } as any)}
-          {...({ "data-enable-grammarly": "false" } as any)}
-        />
-        
-        {isOverLimit && (
-          <span className="absolute -top-10 left-1/2 -translate-x-1/2 px-2 py-1 bg-black text-white text-[10px] font-bold rounded shadow-lg whitespace-nowrap z-10 pointer-events-none">
-            {wordCount}/{wordLimit} words
-          </span>
-        )}
-      </div>
-    </span>
-  );
+      </span>
+    );
+  };
 
   const textContent = parts.map((part, index) => (
     <span key={index} className="inline whitespace-pre-wrap">
@@ -132,6 +153,13 @@ export function FillBlankQuestion({
       
       <div className="flex-1 text-gray-800 text-base leading-[34px]!" style={{ lineHeight: '34px' }}>
         {textContent}
+        {showResult && value.trim().toLowerCase() !== (correctAnswer || '').trim().toLowerCase() && (
+          <div className="mt-1 text-sm">
+            <span className="text-red-500 font-medium">Your answer: {value || '(Empty)'}</span>
+            <span className="mx-2 text-gray-400">|</span>
+            <span className="text-green-600 font-bold">Correct answer: {correctAnswer}</span>
+          </div>
+        )}
       </div>
     </div>
   );

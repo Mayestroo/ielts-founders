@@ -19,6 +19,7 @@ interface WritingSectionProps {
   showIntroVideo: boolean;
   isSettingsOpen: boolean;
   timerStart?: boolean;
+  showTimer?: boolean;
   isVideoAutoplayBlocked: boolean;
   introVideoRef: RefObject<HTMLVideoElement>;
   introContainerRef: RefObject<HTMLDivElement>;
@@ -36,6 +37,8 @@ interface WritingSectionProps {
   isSubmitting: boolean;
   sessionError: { type: string; message: string } | null;
   onSessionResolve: () => void;
+  showPartResults?: boolean;
+  onContinue?: () => void;
 }
 
 export function WritingSection({
@@ -65,6 +68,9 @@ export function WritingSection({
   sessionError,
   onSessionResolve,
   timerStart,
+  showTimer = true,
+  showPartResults = false,
+  onContinue,
 }: WritingSectionProps) {
   const questions = section.questions as Question[];
   const activeQuestionIndex = activePartIndex < questions.length ? activePartIndex : 0;
@@ -97,6 +103,7 @@ export function WritingSection({
           sectionType="WRITING"
           onTimerExpire={onTimerExpire}
           autoStart={timerStart && !sessionError}
+          showTimer={showTimer}
           onOpenSettings={onOpenSettings}
         />
       </div>
@@ -160,6 +167,8 @@ export function WritingSection({
         onSubmit={onSubmit}
         isSubmitting={isSubmitting}
         sectionType="WRITING"
+        showPartResults={showPartResults}
+        onContinue={onContinue}
       />
 
       <IntroVideoOverlay

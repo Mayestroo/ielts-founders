@@ -85,7 +85,12 @@ export function useExamSession({
   const isSessionExpiredError = useCallback((error: unknown) => {
     if (!(error instanceof Error)) return false;
     const lower = error.message.toLowerCase();
-    return lower.includes('time expired') || lower.includes('session expired');
+    return (
+      lower.includes('time expired') ||
+      lower.includes('time has expired') ||
+      lower.includes('exam time has expired') ||
+      lower.includes('session expired')
+    );
   }, []);
 
   const isTransientNetworkError = useCallback((error: unknown) => {

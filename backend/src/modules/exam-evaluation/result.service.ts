@@ -1,7 +1,7 @@
 import {
-  ForbiddenException,
-  Injectable,
-  NotFoundException,
+    ForbiddenException,
+    Injectable,
+    NotFoundException,
 } from '@nestjs/common';
 import { Prisma, Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -62,7 +62,15 @@ export class ResultService {
               lastName: true,
             },
           },
-          writingSubmission: true,
+          // [PERF-FIX] Only fetch status fields in list view, avoids loading full task responses — see /performance-audit/
+          writingSubmission: {
+            select: {
+              id: true,
+              status: true,
+              bandScore: true,
+              completedAt: true,
+            },
+          },
         },
         orderBy: { submittedAt: 'desc' },
         skip: skip ? Number(skip) : undefined,
@@ -158,7 +166,15 @@ export class ResultService {
         student: {
           select: { id: true, username: true, firstName: true, lastName: true },
         },
-        writingSubmission: true,
+        // [PERF-FIX] Only fetch status fields in list view, avoids loading full task responses — see /performance-audit/
+        writingSubmission: {
+          select: {
+            id: true,
+            status: true,
+            bandScore: true,
+            completedAt: true,
+          },
+        },
       },
       orderBy: { submittedAt: 'desc' },
     });

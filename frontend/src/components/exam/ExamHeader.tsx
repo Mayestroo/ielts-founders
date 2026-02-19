@@ -10,6 +10,7 @@ interface ExamHeaderProps {
   sectionType: 'READING' | 'LISTENING' | 'WRITING';
   isAudioPlaying?: boolean;
   autoStart?: boolean;
+  showTimer?: boolean;
   onTimerExpire: () => void;
   onOpenSettings: () => void;
 }
@@ -20,6 +21,7 @@ export function ExamHeader({
   sectionType,
   isAudioPlaying = false,
   autoStart = true,
+  showTimer = true,
   onTimerExpire,
   onOpenSettings
 }: ExamHeaderProps) {
@@ -83,17 +85,19 @@ export function ExamHeader({
           `}</style>
 
           {/* Timer */}
-          <div className={`
-            flex items-center gap-2 px-4 py-2 rounded-xl font-mono text-lg font-bold
-            ${isCritical ? 'bg-black text-white animate-pulse' : ''}
-            ${isUrgent && !isCritical ? 'bg-gray-100 text-black border-2 border-black' : ''}
-            ${!isUrgent && !isCritical ? 'bg-white text-black border-2 border-black' : ''}
-          `}>
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            {formattedTime}
-          </div>
+          {showTimer && (
+            <div className={`
+              flex items-center gap-2 px-4 py-2 rounded-xl font-mono text-lg font-bold
+              ${isCritical ? 'bg-black text-white animate-pulse' : ''}
+              ${isUrgent && !isCritical ? 'bg-gray-100 text-black border-2 border-black' : ''}
+              ${!isUrgent && !isCritical ? 'bg-white text-black border-2 border-black' : ''}
+            `}>
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              {formattedTime}
+            </div>
+          )}
 
           {/* Settings Hamburger */}
           <button

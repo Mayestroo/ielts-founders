@@ -12,6 +12,8 @@ interface ShortAnswerProps {
   isActive?: boolean;
   onFocus?: () => void;
   sectionType?: string;
+  showResult?: boolean;
+  correctAnswer?: string;
 }
 
 export function ShortAnswerQuestion({ 
@@ -23,7 +25,9 @@ export function ShortAnswerQuestion({
   questionNumber,
   isActive = false,
   onFocus,
-  sectionType
+  sectionType,
+  showResult = false,
+  correctAnswer
 }: ShortAnswerProps) {
   const textareaRef = useRef<HTMLInputElement>(null);
 
@@ -72,34 +76,47 @@ export function ShortAnswerQuestion({
       </div>
       
       <div className="pl-10">
-        <div className={`
-          relative max-w-md transition-all duration-200 rounded-sm
-          ${isActive 
-            ? 'border border-[#2D8EFF] bg-white' 
-            : 'border border-gray-800 bg-white'}
-        `}>
-          <input
-            ref={textareaRef as any}
-            type="text"
-            id={id}
-            value={value}
-            onChange={(e) => onChange(e.target.value)}
-            onFocus={onFocus}
-            placeholder="Type your answer..."
-            className={`
-              w-full px-4 py-2 outline-none
-              bg-transparent 
-              text-gray-900 text-base font-normal
-              placeholder:text-gray-400 placeholder:font-normal
-            `}
-            spellCheck="false"
-            autoComplete="off"
-            autoCorrect="off"
-            autoCapitalize="off"
-            {...({ "data-gramm": "false" } as any)}
-            {...({ "data-enable-grammarly": "false" } as any)}
-          />
-        </div>
+          <div className={`
+            relative max-w-md transition-all duration-200 rounded-sm
+            ${isActive 
+              ? 'border border-[#2D8EFF] bg-white' 
+              : showResult
+                ? value.trim().toLowerCase() === (correctAnswer || '').trim().toLowerCase()
+                  ? 'border-green-300 bg-green-50'
+                  : 'border-red-300 bg-red-50'
+                : 'border border-gray-800 bg-white'}
+          `}>
+            <input
+              ref={textareaRef as any}
+              type="text"
+              id={id}
+              value={value}
+              disabled={showResult}
+              onChange={(e) => onChange(e.target.value)}
+              onFocus={onFocus}
+              placeholder="Type your answer..."
+              className={`
+                w-full px-4 py-2 outline-none
+                bg-transparent 
+                text-gray-900 text-base font-normal
+                placeholder:text-gray-400 placeholder:font-normal
+                ${showResult ? 'cursor-default' : ''}
+              `}
+              spellCheck="false"
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="off"
+              {...({ "data-gramm": "false" } as any)}
+              {...({ "data-enable-grammarly": "false" } as any)}
+            />
+          </div>
+          {showResult && value.trim().toLowerCase() !== (correctAnswer || '').trim().toLowerCase() && (
+            <div className="mt-2 text-sm">
+              <span className="text-red-500 font-medium">Your answer: {value || '(Empty)'}</span>
+              <span className="mx-2 text-gray-400">|</span>
+              <span className="text-green-600 font-bold">Correct answer: {correctAnswer}</span>
+            </div>
+          )}
       </div>
     </div>
   );

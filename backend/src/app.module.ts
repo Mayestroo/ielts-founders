@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
 import { ServeStaticModule } from '@nestjs/serve-static';
 import { ThrottlerModule } from '@nestjs/throttler';
+import { Response } from 'express';
 import { join } from 'path';
 import { SmartThrottlerGuard } from './common/guards/smart-throttler.guard';
 import { AuthModule } from './modules/auth';
@@ -18,11 +19,14 @@ import { SessionModule } from './modules/session';
 import { UploadsModule } from './modules/uploads/uploads.module';
 import { UsersModule } from './modules/users';
 
+import { ScheduleModule } from '@nestjs/schedule';
+
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
     }),
+    ScheduleModule.forRoot(),
     ThrottlerModule.forRoot({
       throttlers: [
         {
@@ -48,7 +52,7 @@ import { UsersModule } from './modules/users';
       serveRoot: '/uploads',
       serveStaticOptions: {
         maxAge: 60 * 60 * 1000,
-        setHeaders: (res, filePath) => {
+        setHeaders: (res: Response, filePath: string) => {
           if (/\.(mp3|wav|ogg|opus|mp4|webm)$/i.test(filePath)) {
             res.setHeader('Cache-Control', 'public, max-age=86400');
           }

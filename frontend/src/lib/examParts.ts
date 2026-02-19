@@ -1,4 +1,4 @@
-import { ExamAssignment, Passage, Question, ExamSectionType } from "@/types";
+import { ExamAssignment, ExamSectionType, Passage, Question } from "@/types";
 
 export type PartNumber = 1 | 2 | 3 | 4;
 export type TaskNumber = 1 | 2;
@@ -16,6 +16,26 @@ export interface TaskInfo {
   duration: number;
   questionCount: number;
 }
+
+const hasAnswerValue = (value: unknown): boolean => {
+  if (value === undefined || value === null) {
+    return false;
+  }
+
+  if (typeof value === "string") {
+    return value.trim().length > 0;
+  }
+
+  if (Array.isArray(value)) {
+    return value.length > 0;
+  }
+
+  if (typeof value === "object") {
+    return Object.keys(value as Record<string, unknown>).length > 0;
+  }
+
+  return true;
+};
 
 export interface DisplayAssignment {
   id: string;
@@ -86,6 +106,34 @@ const WRITING_TASK_TITLES: Record<TaskNumber, string> = {
  * Split a complete Reading test into 3 parts
  * Each part contains one passage and its associated questions
  */
+/**
+ * Helper to determine part status based on answers
+ */
+function getPartStatus(
+  assignmentStatus: ExamAssignment["status"],
+  partQuestions: Question[],
+  allAnswers: Record<string, unknown> | null | undefined
+): ExamAssignment["status"] {
+  if (assignmentStatus === "ASSIGNED") {
+    return "ASSIGNED";
+  }
+
+  if (!allAnswers || partQuestions.length === 0) {
+    return "IN_PROGRESS";
+  }
+
+  const hasAnswers = partQuestions.some((q) => {
+    const answer = allAnswers[q.id];
+    return hasAnswerValue(answer);
+  });
+
+  return hasAnswers ? "SUBMITTED" : "IN_PROGRESS";
+}
+
+/**
+ * Split a complete Reading test into 3 parts
+ * Each part contains one passage and its associated questions
+ */
 export function splitReadingTestIntoParts(
   assignment: ExamAssignment
 ): DisplayAssignment[] {
@@ -96,6 +144,8 @@ export function splitReadingTestIntoParts(
 
   const passages = section.passages || [];
   const allQuestions = section.questions || [];
+  // transform answers to record if needed, though usually it comes as object from API
+  const answers = assignment.answers as Record<string, unknown> | null;
 
   if (passages.length !== 3) {
     return [];
@@ -107,14 +157,20 @@ export function splitReadingTestIntoParts(
       (q) => q.passageId === passage.id
     );
 
+    const partStatus = getPartStatus(
+      assignment.status,
+      passageQuestions,
+      answers
+    );
+
     return {
       id: `${assignment.id}-part-${partNum}`,
       originalAssignmentId: assignment.id,
       studentId: assignment.studentId,
-      status: assignment.status,
+      status: partStatus,
       startTime: assignment.startTime,
       endTime: assignment.endTime,
-      score: assignment.score,
+      score: assignment.score, // Shared score, imperfect but acceptable for now
       createdAt: assignment.createdAt,
       isPart: true,
       partInfo: {
@@ -149,6 +205,7 @@ export function splitListeningTestIntoParts(
   }
 
   const allQuestions = section.questions || [];
+  const answers = assignment.answers as Record<string, unknown> | null;
   
   if (allQuestions.length === 0) {
     return [];
@@ -162,11 +219,17 @@ export function splitListeningTestIntoParts(
     const endIdx = Math.min(startIdx + questionsPerPart, allQuestions.length);
     const partQuestions = allQuestions.slice(startIdx, endIdx);
 
+    const partStatus = getPartStatus(
+      assignment.status,
+      partQuestions,
+      answers
+    );
+
     return {
       id: `${assignment.id}-part-${partNum}`,
       originalAssignmentId: assignment.id,
       studentId: assignment.studentId,
-      status: assignment.status,
+      status: partStatus,
       startTime: assignment.startTime,
       endTime: assignment.endTime,
       score: assignment.score,
@@ -203,6 +266,7 @@ export function splitWritingTestIntoTasks(
   }
 
   const allQuestions = section.questions || [];
+  const answers = assignment.answers as Record<string, unknown> | null;
   
   // Writing typically has 2 tasks
   if (allQuestions.length < 2) {
@@ -212,12 +276,29 @@ export function splitWritingTestIntoTasks(
   return [1, 2].map((taskNum): DisplayAssignment => {
     // Task 1 is first question, Task 2 is second question
     const question = allQuestions[taskNum - 1];
+    
+    // Check answer for this specific task
+    const taskAnswerKeys = taskNum === 1
+      ? ["w1", "task1", question?.id]
+      : ["w2", "task2", question?.id];
+    const hasAnswer = Boolean(
+      answers &&
+        taskAnswerKeys.some((key) =>
+          key ? hasAnswerValue(answers[key]) : false
+        ),
+    );
+
+    const taskStatus: ExamAssignment["status"] = hasAnswer
+      ? "SUBMITTED"
+      : assignment.status === "ASSIGNED"
+      ? "ASSIGNED"
+      : "IN_PROGRESS";
 
     return {
       id: `${assignment.id}-task-${taskNum}`,
       originalAssignmentId: assignment.id,
       studentId: assignment.studentId,
-      status: assignment.status,
+      status: taskStatus,
       startTime: assignment.startTime,
       endTime: assignment.endTime,
       score: assignment.score,

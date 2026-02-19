@@ -11,6 +11,7 @@ interface TableGroupProps {
   currentQuestionId: string;
   onQuestionClick: (questionId: string) => void;
   sectionType?: string;
+  showResults?: boolean;
 }
 
 export function TableGroup({
@@ -19,7 +20,8 @@ export function TableGroup({
   onChange,
   currentQuestionId,
   onQuestionClick,
-  sectionType
+  sectionType,
+  showResults = false,
 }: TableGroupProps) {
   const tableData = questions.length > 0 ? (questions[0] as any).tableData : null;
 
@@ -97,10 +99,12 @@ export function TableGroup({
                                 onChange={(v) => onChange(q.id, v)}
                                 questionNumber={displayNum}
                                 isActive={isActive}
-                                onFocus={() => onQuestionClick(q.id)}
+                                onFocus={() => !showResults && onQuestionClick(q.id)}
                                 variant="inline"
                                 hideBullet={true}
                                 sectionType={sectionType}
+                                showResult={showResults}
+                                correctAnswer={(q as any).correctAnswer}
                               />
                             );
                           })()}
@@ -170,8 +174,10 @@ export function TableGroup({
                     onChange={(v) => onChange(q.id, v)}
                     questionNumber={displayNumber}
                     isActive={isActive}
-                    onFocus={() => onQuestionClick(q.id)}
+                    onFocus={() => !showResults && onQuestionClick(q.id)}
                     sectionType={sectionType}
+                    showResult={showResults}
+                    correctAnswer={(q as any).correctAnswer}
                   />
               </div>
             </div>

@@ -30,6 +30,7 @@ interface ListeningSectionProps {
   showPlayOverlay: boolean;
   isSettingsOpen: boolean;
   timerStart?: boolean;
+  showTimer?: boolean;
   isAudioPlaying: boolean;
   audioError: string | null;
   audioRef: RefObject<HTMLAudioElement>;
@@ -60,6 +61,8 @@ interface ListeningSectionProps {
   onConfirmClose: () => void;
   sessionError: { type: string; message: string } | null;
   onSessionResolve: () => void;
+  showPartResults?: boolean;
+  onContinue?: () => void;
 }
 
 export function ListeningSection({
@@ -109,6 +112,9 @@ export function ListeningSection({
   sessionError,
   onSessionResolve,
   timerStart,
+  showTimer = true,
+  showPartResults = false,
+  onContinue,
 }: ListeningSectionProps) {
   const [isPreparingAudio, setIsPreparingAudio] = useState(false);
   const [isAudioPrepared, setIsAudioPrepared] = useState(false);
@@ -257,6 +263,7 @@ export function ListeningSection({
           sectionType="LISTENING"
           isAudioPlaying={isAudioPlaying}
           autoStart={timerStart && !showPlayOverlay && !sessionError}
+          showTimer={showTimer}
           onTimerExpire={onTimerExpire}
           onOpenSettings={onOpenSettings}
         />
@@ -302,6 +309,7 @@ export function ListeningSection({
                 sectionType={section.type}
                 onAnswerChange={onAnswerChange}
                 onQuestionFocus={onQuestionFocus}
+                showResults={showPartResults}
               />
             )}
           </div>
@@ -431,6 +439,8 @@ export function ListeningSection({
         onPartClick={onPartClick}
         onSubmit={onSubmit}
         isSubmitting={isSubmitting}
+        showPartResults={showPartResults}
+        onContinue={onContinue}
       />
 
       <ReviewAndConfirmModals

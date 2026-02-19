@@ -31,6 +31,8 @@ export interface User {
   firstName?: string;
   lastName?: string;
   role: Role;
+  premiumActive?: boolean;
+  isPremium?: boolean;
   sessionAttendanceMode?: SessionAttendanceMode;
   sessionScheduledAt?: string;
   sessionReferralSource?: SessionReferralSource;
@@ -274,6 +276,7 @@ export interface CreateUserForm {
   password: string;
   firstName?: string;
   lastName?: string;
+  premiumActive?: boolean;
   sessionAttendanceMode?: SessionAttendanceMode;
   sessionScheduledAt?: string;
   sessionReferralSource?: SessionReferralSource;

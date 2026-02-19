@@ -125,6 +125,14 @@ export default function UsersPage() {
     },
   });
 
+  const togglePremiumMutation = useMutation({
+    mutationFn: ({ id, premiumActive }: { id: string; premiumActive: boolean }) =>
+      api.updateUser(id, { premiumActive }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['admin', 'users'] });
+    },
+  });
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -219,6 +227,21 @@ export default function UsersPage() {
       showError(err instanceof Error ? err.message : 'Failed to delete user');
     } finally {
       setUserToDelete(null);
+    }
+  };
+
+  const handleTogglePremium = async (targetUser: User) => {
+    const currentPremiumState = Boolean(targetUser.premiumActive ?? targetUser.isPremium);
+    const nextPremiumState = !currentPremiumState;
+
+    try {
+      await togglePremiumMutation.mutateAsync({
+        id: targetUser.id,
+        premiumActive: nextPremiumState,
+      });
+      success(nextPremiumState ? 'Premium opened for user' : 'Premium access disabled');
+    } catch (err) {
+      showError(err instanceof Error ? err.message : 'Failed to update premium access');
     }
   };
 
@@ -337,6 +360,7 @@ export default function UsersPage() {
                 <tr>
                   <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">User</th>
                   <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Role</th>
+                  <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Premium</th>
                   <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Center</th>
                   <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Created</th>
                   <th className="px-6 py-4 text-right text-xs font-semibold text-slate-500 uppercase tracking-wider">Actions</th>
@@ -363,6 +387,15 @@ export default function UsersPage() {
                         {user.role.replace('_', ' ')}
                       </Badge>
                     </td>
+                    <td className="px-6 py-4">
+                      {user.role === 'STUDENT' ? (
+                        <Badge variant={Boolean(user.premiumActive ?? user.isPremium) ? 'success' : 'default'}>
+                          {Boolean(user.premiumActive ?? user.isPremium) ? 'OPEN' : 'LOCKED'}
+                        </Badge>
+                      ) : (
+                        <span className="text-slate-400">—</span>
+                      )}
+                    </td>
                     <td className="px-6 py-4 text-slate-500 dark:text-slate-400">
                       {user.center?.name || '—'}
                     </td>
@@ -377,6 +410,18 @@ export default function UsersPage() {
                       >
                         Edit
                       </Button>
+                      {user.role === 'STUDENT' && (
+                        <Button
+                          variant={Boolean(user.premiumActive ?? user.isPremium) ? 'warning' : 'info'}
+                          size="sm"
+                          onClick={() => void handleTogglePremium(user)}
+                          disabled={togglePremiumMutation.isPending}
+                        >
+                          {Boolean(user.premiumActive ?? user.isPremium)
+                            ? 'Disable Premium'
+                            : 'Open Premium'}
+                        </Button>
+                      )}
                       <Button
                         variant="danger"
                         size="sm"
@@ -390,7 +435,7 @@ export default function UsersPage() {
                 ))}
                 {filteredUsers.length === 0 && (
                   <tr>
-                    <td colSpan={5} className="px-6 py-12 text-center text-slate-500">
+                    <td colSpan={6} className="px-6 py-12 text-center text-slate-500">
                       {searchTerm || roleFilter || centerFilter ? 'No users match your filters' : 'No users found'}
                     </td>
                   </tr>

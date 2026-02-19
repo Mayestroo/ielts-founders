@@ -13,6 +13,8 @@ interface TrueFalseProps {
   isActive?: boolean;
   onFocus?: () => void;
   sectionType?: string;
+  showResult?: boolean;
+  correctAnswer?: string;
 }
 
 export function TrueFalseQuestion({
@@ -25,6 +27,8 @@ export function TrueFalseQuestion({
   isActive = false,
   onFocus,
   sectionType,
+  showResult = false,
+  correctAnswer,
 }: TrueFalseProps) {
   const options =
     variant === "TRUE_FALSE_NOT_GIVEN"
@@ -68,10 +72,18 @@ export function TrueFalseQuestion({
 
       <div className="flex flex-col gap-3 pl-10">
         {options.map((option) => (
-          <label
+            <label
             key={option}
             className={`flex items-center gap-3 cursor-pointer group px-3 py-2 rounded-lg transition-all ${
-              value === option ? "bg-blue-50" : "hover:bg-gray-50"
+              showResult
+                ? value === option
+                  ? value === correctAnswer
+                    ? "bg-green-100 border border-green-200"
+                    : "bg-red-100 border border-red-200"
+                  : option === correctAnswer
+                    ? "bg-green-100 border border-green-200"
+                    : "opacity-60"
+                : value === option ? "bg-blue-50" : "hover:bg-gray-50"
             }`}
           >
             <div className="relative flex items-center justify-center">
@@ -79,20 +91,32 @@ export function TrueFalseQuestion({
                 type="radio"
                 name={`q-${id}`}
                 checked={value === option}
+                disabled={showResult}
                 onChange={() => {
-                  onChange(option);
-                  onFocus?.();
+                  if (!showResult) {
+                    onChange(option);
+                    onFocus?.();
+                  }
                 }}
-                className="peer appearance-none w-5 h-5 rounded-full border-2 border-gray-300 checked:border-blue-400 checked:bg-blue-400 transition-all cursor-pointer"
+                className={`peer appearance-none w-5 h-5 rounded-full border-2 border-gray-300 transition-all cursor-pointer ${
+                   showResult ? '' : 'checked:border-blue-400 checked:bg-blue-400'
+                }`}
               />
-              <div className="absolute w-2.5 h-2.5 rounded-full bg-white opacity-0 peer-checked:opacity-100 transition-opacity pointer-events-none" />
+              <div className={`absolute w-2.5 h-2.5 rounded-full transition-opacity pointer-events-none ${value === option ? 'opacity-100' : 'opacity-0'} ${
+                 showResult 
+                   ? (value === correctAnswer ? 'bg-green-600' : 'bg-red-600')
+                   : 'bg-white'
+              }`} />
             </div>
             <span
               className={`text-base tracking-wide uppercase transition-colors ${
-                value === option ? "text-black" : "text-gray-700"
+                showResult ? 'text-gray-900' : value === option ? "text-black" : "text-gray-700"
               }`}
             >
               {option.replace("_", " ")}
+              {showResult && option === correctAnswer && value !== option && (
+                <span className="ml-2 text-xs font-bold text-green-600 uppercase tracking-wide">(Correct Answer)</span>
+              )}
             </span>
           </label>
         ))}

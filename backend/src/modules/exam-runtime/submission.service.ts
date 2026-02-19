@@ -8,15 +8,15 @@ import {
 } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { AssignmentStatus, FullMockStatus, Prisma } from '@prisma/client';
-import { PrismaService } from '../prisma/prisma.service';
-import { ResponseCacheService } from '../redis';
-import { SessionService } from '../session/session.service';
 import { ScoringService } from '../exam-evaluation/scoring.service';
-import { SubmitAnswersDto } from '../exams/dto/submit-answers.dto';
 import {
   ExamSubmittedEvent,
   WritingSubmittedEvent,
 } from '../exam-events/exam.events';
+import { SubmitAnswersDto } from '../exams/dto/submit-answers.dto';
+import { PrismaService } from '../prisma/prisma.service';
+import { ResponseCacheService } from '../redis';
+import { SessionService } from '../session/session.service';
 
 const SUBMIT_GRACE_PERIOD_MS = 60_000;
 
@@ -109,9 +109,18 @@ export class SubmissionService {
     }
 
     try {
+      // [PERF-FIX] Fetch only required section fields, avoids loading large passages JSON — see /performance-audit/
       const assignment = await this.prisma.examAssignment.findUnique({
         where: { id: assignmentId },
-        include: { section: true },
+        include: {
+          section: {
+            select: {
+              type: true,
+              questions: true,
+              description: true,
+            },
+          },
+        },
       });
 
       if (!assignment) {
@@ -130,37 +139,52 @@ export class SubmissionService {
         throw new BadRequestException('Exam is not active');
       }
 
-      if (!assignment.endTime) {
-        throw new BadRequestException('Exam end time is missing');
-      }
+      const isPracticeSubmission =
+        submitDto.isPartial === true && !assignment.fullMockSessionId;
 
-      const now = Date.now();
-      const gracePeriodEnd =
-        assignment.endTime.getTime() + SUBMIT_GRACE_PERIOD_MS;
-      if (now > gracePeriodEnd) {
-        throw new BadRequestException('Exam time has expired');
+      if (!isPracticeSubmission) {
+        if (!assignment.endTime) {
+          throw new BadRequestException('Exam end time is missing');
+        }
+
+        const now = Date.now();
+        const gracePeriodEnd =
+          assignment.endTime.getTime() + SUBMIT_GRACE_PERIOD_MS;
+        if (now > gracePeriodEnd) {
+          throw new BadRequestException('Exam time has expired');
+        }
       }
 
       let submitResult: unknown;
+      const persistedAnswers = this.buildPersistedAnswers(
+        submitDto.answers as Record<string, unknown>,
+        assignment as AssignmentWithSection,
+        isPracticeSubmission,
+      );
+
+      const targetStatus = AssignmentStatus.SUBMITTED;
 
       if (assignment.section.type === 'WRITING') {
         submitResult = await this.submitWritingAsync(
           assignment as AssignmentWithSection,
-          submitDto,
+          persistedAnswers,
           studentId,
+          targetStatus,
         );
       } else {
         submitResult = await this.submitReadingListeningSync(
           assignment as AssignmentWithSection,
-          submitDto,
+          persistedAnswers,
           studentId,
+          targetStatus,
         );
       }
 
       const isIdempotent =
         (submitResult as { idempotent?: boolean }).idempotent === true;
 
-      if (!isIdempotent) {
+      // Only mark Redis session submitted if it's a full submit
+      if (!isIdempotent && !isPracticeSubmission) {
         try {
           await this.sessionService.markSubmitted(assignmentId);
         } catch {
@@ -169,6 +193,11 @@ export class SubmissionService {
           );
         }
 
+        await this.invalidateSubmissionReadCaches();
+      }
+
+      // If partial, we still invalidate caches to update answers/score
+      if (isPracticeSubmission) {
         await this.invalidateSubmissionReadCaches();
       }
 
@@ -188,10 +217,11 @@ export class SubmissionService {
 
   private async submitWritingAsync(
     assignment: AssignmentWithSection,
-    submitDto: SubmitAnswersDto,
+    persistedAnswers: Record<string, unknown>,
     studentId: string,
+    targetStatus: AssignmentStatus = AssignmentStatus.SUBMITTED,
   ) {
-    const answers = submitDto.answers as Record<string, string>;
+    const answers = persistedAnswers as Record<string, string>;
     const questions = assignment.section.questions as QuestionItem[] | null;
 
     const tasksToEvaluate: {
@@ -236,8 +266,8 @@ export class SubmissionService {
           status: { not: AssignmentStatus.SUBMITTED },
         },
         data: {
-          status: AssignmentStatus.SUBMITTED,
-          answers: submitDto.answers as Prisma.InputJsonValue,
+          status: targetStatus,
+          answers: persistedAnswers as Prisma.InputJsonValue,
           score: 0,
         },
       });
@@ -253,7 +283,7 @@ export class SubmissionService {
           score: 0,
           totalScore: 9,
           bandScore: null,
-          answers: submitDto.answers as Prisma.InputJsonValue,
+          answers: persistedAnswers as Prisma.InputJsonValue,
           feedback: undefined,
         },
       });
@@ -317,7 +347,7 @@ export class SubmissionService {
     return {
       message: 'Exam submitted successfully',
       assignmentId: assignment.id,
-      status: 'SUBMITTED',
+      status: 'SUBMITTED', // Always return SUBMITTED to frontend even if partial
       resultId: result.id,
       submissionId: submission.id,
       gradingStatus: 'queued',
@@ -330,13 +360,14 @@ export class SubmissionService {
 
   private async submitReadingListeningSync(
     assignment: AssignmentWithSection,
-    submitDto: SubmitAnswersDto,
+    persistedAnswers: Record<string, unknown>,
     studentId: string,
+    targetStatus: AssignmentStatus = AssignmentStatus.SUBMITTED,
   ) {
     const questions = assignment.section.questions as QuestionItem[];
     const calculation = this.scoringService.calculateScore(
       questions,
-      submitDto.answers,
+      persistedAnswers,
       assignment.section.type,
     );
 
@@ -347,8 +378,8 @@ export class SubmissionService {
           status: { not: AssignmentStatus.SUBMITTED },
         },
         data: {
-          status: AssignmentStatus.SUBMITTED,
-          answers: submitDto.answers as Prisma.InputJsonValue,
+          status: targetStatus,
+          answers: persistedAnswers as Prisma.InputJsonValue,
           score: calculation.score,
         },
       });
@@ -364,7 +395,7 @@ export class SubmissionService {
           score: calculation.score,
           totalScore: calculation.totalScore,
           bandScore: calculation.bandScore,
-          answers: submitDto.answers as Prisma.InputJsonValue,
+          answers: persistedAnswers as Prisma.InputJsonValue,
           feedback: undefined,
         },
       });
@@ -404,7 +435,7 @@ export class SubmissionService {
     return {
       message: 'Exam submitted successfully',
       assignmentId: assignment.id,
-      status: 'SUBMITTED',
+      status: 'SUBMITTED', // Always return SUBMITTED to frontend even if partial
       resultId: result.id,
       score: calculation.score,
       totalScore: calculation.totalScore,
@@ -413,6 +444,54 @@ export class SubmissionService {
       breakEndsAt: mockProgress?.breakEndsAt ?? null,
       fullMockSessionId: assignment.fullMockSessionId ?? null,
     };
+  }
+
+  private buildPersistedAnswers(
+    rawAnswers: Record<string, unknown>,
+    assignment: AssignmentWithSection,
+    isPracticeSubmission: boolean,
+  ): Record<string, unknown> {
+    const persistedAnswers: Record<string, unknown> = { ...rawAnswers };
+
+    const incomingAttemptType =
+      typeof persistedAnswers._attemptType === 'string'
+        ? persistedAnswers._attemptType.trim()
+        : '';
+    persistedAnswers._attemptType = incomingAttemptType || 'Full';
+
+    if (typeof persistedAnswers._attemptMode !== 'string') {
+      persistedAnswers._attemptMode = isPracticeSubmission
+        ? 'standalone'
+        : 'full-mock';
+    }
+
+    if (
+      !Object.prototype.hasOwnProperty.call(
+        persistedAnswers,
+        '_fullMockSessionId',
+      )
+    ) {
+      persistedAnswers._fullMockSessionId =
+        assignment.fullMockSessionId ?? null;
+    }
+
+    const questionCount =
+      Array.isArray(assignment.section.questions) &&
+      assignment.section.questions.length > 0
+        ? assignment.section.questions.length
+        : 0;
+
+    const incomingQuestionCount = persistedAnswers._attemptQuestionCount;
+    const hasValidIncomingQuestionCount =
+      typeof incomingQuestionCount === 'number' &&
+      Number.isFinite(incomingQuestionCount) &&
+      incomingQuestionCount > 0;
+
+    if (!hasValidIncomingQuestionCount) {
+      persistedAnswers._attemptQuestionCount = questionCount;
+    }
+
+    return persistedAnswers;
   }
 
   private async updateFullMockProgressInTransaction(
@@ -476,6 +555,7 @@ export class SubmissionService {
   private async invalidateSubmissionReadCaches() {
     await this.responseCache.delByPrefixes([
       'cache:assignments:grouped:v1:',
+      'cache:assignments:student:v1:',
       'cache:results:list:v1:',
       'cache:results:student:v1:',
       'cache:dashboard:stats:v1:',

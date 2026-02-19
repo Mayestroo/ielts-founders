@@ -342,9 +342,24 @@ export class UsersService {
     }
 
     if (requesterRole === Role.STUDENT || requesterRole === Role.TEACHER) {
-      if (updateUserDto.role || updateUserDto.centerId) {
-        throw new ForbiddenException('You cannot change role or center');
+      if (
+        updateUserDto.role ||
+        updateUserDto.centerId ||
+        updateUserDto.premiumActive !== undefined
+      ) {
+        throw new ForbiddenException(
+          'You cannot change role, center, or premium access',
+        );
       }
+    }
+
+    if (
+      updateUserDto.premiumActive !== undefined &&
+      user.role !== Role.STUDENT
+    ) {
+      throw new ForbiddenException(
+        'Premium access can only be changed for students',
+      );
     }
 
     if (

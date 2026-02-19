@@ -20,6 +20,8 @@ import { SessionService } from '../session/session.service';
 
 const ASSIGNMENTS_GROUPED_CACHE_PREFIX = 'cache:assignments:grouped:v1:';
 const ASSIGNMENTS_GROUPED_TTL_SECONDS = 20;
+const STUDENT_ASSIGNMENTS_CACHE_PREFIX = 'cache:assignments:student:v1:';
+const STUDENT_ASSIGNMENTS_TTL_SECONDS = 20;
 
 // Free assignment limits per section type
 // These determine how many tests are auto-assigned as FREE
@@ -850,7 +852,15 @@ export class AssignmentService {
       where.fullMockSessionId = { not: null };
     }
 
-    return this.prisma.examAssignment.findMany({
+    const cacheKey =
+      `${STUDENT_ASSIGNMENTS_CACHE_PREFIX}student:${studentId}:viewer:${requesterRole}:` +
+      `viewerCenter:${requesterCenterId || 'all'}:fmo:${fullMockOnly ? '1' : '0'}`;
+    const cached = await this.responseCache.getJson<unknown[]>(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
+    const assignments = await this.prisma.examAssignment.findMany({
       where,
       select: {
         id: true,
@@ -877,6 +887,19 @@ export class AssignmentService {
       },
       orderBy: { createdAt: 'desc' },
     });
+
+    const sanitizedAssignments = assignments.map((assignment) => ({
+      ...assignment,
+      section: this.sanitizeSectionForAssignmentList(assignment.section),
+    }));
+
+    await this.responseCache.setJson(
+      cacheKey,
+      sanitizedAssignments,
+      STUDENT_ASSIGNMENTS_TTL_SECONDS,
+    );
+
+    return sanitizedAssignments;
   }
 
   private async ensureStarterAssignmentsForStudent(studentId: string) {
@@ -1064,8 +1087,56 @@ export class AssignmentService {
       throw new ForbiddenException('This assignment is not assigned to you');
     }
 
+    const isSelfStudyAssignment = !assignment.fullMockSessionId;
+
     if (assignment.status === AssignmentStatus.SUBMITTED) {
-      throw new BadRequestException('This exam has already been submitted');
+      if (!isSelfStudyAssignment) {
+        throw new BadRequestException('This exam has already been submitted');
+      }
+
+      const restartedAt = new Date();
+      const restartedEndTime = new Date(
+        restartedAt.getTime() + assignment.section.duration * 60 * 1000,
+      );
+
+      const restartedAssignment = await this.prisma.examAssignment.update({
+        where: { id: assignmentId },
+        data: {
+          status: AssignmentStatus.IN_PROGRESS,
+          startTime: restartedAt,
+          endTime: restartedEndTime,
+          answers: {},
+          highlights: {},
+          score: 0,
+        },
+        include: { section: true },
+      });
+
+      try {
+        await this.sessionService.deleteSession(assignmentId);
+      } catch {
+        this.logger.warn(
+          `Unable to clear stale Redis session while restarting assignment ${assignmentId}`,
+        );
+      }
+
+      await this.ensureRedisSession(
+        restartedAssignment.id,
+        restartedAssignment.studentId,
+        restartedAssignment.startTime!,
+        restartedAssignment.endTime!,
+        restartedAssignment.section.duration,
+      );
+
+      await this.invalidateAssignmentReadCaches();
+
+      return {
+        ...restartedAssignment,
+        section: this.sanitizeSectionForStudent(restartedAssignment.section),
+        startTime: restartedAssignment.startTime!,
+        endTime: restartedAssignment.endTime!,
+        remainingTime: restartedAssignment.section.duration * 60,
+      };
     }
 
     if (assignment.fullMockSessionId && assignment.fullMockSequence) {
@@ -1117,6 +1188,58 @@ export class AssignmentService {
           assignment.startTime.getTime() +
             assignment.section.duration * 60 * 1000,
         );
+
+      // If the exam has expired and it's a self-study assignment, restart it
+      // (same logic as SUBMITTED self-study). This prevents the frontend from
+      // getting stale data with remainingTime=0, which would cause an
+      // infinite timer-expire -> auto-submit -> restart loop.
+      const isExpired = existingEndTime.getTime() < Date.now();
+      if (isExpired && isSelfStudyAssignment) {
+        const restartedAt = new Date();
+        const restartedEndTime = new Date(
+          restartedAt.getTime() + assignment.section.duration * 60 * 1000,
+        );
+
+        const restartedAssignment = await this.prisma.examAssignment.update({
+          where: { id: assignmentId },
+          data: {
+            status: AssignmentStatus.IN_PROGRESS,
+            startTime: restartedAt,
+            endTime: restartedEndTime,
+            answers: {},
+            highlights: {},
+            score: 0,
+          },
+          include: { section: true },
+        });
+
+        try {
+          await this.sessionService.deleteSession(assignmentId);
+        } catch {
+          this.logger.warn(
+            `Unable to clear stale Redis session while restarting expired assignment ${assignmentId}`,
+          );
+        }
+
+        await this.ensureRedisSession(
+          restartedAssignment.id,
+          restartedAssignment.studentId,
+          restartedAssignment.startTime!,
+          restartedAssignment.endTime!,
+          restartedAssignment.section.duration,
+        );
+
+        await this.invalidateAssignmentReadCaches();
+
+        return {
+          ...restartedAssignment,
+          section: this.sanitizeSectionForStudent(restartedAssignment.section),
+          startTime: restartedAssignment.startTime!,
+          endTime: restartedAssignment.endTime!,
+          remainingTime: restartedAssignment.section.duration * 60,
+        };
+      }
+
       await this.ensureRedisSession(
         assignment.id,
         assignment.studentId,
@@ -1320,10 +1443,58 @@ export class AssignmentService {
   private async invalidateAssignmentReadCaches() {
     await this.responseCache.delByPrefixes([
       ASSIGNMENTS_GROUPED_CACHE_PREFIX,
+      STUDENT_ASSIGNMENTS_CACHE_PREFIX,
       'cache:dashboard:stats:v1:',
       'cache:results:list:v1:',
       'cache:results:student:v1:',
     ]);
+  }
+
+  private sanitizeSectionForAssignmentList<T extends Record<string, unknown>>(
+    section: T,
+  ): T {
+    if (!section) {
+      return section;
+    }
+
+    const sanitized = this.sanitizeSectionForStudent(section);
+    const compactSection = { ...sanitized } as Record<string, unknown>;
+
+    if (Array.isArray(compactSection.passages)) {
+      compactSection.passages = (compactSection.passages as unknown[]).map(
+        (passage: unknown) => {
+          if (!passage || typeof passage !== 'object') {
+            return passage;
+          }
+
+          const p = passage as Record<string, unknown>;
+          return {
+            id: p.id,
+            title: p.title,
+          };
+        },
+      );
+    }
+
+    if (Array.isArray(compactSection.questions)) {
+      compactSection.questions = (compactSection.questions as unknown[]).map(
+        (question: unknown) => {
+          if (!question || typeof question !== 'object') {
+            return question;
+          }
+
+          const q = question as Record<string, unknown>;
+          return {
+            id: q.id,
+            passageId: q.passageId,
+            questionText: q.questionText,
+            points: q.points,
+          };
+        },
+      );
+    }
+
+    return compactSection as T;
   }
 
   private async ensureRedisSession(

@@ -1,8 +1,45 @@
-node_modules
+# Dev & Test
+**/*.spec.ts
+**/*.test.ts
+**/*.e2e-spec.ts
+/test
+/tests
+/coverage
+/.nyc_output
+jest.config.*
+
+# Dev Tools
+.eslintrc*
+.prettierrc*
+.editorconfig
+.nvmrc
+nodemon*
+
+# IDE & OS
+.vscode
+.idea
+.DS_Store
+*.log
 npm-debug.log
-dist
+yarn-debug.log
+yarn-error.log
+
+# Docs
+CHANGELOG.md
+CONTRIBUTING.md
+CODE_OF_CONDUCT.md
+
+# Audit & Temp
+/performance-audit
+/tmp
+/temp
+depcheck_results.json
+*.rdb
+
+# Git
 .git
 .gitignore
-.env
-.DS_Store
-coverage
+
+# Build output
+/dist
+/node_modules

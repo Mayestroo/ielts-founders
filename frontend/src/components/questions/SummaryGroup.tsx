@@ -1,7 +1,7 @@
 'use client';
 
-import { Question } from '@/types';
 import { sanitizeHtml } from '@/lib/sanitizeHtml';
+import { Question } from '@/types';
 import { useState } from 'react';
 import { FillBlankQuestion } from './FillBlankQuestion';
 
@@ -12,6 +12,7 @@ interface SummaryGroupProps {
   currentQuestionId: string;
   onQuestionClick: (questionId: string) => void;
   sectionType?: string;
+  showResults?: boolean;
 }
 
 export function SummaryGroup({
@@ -20,7 +21,8 @@ export function SummaryGroup({
   onChange,
   currentQuestionId,
   onQuestionClick,
-  sectionType
+  sectionType,
+  showResults = false,
 }: SummaryGroupProps) {
   const [dragOverId, setDragOverId] = useState<string | null>(null);
   
@@ -39,11 +41,13 @@ export function SummaryGroup({
 
   // Drag and drop handlers
   const handleDragStart = (e: React.DragEvent, optionId: string) => {
+    if (showResults) return;
     e.dataTransfer.setData('text/plain', optionId);
     e.dataTransfer.effectAllowed = 'copy';
   };
 
   const handleDragOver = (e: React.DragEvent, questionId: string) => {
+    if (showResults) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
     setDragOverId(questionId);
@@ -54,6 +58,7 @@ export function SummaryGroup({
   };
 
   const handleDrop = (e: React.DragEvent, questionId: string) => {
+    if (showResults) return;
     e.preventDefault();
     setDragOverId(null);
     const optionId = e.dataTransfer.getData('text/plain');
@@ -115,54 +120,68 @@ export function SummaryGroup({
                       )}
                       
                       {/* Drop zone for option */}
-                      <button
-                        onClick={(e) => {
-                          e.preventDefault();
-                          onQuestionClick(q.id);
-                        }}
-                        onDragOver={(e) => handleDragOver(e, q.id)}
-                        onDragLeave={handleDragLeave}
-                        onDrop={(e) => handleDrop(e, q.id)}
-                        className={`
-                          relative inline-flex items-center justify-center min-w-[110px] h-[28px] mx-1 align-middle -translate-y-px
-                          transition-all duration-200 rounded-sm border
-                          ${
-                            isFilled
-                              ? 'border-[#2D8EFF] bg-blue-50/50 ring-0 group/filled shadow-sm'
-                              : 'border-gray-400 bg-white hover:border-[#2D8EFF]'
-                          }
-                          ${
-                            isActive && !isFilled
-                              ? 'border-[#2D8EFF] ring-1 ring-[#2D8EFF]/20 shadow-sm'
-                              : ''
-                          }
-                          ${isDragOver ? 'scale-105 border-[#2D8EFF] bg-blue-100' : ''}
-                        `}
-                      >
-                        {value ? (
-                          <>
-                            <span className="text-black font-bold text-[14px] px-1.5">
-                              {value}
+                      <div className="inline-flex flex-col items-center">
+                        <button
+                          onClick={(e) => {
+                            e.preventDefault();
+                            if (!showResults) onQuestionClick(q.id);
+                          }}
+                          onDragOver={(e) => handleDragOver(e, q.id)}
+                          onDragLeave={handleDragLeave}
+                          onDrop={(e) => handleDrop(e, q.id)}
+                          disabled={showResults}
+                          className={`
+                            relative inline-flex items-center justify-center min-w-[110px] h-[28px] mx-1 align-middle -translate-y-px
+                            transition-all duration-200 rounded-sm border
+                            ${
+                              showResults
+                                ? (value === (q as any).correctAnswer)
+                                  ? 'border-green-500 bg-green-50'
+                                  : 'border-red-500 bg-red-50'
+                                : isFilled
+                                  ? 'border-[#2D8EFF] bg-blue-50/50 ring-0 group/filled shadow-sm'
+                                  : 'border-gray-400 bg-white hover:border-[#2D8EFF]'
+                            }
+                            ${
+                              isActive && !isFilled && !showResults
+                                ? 'border-[#2D8EFF] ring-1 ring-[#2D8EFF]/20 shadow-sm'
+                                : ''
+                            }
+                            ${isDragOver ? 'scale-105 border-[#2D8EFF] bg-blue-100' : ''}
+                          `}
+                        >
+                          {value ? (
+                            <>
+                              <span className={`font-bold text-[14px] px-1.5 ${showResults ? (value === (q as any).correctAnswer ? 'text-green-700' : 'text-red-700') : 'text-black'}`}>
+                                {value}
+                              </span>
+                              {!showResults && (
+                                <div
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onChange(q.id, '');
+                                  }}
+                                  className="absolute -top-2 -right-2 w-4 h-4 bg-red-500 rounded-full text-white flex items-center justify-center opacity-0 group-hover/filled:opacity-100 transition-opacity hover:bg-red-600 shadow-sm z-10"
+                                  title="Remove answer"
+                                >
+                                  <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M6 18L18 6M6 6l12 12" />
+                                  </svg>
+                                </div>
+                              )}
+                            </>
+                          ) : (
+                            <span className="text-black font-bold text-xs select-none px-1.5">
+                              {displayNumber}
                             </span>
-                            <div
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onChange(q.id, '');
-                              }}
-                              className="absolute -top-2 -right-2 w-4 h-4 bg-red-500 rounded-full text-white flex items-center justify-center opacity-0 group-hover/filled:opacity-100 transition-opacity hover:bg-red-600 shadow-sm z-10"
-                              title="Remove answer"
-                            >
-                              <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M6 18L18 6M6 6l12 12" />
-                              </svg>
-                            </div>
-                          </>
-                        ) : (
-                          <span className="text-black font-bold text-xs select-none px-1.5">
-                            {displayNumber}
+                          )}
+                        </button>
+                        {showResults && value !== (q as any).correctAnswer && (
+                          <span className="text-[10px] font-bold text-green-600 uppercase leading-none mt-0.5">
+                            {(q as any).correctAnswer}
                           </span>
                         )}
-                      </button>
+                      </div>
 
                       {/* Render text after blank */}
                       {afterText && (
@@ -190,6 +209,8 @@ export function SummaryGroup({
                       onFocus={() => onQuestionClick(q.id)}
                       variant="inline"
                       sectionType={sectionType}
+                      showResult={showResults}
+                      correctAnswer={(q as any).correctAnswer}
                     />
                   </span>
                 );

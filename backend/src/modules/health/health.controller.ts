@@ -1,12 +1,17 @@
 import {
-  Body,
-  Controller,
-  ForbiddenException,
-  Get,
-  Inject,
-  NotFoundException,
-  Post,
+    Body,
+    Controller,
+    ForbiddenException,
+    Get,
+    Inject,
+    NotFoundException,
+    Post,
 } from '@nestjs/common';
+import {
+    HealthCheck,
+    HealthCheckService,
+    MemoryHealthIndicator,
+} from '@nestjs/terminus';
 import { SkipThrottle } from '@nestjs/throttler';
 import Redis from 'ioredis';
 import { ExamSessionService } from '../exam-runtime/exam-session.service';
@@ -25,6 +30,8 @@ interface ChaosControlPayload {
 @Controller('health')
 export class HealthController {
   constructor(
+    private health: HealthCheckService,
+    private memory: MemoryHealthIndicator,
     @Inject(REDIS_CLIENT) private redis: Redis,
     private prisma: PrismaService,
     private examSessionService: ExamSessionService,
@@ -32,45 +39,53 @@ export class HealthController {
   ) {}
 
   @Get()
+  @HealthCheck()
   @SkipThrottle()
-  async check() {
-    const startedAt = Date.now();
-    const checks = {
-      redis: false,
-      database: false,
-      timestamp: new Date().toISOString(),
-      status: 'ok',
-      latencyMs: {
-        redis: 0,
-        database: 0,
-        total: 0,
+  check() {
+    return this.health.check([
+      // Database Check
+      async () => {
+        const start = Date.now();
+        try {
+          await this.prisma.$queryRaw`SELECT 1`;
+          return {
+            database: {
+              status: 'up',
+              latency: Date.now() - start,
+            },
+          };
+        } catch (e) {
+          return {
+            database: {
+              status: 'down',
+              message: e.message,
+            },
+          };
+        }
       },
-    };
-
-    const redisStartedAt = Date.now();
-    try {
-      await this.redis.ping();
-      checks.redis = true;
-    } catch (error) {
-      checks.status = 'error';
-    } finally {
-      checks.latencyMs.redis = Date.now() - redisStartedAt;
-    }
-
-    const databaseStartedAt = Date.now();
-    try {
-      // Simple query to check DB connection
-      await this.prisma.$queryRaw`SELECT 1`;
-      checks.database = true;
-    } catch (error) {
-      checks.status = 'error';
-    } finally {
-      checks.latencyMs.database = Date.now() - databaseStartedAt;
-    }
-
-    checks.latencyMs.total = Date.now() - startedAt;
-
-    return checks;
+      // Redis Check
+      async () => {
+        const start = Date.now();
+        try {
+          await this.redis.ping();
+          return {
+            redis: {
+              status: 'up',
+              latency: Date.now() - start,
+            },
+          };
+        } catch (e) {
+          return {
+            redis: {
+              status: 'down',
+              message: e.message,
+            },
+          };
+        }
+      },
+      // Memory Check (Heap > 300MB is unhealthy)
+      () => this.memory.checkHeap('memory_heap', 300 * 1024 * 1024),
+    ]);
   }
 
   @Get('performance')

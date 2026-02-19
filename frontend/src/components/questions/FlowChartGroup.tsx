@@ -10,6 +10,7 @@ interface FlowChartGroupProps {
   currentQuestionId: string;
   onQuestionClick: (questionId: string) => void;
   sectionType?: string;
+  showResults?: boolean;
 }
 
 import { useState } from 'react';
@@ -21,7 +22,8 @@ export function FlowChartGroup({
   onChange,
   currentQuestionId,
   onQuestionClick,
-  sectionType
+  sectionType,
+  showResults = false,
 }: FlowChartGroupProps) {
   const [dragOverId, setDragOverId] = useState<string | null>(null);
   const firstQ = questions[0];
@@ -40,11 +42,13 @@ export function FlowChartGroup({
   let questionIndex = 0;
 
   const handleDragStart = (e: React.DragEvent, optionId: string) => {
+    if (showResults) return;
     e.dataTransfer.setData('text/plain', optionId);
     e.dataTransfer.effectAllowed = 'copy';
   };
 
   const handleDragOver = (e: React.DragEvent, questionId: string) => {
+    if (showResults) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
     setDragOverId(questionId);
@@ -55,6 +59,7 @@ export function FlowChartGroup({
   };
 
   const handleDrop = (e: React.DragEvent, questionId: string) => {
+    if (showResults) return;
     e.preventDefault();
     setDragOverId(null);
     const optionId = e.dataTransfer.getData('text/plain').toUpperCase();
@@ -145,6 +150,8 @@ export function FlowChartGroup({
                         variant="inline"
                         hideBullet={true}
                         sectionType={sectionType}
+                        showResult={showResults}
+                        correctAnswer={(q as any).correctAnswer}
                       />
                     </div>
                   ) : (

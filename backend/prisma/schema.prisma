@@ -76,6 +76,7 @@ model User {
   sessionScheduledAt DateTime?
   sessionReferralSource SessionReferralSource?
   phoneNumber String?
+  premiumActive Boolean @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -157,6 +158,7 @@ model ExamAssignment {
 
   @@unique([studentId, sectionId]) // One assignment per student per section
   @@index([studentId])
+  @@index([studentId, createdAt])
   @@index([sectionId])
   @@index([status])
   @@index([fullMockSessionId])
@@ -180,7 +182,9 @@ model ExamResult {
   writingSubmission  WritingSubmission?
 
   @@index([studentId])
+  @@index([studentId, submittedAt])
   @@index([sectionId])
+  @@index([studentId, bandScore])
 }
 
 // ==== EXAM SESSION MANAGEMENT ====

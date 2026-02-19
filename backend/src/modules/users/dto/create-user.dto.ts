@@ -4,6 +4,7 @@ import {
   SessionReferralSource,
 } from '@prisma/client';
 import {
+  IsBoolean,
   IsEnum,
   IsISO8601,
   IsOptional,
@@ -52,4 +53,8 @@ export class CreateUserDto {
   @IsString()
   @Matches(/^\+998\d{9}$/)
   phoneNumber?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  premiumActive?: boolean;
 }

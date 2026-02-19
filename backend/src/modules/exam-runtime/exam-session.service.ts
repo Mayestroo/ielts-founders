@@ -5,7 +5,12 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { AssignmentStatus } from '@prisma/client';
+import {
+  AssignmentStatus,
+  ExamAssignment,
+  ExamSection,
+  Prisma,
+} from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { SessionService } from '../session/session.service';
 
@@ -256,8 +261,8 @@ export class ExamSessionService {
           status: { not: AssignmentStatus.SUBMITTED },
         },
         data: {
-          answers: answers as any,
-          highlights: highlights as any,
+          answers: answers as Prisma.InputJsonValue,
+          highlights: highlights as Prisma.InputJsonValue,
         },
       })
       .then((result) => {
@@ -347,7 +352,18 @@ export class ExamSessionService {
     return Number(sorted[index].toFixed(2));
   }
 
-  async heartbeat(assignmentId: string, studentId: string, tabId?: string) {
+  async heartbeat(
+    assignmentId: string,
+    studentId: string,
+    tabId?: string,
+  ): Promise<{
+    active: boolean;
+    reason?: string;
+    remainingSeconds?: number;
+    syncVersion?: number;
+    serverTime?: string;
+    degraded?: boolean;
+  }> {
     const startedAt = Date.now();
 
     try {
@@ -397,10 +413,14 @@ export class ExamSessionService {
         return this.heartbeatFromDatabase(assignmentId, studentId);
       }
 
-      // Auto-recover session if missing but exam is valid
+      // [PERF-FIX] Only fetch section.duration for session recovery, avoids loading large JSON — see /performance-audit/
       const assignment = await this.prisma.examAssignment.findUnique({
         where: { id: assignmentId },
-        include: { section: true },
+        include: {
+          section: {
+            select: { duration: true },
+          },
+        },
       });
 
       if (!assignment) {
@@ -690,8 +710,8 @@ export class ExamSessionService {
         status: AssignmentStatus.IN_PROGRESS,
       },
       data: {
-        answers: mergedAnswers as any,
-        highlights: mergedHighlights as any,
+        answers: mergedAnswers as Prisma.InputJsonValue,
+        highlights: mergedHighlights as Prisma.InputJsonValue,
       },
     });
 
@@ -717,7 +737,7 @@ export class ExamSessionService {
           id: assignmentId,
           status: AssignmentStatus.IN_PROGRESS,
         },
-        data: { answers: answers as any },
+        data: { answers: answers as Prisma.InputJsonValue },
       })
       .then((result) => {
         if (result.count === 0) {
@@ -776,7 +796,7 @@ export class ExamSessionService {
   }
 
   private async reconnectFromDatabase(
-    assignment: any,
+    assignment: ExamAssignment & { section: ExamSection },
     clientAnswers?: Record<string, unknown>,
   ) {
     if (
@@ -809,7 +829,7 @@ export class ExamSessionService {
           id: assignment.id,
           status: AssignmentStatus.IN_PROGRESS,
         },
-        data: { answers: mergedAnswers as any },
+        data: { answers: mergedAnswers as Prisma.InputJsonValue },
       });
 
       if (updated.count !== 1) {
@@ -845,21 +865,27 @@ export class ExamSessionService {
     };
   }
 
-  private sanitizeSectionForStudent(section: any) {
-    if (!section || !Array.isArray(section.questions)) {
+  private sanitizeSectionForStudent(section: ExamSection | null) {
+    if (
+      !section ||
+      !section.questions ||
+      !Array.isArray(section.questions as unknown[])
+    ) {
       return section;
     }
 
-    const questions = section.questions.map((question: unknown) => {
-      if (!question || typeof question !== 'object') {
-        return question;
-      }
+    const questions = (section.questions as unknown[]).map(
+      (question: unknown) => {
+        if (!question || typeof question !== 'object') {
+          return question;
+        }
 
-      const q = question as Record<string, unknown>;
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      const { correctAnswer, correctAnswers, ...safeQuestion } = q;
-      return safeQuestion;
-    });
+        const q = question as Record<string, unknown>;
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const { correctAnswer, correctAnswers, ...safeQuestion } = q;
+        return safeQuestion;
+      },
+    );
 
     return {
       ...section,

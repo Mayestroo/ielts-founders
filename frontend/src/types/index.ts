@@ -32,6 +32,8 @@ export interface User {
   lastName?: string;
   role: Role;
   points?: number;
+  premiumActive?: boolean;
+  isPremium?: boolean;
   sessionAttendanceMode?: SessionAttendanceMode;
   sessionScheduledAt?: string;
   sessionReferralSource?: SessionReferralSource;

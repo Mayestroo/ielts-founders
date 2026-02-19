@@ -14,7 +14,28 @@ interface MCQProps {
   isActive?: boolean;
   onFocus?: () => void;
   sectionType?: string;
+  showResult?: boolean;
+  correctAnswer?: string | string[];
 }
+
+const isAnswerCorrect = (value: string | string[], correctAnswer: string | string[] | undefined, isMultiple: boolean) => {
+  if (!correctAnswer) return false;
+  if (isMultiple) {
+    const valArr = Array.isArray(value) ? value : [value];
+    const corrArr = Array.isArray(correctAnswer) ? correctAnswer : [correctAnswer];
+    return valArr.length === corrArr.length && valArr.every(v => corrArr.includes(v));
+  }
+  return value === correctAnswer;
+};
+
+const isOptionCorrect = (optionId: string, correctAnswer: string | string[] | undefined, isMultiple: boolean) => {
+  if (!correctAnswer) return false;
+  if (isMultiple) {
+    const corrArr = Array.isArray(correctAnswer) ? correctAnswer : [correctAnswer];
+    return corrArr.includes(optionId);
+  }
+  return correctAnswer === optionId;
+};
 
 export function MCQQuestion({ 
   id, 
@@ -26,7 +47,9 @@ export function MCQQuestion({
   questionNumber,
   isActive = false,
   onFocus,
-  sectionType
+  sectionType,
+  showResult = false,
+  correctAnswer
 }: MCQProps) {
   const handleChange = (optionId: string) => {
     if (isMultiple) {
@@ -85,35 +108,73 @@ export function MCQQuestion({
         {(options || []).map((option) => (
           <label
             key={option.id}
-            className={`flex items-center gap-3 cursor-pointer group px-3 py-2 rounded-lg transition-all ${isSelected(option.id) ? 'bg-blue-50' : 'hover:bg-gray-50'}`}
+            className={`
+              flex items-center gap-3 cursor-pointer group px-3 py-2 rounded-lg transition-all 
+              ${showResult
+                  ? isSelected(option.id)
+                    ? isAnswerCorrect(value, correctAnswer, isMultiple)
+                      ? 'bg-green-100 border border-green-200' 
+                      : 'bg-red-100 border border-red-200'
+                    : isOptionCorrect(option.id, correctAnswer, isMultiple)
+                      ? 'bg-green-100 border border-green-200'
+                      : 'opacity-60'
+                  : isSelected(option.id) ? 'bg-blue-50' : 'hover:bg-gray-50'
+              }
+            `}
           >
             <div className="relative flex items-center justify-center">
               <input
                 type={isMultiple ? 'checkbox' : 'radio'}
                 name={`q-${id}`}
                 checked={isSelected(option.id)}
+                disabled={showResult}
                 onChange={() => {
-                  handleChange(option.id);
-                  onFocus?.();
+                  if (!showResult) {
+                    handleChange(option.id);
+                    onFocus?.();
+                  }
                 }}
                 className={`
                   peer appearance-none w-5 h-5 border-2 border-gray-300 
-                  checked:border-blue-400 checked:bg-blue-400 transition-all cursor-pointer
+                  transition-all cursor-pointer
                   ${isMultiple ? 'rounded-md' : 'rounded-full'}
+                  ${showResult 
+                    ? '' 
+                    : 'checked:border-blue-400 checked:bg-blue-400'
+                  }
                 `}
               />
+              {/* Checkmark or Indicator */}
               {isMultiple ? (
-                <div className="absolute opacity-0 peer-checked:opacity-100 transition-opacity pointer-events-none text-white">
-                  <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                  </svg>
+                <div className={`absolute transition-opacity pointer-events-none ${isSelected(option.id) ? 'opacity-100' : 'opacity-0'}`}>
+                   {showResult ? (
+                      isAnswerCorrect(value, correctAnswer, isMultiple) 
+                        ? <svg className="w-3.5 h-3.5 text-green-600" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" /></svg>
+                        : <svg className="w-3.5 h-3.5 text-red-600" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" /></svg>
+                   ) : (
+                      <svg className="w-3.5 h-3.5 text-white" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" /></svg>
+                   )}
                 </div>
               ) : (
-                <div className="absolute w-2.5 h-2.5 rounded-full bg-white opacity-0 peer-checked:opacity-100 transition-opacity pointer-events-none" />
+                <div className={`
+                  absolute w-2.5 h-2.5 rounded-full transition-opacity pointer-events-none 
+                  ${isSelected(option.id) ? 'opacity-100' : 'opacity-0'}
+                  ${showResult 
+                    ? (isAnswerCorrect(value, correctAnswer, isMultiple) ? 'bg-green-600' : 'bg-red-600')
+                    : 'bg-white'}
+                `} />
               )}
             </div>
-            <span className={`text-base transition-colors ${isSelected(option.id) ? 'text-black' : 'text-gray-700 group-hover:text-black'}`}>
+            
+            <span className={`text-base transition-colors ${
+              showResult
+                ? 'text-gray-900'
+                : isSelected(option.id) ? 'text-black' : 'text-gray-700 group-hover:text-black'
+            }`}>
               {option.text}
+              {showResult && isOptionCorrect(option.id, correctAnswer, isMultiple) && !isSelected(option.id) && (
+                <span className="ml-2 text-xs font-bold text-green-600 uppercase tracking-wide">(Correct Answer)</span>
+              )}
             </span>
           </label>
         ))}
