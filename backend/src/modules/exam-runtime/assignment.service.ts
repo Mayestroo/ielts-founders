@@ -23,14 +23,6 @@ const ASSIGNMENTS_GROUPED_TTL_SECONDS = 20;
 const STUDENT_ASSIGNMENTS_CACHE_PREFIX = 'cache:assignments:student:v1:';
 const STUDENT_ASSIGNMENTS_TTL_SECONDS = 20;
 
-// Free assignment limits per section type
-// These determine how many tests are auto-assigned as FREE
-const SECTION_ASSIGNMENT_LIMITS: Record<ExamSectionType, number> = {
-  [ExamSectionType.READING]: 2, // 1 complete + 1 split into 3 parts = 4 items
-  [ExamSectionType.LISTENING]: 2, // 1 complete + 1 split into 4 parts = 5 items
-  [ExamSectionType.WRITING]: 2, // 1 complete + 1 split into 2 tasks = 3 items
-};
-
 const AUTO_ASSIGN_SECTION_TYPES: ExamSectionType[] = [
   ExamSectionType.LISTENING,
   ExamSectionType.READING,
@@ -43,6 +35,7 @@ export interface AssignmentWithSection {
   sectionId: string;
   fullMockSessionId?: string | null;
   fullMockSequence?: number | null;
+  resultsVisibleToStudent?: boolean;
   section: {
     id: string;
     title: string;
@@ -143,8 +136,12 @@ export class AssignmentService {
       throw new ForbiddenException('Section must belong to your center');
     }
 
-    const existingAssignment = await this.prisma.examAssignment.findUnique({
-      where: { studentId_sectionId: { studentId, sectionId } },
+    const existingAssignment = await this.prisma.examAssignment.findFirst({
+      where: {
+        studentId,
+        sectionId,
+        fullMockSessionId: null,
+      },
     });
     if (existingAssignment) {
       throw new BadRequestException('Section already assigned to this student');
@@ -174,6 +171,7 @@ export class AssignmentService {
       listeningSectionId,
       readingSectionId,
       writingSectionId,
+      showResultsToStudent = false,
     } = createFullMockDto;
 
     const student = await this.prisma.user.findUnique({
@@ -219,45 +217,23 @@ export class AssignmentService {
       }
     }
 
-    const existingAssignments = await this.prisma.examAssignment.findMany({
-      where: {
-        studentId,
-        sectionId: { in: sectionIds },
-      },
-      select: {
-        id: true,
-        sectionId: true,
-        status: true,
-        fullMockSessionId: true,
-      },
-    });
+    const existingOfflineAssignments =
+      await this.prisma.examAssignment.findMany({
+        where: {
+          studentId,
+          sectionId: { in: sectionIds },
+          fullMockSessionId: { not: null },
+        },
+        select: {
+          fullMockSessionId: true,
+        },
+      });
 
-    const sectionsAlreadyInOfflineFlow = existingAssignments.some(
-      (assignment) => assignment.fullMockSessionId,
-    );
-
-    if (sectionsAlreadyInOfflineFlow) {
+    if (existingOfflineAssignments.length > 0) {
       throw new BadRequestException(
         'One or more sections are already linked to an offline exam',
       );
     }
-
-    const sectionsAlreadyStarted = existingAssignments.some(
-      (assignment) => assignment.status !== AssignmentStatus.ASSIGNED,
-    );
-
-    if (sectionsAlreadyStarted) {
-      throw new BadRequestException(
-        'One or more selected sections are already started or submitted',
-      );
-    }
-
-    const existingBySectionId = new Map(
-      existingAssignments.map((assignment) => [
-        assignment.sectionId,
-        assignment,
-      ]),
-    );
 
     const result = await this.prisma.$transaction(async (tx) => {
       const session = await tx.fullMockSession.create({
@@ -266,6 +242,7 @@ export class AssignmentService {
           centerId: student.centerId ?? centerId,
           status: FullMockStatus.ASSIGNED,
           currentSequence: 1,
+          resultsVisibleToStudent: showResultsToStudent,
         },
       });
 
@@ -275,51 +252,15 @@ export class AssignmentService {
         { sectionId: writingSectionId, sequence: 3 },
       ] as const;
 
-      const assignmentsToCreate = orderedSections
-        .filter(({ sectionId }) => !existingBySectionId.has(sectionId))
-        .map(({ sectionId, sequence }) => ({
+      await tx.examAssignment.createMany({
+        data: orderedSections.map(({ sectionId, sequence }) => ({
           studentId,
           sectionId,
           fullMockSessionId: session.id,
           fullMockSequence: sequence,
-        }));
-
-      if (assignmentsToCreate.length > 0) {
-        await tx.examAssignment.createMany({
-          data: assignmentsToCreate,
-        });
-      }
-
-      const assignmentsToUpdate: Array<{
-        assignmentId: string;
-        sequence: 1 | 2 | 3;
-      }> = [];
-
-      for (const { sectionId, sequence } of orderedSections) {
-        const existingAssignment = existingBySectionId.get(sectionId);
-        if (!existingAssignment) {
-          continue;
-        }
-
-        assignmentsToUpdate.push({
-          assignmentId: existingAssignment.id,
-          sequence,
-        });
-      }
-
-      if (assignmentsToUpdate.length > 0) {
-        await Promise.all(
-          assignmentsToUpdate.map(({ assignmentId, sequence }) =>
-            tx.examAssignment.update({
-              where: { id: assignmentId },
-              data: {
-                fullMockSessionId: session.id,
-                fullMockSequence: sequence,
-              },
-            }),
-          ),
-        );
-      }
+          status: AssignmentStatus.ASSIGNED,
+        })),
+      });
 
       const assignments = await tx.examAssignment.findMany({
         where: { fullMockSessionId: session.id },
@@ -337,11 +278,17 @@ export class AssignmentService {
         orderBy: { fullMockSequence: 'asc' },
       });
 
-      return { session, assignments };
+      return {
+        session,
+        assignments,
+      };
     });
 
     await this.invalidateAssignmentReadCaches();
-    return result;
+    return {
+      session: result.session,
+      assignments: result.assignments,
+    };
   }
 
   async createBulkFullMock(
@@ -350,6 +297,7 @@ export class AssignmentService {
       listeningSectionId: string;
       readingSectionId: string;
       writingSectionId: string;
+      showResultsToStudent?: boolean;
     },
     assignerId: string,
     centerId: string,
@@ -359,6 +307,7 @@ export class AssignmentService {
       listeningSectionId,
       readingSectionId,
       writingSectionId,
+      showResultsToStudent = false,
     } = dto;
 
     // Validate sections once upfront
@@ -404,7 +353,13 @@ export class AssignmentService {
     for (const studentId of studentIds) {
       try {
         await this.createFullMock(
-          { studentId, listeningSectionId, readingSectionId, writingSectionId },
+          {
+            studentId,
+            listeningSectionId,
+            readingSectionId,
+            writingSectionId,
+            showResultsToStudent,
+          },
           assignerId,
           centerId,
         );
@@ -444,6 +399,49 @@ export class AssignmentService {
       successCount: results.filter((r) => r.success).length,
       errorCount: results.filter((r) => !r.success).length,
     };
+  }
+
+  async updateFullMockResultVisibility(
+    sessionId: string,
+    showResultsToStudent: boolean,
+    requesterRole: Role,
+    requesterCenterId: string | null,
+  ): Promise<{ id: string; resultsVisibleToStudent: boolean }> {
+    const session = await this.prisma.fullMockSession.findUnique({
+      where: { id: sessionId },
+      select: {
+        id: true,
+        centerId: true,
+      },
+    });
+
+    if (!session) {
+      throw new NotFoundException('Full mock session not found');
+    }
+
+    if (requesterRole === Role.CENTER_ADMIN || requesterRole === Role.TEACHER) {
+      if (!requesterCenterId) {
+        throw new ForbiddenException('Center context is required');
+      }
+
+      if (session.centerId !== requesterCenterId) {
+        throw new ForbiddenException('Access denied for another center');
+      }
+    }
+
+    const updated = await this.prisma.fullMockSession.update({
+      where: { id: sessionId },
+      data: {
+        resultsVisibleToStudent: showResultsToStudent,
+      },
+      select: {
+        id: true,
+        resultsVisibleToStudent: true,
+      },
+    });
+
+    await this.invalidateAssignmentReadCaches();
+    return updated;
   }
 
   async findAll(
@@ -598,9 +596,14 @@ export class AssignmentService {
         where: {
           ...studentWhere,
           assignments: {
-            some: query.sectionType
-              ? { section: { type: query.sectionType } }
-              : {},
+            some: {
+              ...(query.sectionType
+                ? { section: { type: query.sectionType } }
+                : {}),
+              ...(query.fullMockOnly
+                ? { fullMockSessionId: { not: null } }
+                : {}),
+            },
           },
         },
       }),
@@ -617,8 +620,8 @@ export class AssignmentService {
       return emptyPayload;
     }
 
-    const [students, statusRows, fullMockRows, previewRows] = await Promise.all(
-      [
+    const [students, statusRows, fullMockVisibilityRows, previewRows] =
+      await Promise.all([
         this.prisma.user.findMany({
           where: { id: { in: studentIds } },
           select: {
@@ -649,6 +652,11 @@ export class AssignmentService {
           },
           select: {
             studentId: true,
+            fullMockSession: {
+              select: {
+                resultsVisibleToStudent: true,
+              },
+            },
           },
           distinct: ['studentId'],
         }),
@@ -696,13 +704,20 @@ export class AssignmentService {
         WHERE ranked."rowNumber" <= 3
         ORDER BY ranked."studentId", ranked."createdAt" DESC, ranked."id" DESC
       `),
-      ],
-    );
+      ]);
 
     const studentById = new Map(
       students.map((student) => [student.id, student]),
     );
-    const hasFullMockSet = new Set(fullMockRows.map((row) => row.studentId));
+    const hasFullMockSet = new Set(
+      fullMockVisibilityRows.map((row) => row.studentId),
+    );
+    const fullMockVisibilityByStudent = new Map(
+      fullMockVisibilityRows.map((row) => [
+        row.studentId,
+        row.fullMockSession?.resultsVisibleToStudent ?? false,
+      ]),
+    );
 
     const summaryByStudent = new Map<
       string,
@@ -712,6 +727,7 @@ export class AssignmentService {
         submitted: number;
         total: number;
         hasFullMock: boolean;
+        resultsVisibleToStudent: boolean | null;
         previewAssignments: {
           id: string;
           status: AssignmentStatus;
@@ -734,6 +750,8 @@ export class AssignmentService {
         submitted: 0,
         total: 0,
         hasFullMock: hasFullMockSet.has(statusRow.studentId),
+        resultsVisibleToStudent:
+          fullMockVisibilityByStudent.get(statusRow.studentId) ?? null,
         previewAssignments: [],
       };
 
@@ -758,6 +776,8 @@ export class AssignmentService {
         submitted: 0,
         total: 0,
         hasFullMock: hasFullMockSet.has(previewRow.studentId),
+        resultsVisibleToStudent:
+          fullMockVisibilityByStudent.get(previewRow.studentId) ?? null,
         previewAssignments: [],
       };
 
@@ -793,6 +813,7 @@ export class AssignmentService {
             summary.previewAssignments[0]?.createdAt ??
             new Date(0).toISOString(),
           hasFullMock: summary.hasFullMock,
+          resultsVisibleToStudent: summary.resultsVisibleToStudent,
           stats: {
             assigned: summary.assigned,
             progress: summary.progress,
@@ -872,6 +893,11 @@ export class AssignmentService {
         score: true,
         fullMockSessionId: true,
         fullMockSequence: true,
+        fullMockSession: {
+          select: {
+            resultsVisibleToStudent: true,
+          },
+        },
         createdAt: true,
         updatedAt: true,
         section: {
@@ -888,10 +914,16 @@ export class AssignmentService {
       orderBy: { createdAt: 'desc' },
     });
 
-    const sanitizedAssignments = assignments.map((assignment) => ({
-      ...assignment,
-      section: this.sanitizeSectionForAssignmentList(assignment.section),
-    }));
+    const sanitizedAssignments = assignments.map((assignment) => {
+      const { fullMockSession, ...rest } = assignment;
+      return {
+        ...rest,
+        resultsVisibleToStudent: assignment.fullMockSessionId
+          ? Boolean(fullMockSession?.resultsVisibleToStudent)
+          : true,
+        section: this.sanitizeSectionForAssignmentList(assignment.section),
+      };
+    });
 
     await this.responseCache.setJson(
       cacheKey,
@@ -916,18 +948,13 @@ export class AssignmentService {
       this.prisma.examAssignment.findMany({
         where: {
           studentId,
+          fullMockSessionId: null,
           section: {
             type: { in: AUTO_ASSIGN_SECTION_TYPES },
           },
         },
         select: {
           sectionId: true,
-          fullMockSessionId: true,
-          section: {
-            select: {
-              type: true,
-            },
-          },
         },
       }),
       this.prisma.examSection.findMany({
@@ -952,48 +979,21 @@ export class AssignmentService {
       existingAssignments.map((assignment) => assignment.sectionId),
     );
 
-    const currentCounts: Record<ExamSectionType, number> = {
-      [ExamSectionType.LISTENING]: 0,
-      [ExamSectionType.READING]: 0,
-      [ExamSectionType.WRITING]: 0,
-    };
-
-    existingAssignments.forEach((assignment) => {
-      if (assignment.fullMockSessionId) {
-        return;
-      }
-
-      currentCounts[assignment.section.type] += 1;
-    });
-
     const createData: Prisma.ExamAssignmentCreateManyInput[] = [];
 
     AUTO_ASSIGN_SECTION_TYPES.forEach((sectionType) => {
-      // Use section-specific limits from configuration
-      const limit = SECTION_ASSIGNMENT_LIMITS[sectionType];
-
-      let remainingSlots = limit - currentCounts[sectionType];
-      if (remainingSlots <= 0) {
-        return;
-      }
-
       const sectionCandidates = centerSections.filter(
         (section) =>
           section.type === sectionType && !assignedSectionIds.has(section.id),
       );
 
       sectionCandidates.forEach((section) => {
-        if (remainingSlots <= 0) {
-          return;
-        }
-
         assignedSectionIds.add(section.id);
         createData.push({
           studentId,
           sectionId: section.id,
           status: AssignmentStatus.ASSIGNED,
         });
-        remainingSlots -= 1;
       });
     });
 
@@ -1020,6 +1020,11 @@ export class AssignmentService {
         where: { id: assignmentId },
         include: {
           section: true,
+          fullMockSession: {
+            select: {
+              resultsVisibleToStudent: true,
+            },
+          },
         },
       });
 
@@ -1031,9 +1036,13 @@ export class AssignmentService {
         throw new ForbiddenException('You can only view your own assignments');
       }
 
+      const { fullMockSession, ...rest } = assignment;
       return {
-        ...assignment,
-        section: this.sanitizeSectionForStudent(assignment.section),
+        ...rest,
+        resultsVisibleToStudent: assignment.fullMockSessionId
+          ? Boolean(fullMockSession?.resultsVisibleToStudent)
+          : true,
+        section: this.sanitizeSectionForStudent(rest.section),
       } as unknown as AssignmentWithSection;
     }
 
@@ -1048,6 +1057,11 @@ export class AssignmentService {
             firstName: true,
             lastName: true,
             centerId: true,
+          },
+        },
+        fullMockSession: {
+          select: {
+            resultsVisibleToStudent: true,
           },
         },
       },
@@ -1067,7 +1081,13 @@ export class AssignmentService {
       }
     }
 
-    return assignment as AssignmentWithSection;
+    const { fullMockSession, ...rest } = assignment;
+    return {
+      ...rest,
+      resultsVisibleToStudent: assignment.fullMockSessionId
+        ? Boolean(fullMockSession?.resultsVisibleToStudent)
+        : true,
+    } as AssignmentWithSection;
   }
 
   async startExam(
@@ -1089,11 +1109,11 @@ export class AssignmentService {
 
     const isSelfStudyAssignment = !assignment.fullMockSessionId;
 
-    if (assignment.status === AssignmentStatus.SUBMITTED) {
-      if (!isSelfStudyAssignment) {
-        throw new BadRequestException('This exam has already been submitted');
-      }
-
+    if (
+      isSelfStudyAssignment &&
+      (assignment.status === AssignmentStatus.SUBMITTED ||
+        assignment.status === AssignmentStatus.IN_PROGRESS)
+    ) {
       const restartedAt = new Date();
       const restartedEndTime = new Date(
         restartedAt.getTime() + assignment.section.duration * 60 * 1000,
@@ -1139,6 +1159,10 @@ export class AssignmentService {
       };
     }
 
+    if (assignment.status === AssignmentStatus.SUBMITTED) {
+      throw new BadRequestException('This exam has already been submitted');
+    }
+
     if (assignment.fullMockSessionId && assignment.fullMockSequence) {
       const session = await this.prisma.fullMockSession.findUnique({
         where: { id: assignment.fullMockSessionId },
@@ -1146,18 +1170,6 @@ export class AssignmentService {
 
       if (session?.status === FullMockStatus.COMPLETED) {
         throw new BadRequestException('Full mock already completed');
-      }
-
-      if (session?.breakEndsAt) {
-        const now = new Date();
-        if (now < session.breakEndsAt) {
-          return {
-            status: 'BREAK',
-            assignmentId: assignment.id,
-            breakEndsAt: session.breakEndsAt.toISOString(),
-            message: 'Break in progress. Please wait before starting.',
-          };
-        }
       }
 
       if (session && session.currentSequence !== assignment.fullMockSequence) {
@@ -1188,57 +1200,6 @@ export class AssignmentService {
           assignment.startTime.getTime() +
             assignment.section.duration * 60 * 1000,
         );
-
-      // If the exam has expired and it's a self-study assignment, restart it
-      // (same logic as SUBMITTED self-study). This prevents the frontend from
-      // getting stale data with remainingTime=0, which would cause an
-      // infinite timer-expire -> auto-submit -> restart loop.
-      const isExpired = existingEndTime.getTime() < Date.now();
-      if (isExpired && isSelfStudyAssignment) {
-        const restartedAt = new Date();
-        const restartedEndTime = new Date(
-          restartedAt.getTime() + assignment.section.duration * 60 * 1000,
-        );
-
-        const restartedAssignment = await this.prisma.examAssignment.update({
-          where: { id: assignmentId },
-          data: {
-            status: AssignmentStatus.IN_PROGRESS,
-            startTime: restartedAt,
-            endTime: restartedEndTime,
-            answers: {},
-            highlights: {},
-            score: 0,
-          },
-          include: { section: true },
-        });
-
-        try {
-          await this.sessionService.deleteSession(assignmentId);
-        } catch {
-          this.logger.warn(
-            `Unable to clear stale Redis session while restarting expired assignment ${assignmentId}`,
-          );
-        }
-
-        await this.ensureRedisSession(
-          restartedAssignment.id,
-          restartedAssignment.studentId,
-          restartedAssignment.startTime!,
-          restartedAssignment.endTime!,
-          restartedAssignment.section.duration,
-        );
-
-        await this.invalidateAssignmentReadCaches();
-
-        return {
-          ...restartedAssignment,
-          section: this.sanitizeSectionForStudent(restartedAssignment.section),
-          startTime: restartedAssignment.startTime!,
-          endTime: restartedAssignment.endTime!,
-          remainingTime: restartedAssignment.section.duration * 60,
-        };
-      }
 
       await this.ensureRedisSession(
         assignment.id,
@@ -1486,9 +1447,13 @@ export class AssignmentService {
           const q = question as Record<string, unknown>;
           return {
             id: q.id,
+            type: q.type,
+            number: q.number,
             passageId: q.passageId,
             questionText: q.questionText,
             points: q.points,
+            partAudioUrl: q.partAudioUrl,
+            partDurationMinutes: q.partDurationMinutes,
           };
         },
       );

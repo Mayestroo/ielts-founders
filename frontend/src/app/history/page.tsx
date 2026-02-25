@@ -921,7 +921,7 @@ export default function HistoryPage() {
                   href="/feedback"
                   className="inline-flex rounded-lg px-3 py-2 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900"
                 >
-                  Feedback
+                  Offline Results
                 </Link>
               </li>
               <li>
@@ -929,7 +929,7 @@ export default function HistoryPage() {
                   href="/history"
                   className="inline-flex rounded-lg bg-black px-3 py-2 text-sm font-medium text-white"
                 >
-                  History
+                  Online Results
                 </Link>
               </li>
             </ul>

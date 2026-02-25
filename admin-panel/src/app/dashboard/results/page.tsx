@@ -254,7 +254,7 @@ export default function ResultsPage() {
         score: response.score ?? response.bandScore,
         totalScore: response.totalScore ?? 9,
         bandScore: response.bandScore,
-        feedback: normalizedEval ?? newEval,
+        feedback: (normalizedEval ?? newEval) as Record<string, unknown> | undefined,
         writingSubmission: response.writingSubmission || target.writingSubmission
       };
 
@@ -264,7 +264,10 @@ export default function ResultsPage() {
 
       queryClient.setQueryData(adminQueryKeys.result(target.id), updatedResult);
       await queryClient.invalidateQueries({ queryKey: ['admin', 'results'] });
-      setSuccessModal({ isOpen: true, bandScore: response.bandScore });
+      setSuccessModal({
+        isOpen: true,
+        bandScore: response.bandScore ?? response.score ?? 0,
+      });
     } catch (err) {
       clearInterval(progressInterval);
       setAiError(err instanceof Error ? err.message : 'Failed to evaluate with AI');
@@ -283,8 +286,8 @@ export default function ResultsPage() {
       await generateWritingDOCX({
         student: selectedResult.student!,
         sectionTitle: selectedResult.section?.title || 'Writing Section',
-        task1: answers['w1'] || answers['writing'],
-        task2: answers['w2'],
+        task1: (answers['w1'] || answers['writing']) as string | undefined,
+        task2: answers['w2'] as string | undefined,
         submittedAt: selectedResult.submittedAt,
       });
     } catch (err) {
@@ -354,9 +357,9 @@ export default function ResultsPage() {
     if (selectedResult?.section?.type === 'WRITING') {
       const answers = selectedResult.answers || {};
       const writingTasks = [];
-      if (answers['w1']) writingTasks.push({ id: 'Task 1', response: answers['w1'] });
-      if (answers['w2']) writingTasks.push({ id: 'Task 2', response: answers['w2'] });
-      if (answers['writing'] && writingTasks.length === 0) writingTasks.push({ id: 'Writing Task', response: answers['writing'] });
+      if (answers['w1']) writingTasks.push({ id: 'Task 1', response: String(answers['w1']) });
+      if (answers['w2']) writingTasks.push({ id: 'Task 2', response: String(answers['w2']) });
+      if (answers['writing'] && writingTasks.length === 0) writingTasks.push({ id: 'Writing Task', response: String(answers['writing']) });
 
       return (
         <div className="space-y-6">

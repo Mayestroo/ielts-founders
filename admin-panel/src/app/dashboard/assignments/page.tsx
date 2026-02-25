@@ -5,9 +5,11 @@ import { api } from '@/lib/api';
 import { ADMIN_QUERY_TIMINGS } from '@/lib/query/config';
 import { adminQueryKeys } from '@/lib/query/keys';
 import {
-    BulkFullMockResult,
-    ExamSectionOption,
-    StudentSummary,
+  BulkFullMockResult,
+  ExamAssignment,
+  ExamSectionOption,
+  GroupedAssignmentsResponse,
+  StudentSummary,
 } from '@/types';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'next/navigation';
@@ -26,6 +28,7 @@ export default function AssignmentsPage() {
     listeningSectionId: '',
     readingSectionId: '',
     writingSectionId: '',
+    showResultsToStudent: false,
   });
   const [isFullMock] = useState(true);
   const [selectedStudentIds, setSelectedStudentIds] = useState<Set<string>>(new Set());
@@ -41,6 +44,7 @@ export default function AssignmentsPage() {
 
   const [deleteAssignmentId, setDeleteAssignmentId] = useState<string | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [pendingVisibilitySessionId, setPendingVisibilitySessionId] = useState<string | null>(null);
 
   // UX Grouping state
   const [selectedStudent, setSelectedStudent] = useState<StudentSummary | null>(null);
@@ -50,7 +54,13 @@ export default function AssignmentsPage() {
 
   const closeAssignModal = () => {
     setShowModal(false);
-    setFormData({ studentId: '', listeningSectionId: '', readingSectionId: '', writingSectionId: '' });
+    setFormData({
+      studentId: '',
+      listeningSectionId: '',
+      readingSectionId: '',
+      writingSectionId: '',
+      showResultsToStudent: false,
+    });
     setError('');
     setSelectedStudentIds(new Set());
     setStudentSearchTerm('');
@@ -59,7 +69,13 @@ export default function AssignmentsPage() {
   const openAssignModal = () => {
     setShowModal(true);
     setError('');
-    setFormData({ studentId: '', listeningSectionId: '', readingSectionId: '', writingSectionId: '' });
+    setFormData({
+      studentId: '',
+      listeningSectionId: '',
+      readingSectionId: '',
+      writingSectionId: '',
+      showResultsToStudent: false,
+    });
     setSelectedStudentIds(new Set());
     setStudentSearchTerm('');
   };
@@ -115,15 +131,34 @@ export default function AssignmentsPage() {
 
   const groups = groupedAssignmentsQuery.data?.groups ?? [];
   const total = groupedAssignmentsQuery.data?.total ?? 0;
-  const students = studentsQuery.data?.users ?? [];
+  const students = useMemo(() => studentsQuery.data?.users ?? [], [studentsQuery.data]);
   const exams = examsQuery.data ?? [];
   const isLoading = groupedAssignmentsQuery.isLoading && !groupedAssignmentsQuery.data;
   const isReferenceLoading =
     (studentsQuery.isLoading && !studentsQuery.data) ||
     (examsQuery.isLoading && !examsQuery.data);
-  const selectedStudentAssignments = studentAssignmentsQuery.data ?? [];
+  const selectedStudentAssignments = useMemo(
+    () => studentAssignmentsQuery.data ?? [],
+    [studentAssignmentsQuery.data],
+  );
   const isDetailsLoading =
     studentAssignmentsQuery.isLoading && !studentAssignmentsQuery.data;
+  const selectedSessionVisibility = useMemo(() => {
+    const assignmentWithSession = selectedStudentAssignments.find(
+      (assignment) => assignment.fullMockSessionId,
+    );
+
+    if (!assignmentWithSession?.fullMockSessionId) {
+      return null;
+    }
+
+    return {
+      sessionId: assignmentWithSession.fullMockSessionId,
+      showResultsToStudent: Boolean(
+        assignmentWithSession.resultsVisibleToStudent,
+      ),
+    };
+  }, [selectedStudentAssignments]);
 
   const reassignMutation = useMutation({
     mutationFn: (assignmentId: string) => api.reassignAssignment(assignmentId),
@@ -179,10 +214,19 @@ export default function AssignmentsPage() {
       listeningSectionId: string;
       readingSectionId: string;
       writingSectionId: string;
+      showResultsToStudent: boolean;
     }) => api.createBulkFullMockAssignment(payload),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['admin', 'assignments'] });
     },
+  });
+
+  const updateResultVisibilityMutation = useMutation({
+    mutationFn: (payload: { sessionId: string; showResultsToStudent: boolean }) =>
+      api.updateFullMockResultVisibility(
+        payload.sessionId,
+        payload.showResultsToStudent,
+      ),
   });
 
   // Filter students for multi-select search in modal
@@ -324,6 +368,90 @@ export default function AssignmentsPage() {
     setShowDetailsModal(true);
   };
 
+  const syncResultVisibilityInCache = (
+    sessionId: string,
+    resultsVisibleToStudent: boolean,
+  ) => {
+    queryClient.setQueriesData<GroupedAssignmentsResponse>(
+      { queryKey: ['admin', 'assignments', 'grouped'] },
+      (previous) => {
+        if (!previous) {
+          return previous;
+        }
+
+        return {
+          ...previous,
+          groups: previous.groups.map((group) => {
+            const hasSession = group.previewAssignments.some(
+              (assignment) => assignment.fullMockSessionId === sessionId,
+            );
+
+            if (!hasSession) {
+              return group;
+            }
+
+            return {
+              ...group,
+              resultsVisibleToStudent,
+            };
+          }),
+        };
+      },
+    );
+
+    queryClient.setQueriesData<ExamAssignment[]>(
+      { queryKey: ['admin', 'assignments', 'student'] },
+      (previous) => {
+        if (!previous) {
+          return previous;
+        }
+
+        return previous.map((assignment) =>
+          assignment.fullMockSessionId === sessionId
+            ? { ...assignment, resultsVisibleToStudent }
+            : assignment,
+        );
+      },
+    );
+  };
+
+  const handleToggleResultsVisibilityBySession = async (
+    sessionId: string,
+    showResultsToStudent: boolean,
+  ) => {
+    setPendingVisibilitySessionId(sessionId);
+    try {
+      const result = await updateResultVisibilityMutation.mutateAsync({
+        sessionId,
+        showResultsToStudent,
+      });
+      syncResultVisibilityInCache(sessionId, result.resultsVisibleToStudent);
+      success(
+        result.resultsVisibleToStudent
+          ? 'Offline results are now visible to student'
+          : 'Offline results are now hidden from student',
+      );
+    } catch (err) {
+      console.error('Failed to update result visibility:', err);
+      showError('Failed to update result visibility');
+    } finally {
+      setPendingVisibilitySessionId((current) =>
+        current === sessionId ? null : current,
+      );
+    }
+  };
+
+  const handleToggleResultsVisibility = async (showResultsToStudent: boolean) => {
+    if (!selectedSessionVisibility?.sessionId) {
+      return;
+    }
+
+    await handleToggleResultsVisibilityBySession(
+      selectedSessionVisibility.sessionId,
+      showResultsToStudent,
+    );
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -350,6 +478,7 @@ export default function AssignmentsPage() {
           listeningSectionId: formData.listeningSectionId,
           readingSectionId: formData.readingSectionId,
           writingSectionId: formData.writingSectionId,
+          showResultsToStudent: formData.showResultsToStudent,
         });
 
         if (result.errorCount === 0) {
@@ -508,6 +637,7 @@ export default function AssignmentsPage() {
                   <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Active Exams</th>
                   <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Summary</th>
                   <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Last Activity</th>
+                  <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Results</th>
                   <th className="px-6 py-4 text-right text-xs font-semibold text-slate-500 uppercase tracking-wider">Actions</th>
                 </tr>
               </thead>
@@ -517,6 +647,13 @@ export default function AssignmentsPage() {
                   const previewAssignments = group.previewAssignments;
                   const hasFullMock = group.hasFullMock;
                   const stats = group.stats;
+                  const sessionId =
+                    previewAssignments.find((assignment) => assignment.fullMockSessionId)
+                      ?.fullMockSessionId ?? null;
+                  const resultsVisible = group.resultsVisibleToStudent === true;
+                  const isUpdatingCurrentRow =
+                    pendingVisibilitySessionId !== null &&
+                    pendingVisibilitySessionId === sessionId;
 
                   return (
                     <tr key={student.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
@@ -566,6 +703,47 @@ export default function AssignmentsPage() {
                       <td className="px-6 py-4 text-slate-500 dark:text-slate-400 text-sm">
                         {new Date(group.latestDate).toLocaleDateString()}
                       </td>
+                      <td className="px-6 py-4 text-sm">
+                        {hasFullMock && sessionId ? (
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              role="switch"
+                              aria-checked={resultsVisible}
+                              aria-label={`Toggle results visibility for ${student.username}`}
+                              onClick={() =>
+                                handleToggleResultsVisibilityBySession(
+                                  sessionId,
+                                  !resultsVisible,
+                                )
+                              }
+                              disabled={isUpdatingCurrentRow}
+                              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-slate-400 ${
+                                resultsVisible
+                                  ? 'bg-emerald-500'
+                                  : 'bg-amber-500'
+                              } ${isUpdatingCurrentRow ? 'opacity-60 cursor-not-allowed' : ''}`}
+                            >
+                              <span
+                                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                                  resultsVisible
+                                    ? 'translate-x-6'
+                                    : 'translate-x-1'
+                                }`}
+                              />
+                            </button>
+                            <span className="text-xs font-medium text-slate-500">
+                              {isUpdatingCurrentRow
+                                ? 'Updating...'
+                                : resultsVisible
+                                ? 'On'
+                                : 'Off'}
+                            </span>
+                          </div>
+                        ) : (
+                          <span className="text-xs text-slate-400">-</span>
+                        )}
+                      </td>
                       <td className="px-6 py-4 text-right">
                         <Button 
                           size="sm" 
@@ -580,7 +758,7 @@ export default function AssignmentsPage() {
                 })}
                 {groups.length === 0 && (
                   <tr>
-                    <td colSpan={5} className="px-6 py-12 text-center text-slate-500">
+                    <td colSpan={6} className="px-6 py-12 text-center text-slate-500">
                       {searchTerm || typeFilter ? 'No assignments match your filters' : 'No assignments found'}
                     </td>
                   </tr>
@@ -681,6 +859,54 @@ export default function AssignmentsPage() {
                   Assignments for {selectedStudent.firstName || selectedStudent.username}
                 </h2>
                 <p className="text-sm text-gray-500 mt-1">Manage individual exam assignments</p>
+                {selectedSessionVisibility && (
+                  <div className="mt-3 flex items-center gap-3">
+                    <label className="text-xs font-medium text-gray-600 dark:text-gray-300">
+                      Show results to student
+                    </label>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={selectedSessionVisibility.showResultsToStudent}
+                      aria-label="Toggle student results visibility"
+                      onClick={() =>
+                        handleToggleResultsVisibility(
+                          !selectedSessionVisibility.showResultsToStudent,
+                        )
+                      }
+                      disabled={
+                        pendingVisibilitySessionId ===
+                        selectedSessionVisibility.sessionId
+                      }
+                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-slate-400 ${
+                        selectedSessionVisibility.showResultsToStudent
+                          ? 'bg-emerald-500'
+                          : 'bg-amber-500'
+                      } ${
+                        pendingVisibilitySessionId ===
+                        selectedSessionVisibility.sessionId
+                          ? 'opacity-60 cursor-not-allowed'
+                          : ''
+                      }`}
+                    >
+                      <span
+                        className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                          selectedSessionVisibility.showResultsToStudent
+                            ? 'translate-x-6'
+                            : 'translate-x-1'
+                        }`}
+                      />
+                    </button>
+                    <span className="text-xs font-medium text-gray-500">
+                      {pendingVisibilitySessionId ===
+                      selectedSessionVisibility.sessionId
+                        ? 'Updating...'
+                        : selectedSessionVisibility.showResultsToStudent
+                        ? 'On'
+                        : 'Off'}
+                    </span>
+                  </div>
+                )}
               </div>
               <button 
                 onClick={() => {
@@ -940,6 +1166,51 @@ export default function AssignmentsPage() {
                     />
                   </div>
                 </div>
+
+                {isFullMock && (
+                  <div className="rounded-lg border border-slate-200 dark:border-slate-700 px-4 py-3 bg-slate-50 dark:bg-slate-900/50">
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <p className="text-sm font-medium text-slate-900 dark:text-slate-100">
+                          Show offline results immediately
+                        </p>
+                        <p className="text-xs text-slate-500 mt-0.5">
+                          Turn this off to hide Offline Results from student page until you enable later.
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={formData.showResultsToStudent}
+                          aria-label="Toggle immediate offline results visibility"
+                          onClick={() =>
+                            setFormData({
+                              ...formData,
+                              showResultsToStudent: !formData.showResultsToStudent,
+                            })
+                          }
+                          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-slate-400 ${
+                            formData.showResultsToStudent
+                              ? 'bg-emerald-500'
+                              : 'bg-amber-500'
+                          }`}
+                        >
+                          <span
+                            className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                              formData.showResultsToStudent
+                                ? 'translate-x-6'
+                                : 'translate-x-1'
+                            }`}
+                          />
+                        </button>
+                        <span className="text-xs font-medium text-slate-500">
+                          {formData.showResultsToStudent ? 'On' : 'Off'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 <div className="flex gap-3 pt-4">
                   <Button 

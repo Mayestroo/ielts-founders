@@ -1,7 +1,7 @@
 import {
-    ForbiddenException,
-    Injectable,
-    NotFoundException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
 } from '@nestjs/common';
 import { Prisma, Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -119,6 +119,16 @@ export class ResultService {
       throw new ForbiddenException('You can only view your own results');
     }
 
+    if (
+      requesterRole === Role.STUDENT &&
+      (await this.isOfflineResultHiddenForStudent(
+        result.studentId,
+        result.sectionId,
+      ))
+    ) {
+      throw new ForbiddenException('Result is not available yet');
+    }
+
     if (requesterRole === Role.TEACHER || requesterRole === Role.CENTER_ADMIN) {
       if (result.student.centerId !== requesterCenterId) {
         throw new ForbiddenException(
@@ -179,12 +189,17 @@ export class ResultService {
       orderBy: { submittedAt: 'desc' },
     });
 
+    const visibleResults =
+      requesterRole === Role.STUDENT
+        ? await this.filterHiddenOfflineResults(studentId, results)
+        : results;
+
     await this.responseCache.setJson(
       cacheKey,
-      results,
+      visibleResults,
       STUDENT_RESULTS_TTL_SECONDS,
     );
-    return results;
+    return visibleResults;
   }
 
   async updateFromAI(
@@ -260,5 +275,68 @@ export class ResultService {
       'cache:dashboard:stats:v1:',
       'cache:assignments:grouped:v1:',
     ]);
+  }
+
+  private async isOfflineResultHiddenForStudent(
+    studentId: string,
+    sectionId: string,
+  ): Promise<boolean> {
+    const assignment = await this.prisma.examAssignment.findFirst({
+      where: {
+        studentId,
+        sectionId,
+      },
+      select: {
+        fullMockSessionId: true,
+        fullMockSession: {
+          select: {
+            resultsVisibleToStudent: true,
+          },
+        },
+      },
+    });
+
+    if (!assignment?.fullMockSessionId) {
+      return false;
+    }
+
+    return assignment.fullMockSession?.resultsVisibleToStudent !== true;
+  }
+
+  private async filterHiddenOfflineResults<T extends { sectionId: string }>(
+    studentId: string,
+    results: T[],
+  ): Promise<T[]> {
+    const assignments = await this.prisma.examAssignment.findMany({
+      where: {
+        studentId,
+      },
+      select: {
+        sectionId: true,
+        fullMockSessionId: true,
+        fullMockSession: {
+          select: {
+            resultsVisibleToStudent: true,
+          },
+        },
+      },
+    });
+
+    const sectionVisibility = new Map<string, boolean>();
+    assignments.forEach((assignment) => {
+      if (!assignment.fullMockSessionId) {
+        sectionVisibility.set(assignment.sectionId, true);
+        return;
+      }
+
+      sectionVisibility.set(
+        assignment.sectionId,
+        assignment.fullMockSession?.resultsVisibleToStudent === true,
+      );
+    });
+
+    return results.filter(
+      (result) => sectionVisibility.get(result.sectionId) !== false,
+    );
   }
 }

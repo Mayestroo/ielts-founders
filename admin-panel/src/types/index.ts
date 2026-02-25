@@ -83,14 +83,38 @@ export interface MatchItem {
   text: string;
 }
 
+export interface TableData {
+  title?: string;
+  headers: string[];
+  rows: string[][];
+}
+
+export interface FlowChartStep {
+  text: string;
+  isQuestion?: boolean;
+}
+
+export interface FlowChartData {
+  title?: string;
+  steps: FlowChartStep[];
+}
+
 export interface BaseQuestion {
   id: string;
+  number?: number;
   type: QuestionType;
+  title?: string;
   questionText: string;
   instruction?: string;
   imageUrl?: string;
   passageId?: string;
   points: number;
+  partAudioUrl?: string;
+  partDurationMinutes?: number;
+  questionRange?: string;
+  isInSameLine?: boolean;
+  questionsLabel?: string;
+  optionsLabel?: string;
 }
 
 export interface MCQQuestion extends BaseQuestion {
@@ -115,6 +139,9 @@ export interface FillBlankQuestion extends BaseQuestion {
     | "FORM_COMPLETION";
   correctAnswer: string;
   wordLimit?: number;
+  tableData?: TableData;
+  flowchartData?: FlowChartData;
+  options?: QuestionOption[];
 }
 
 export interface ShortAnswerQuestion extends BaseQuestion {
@@ -127,7 +154,7 @@ export interface MatchingQuestion extends BaseQuestion {
   type: "MATCHING" | "DIAGRAM_LABELING" | "PLAN_MAP_LABELING";
   items: MatchItem[];
   matchOptions: MatchItem[];
-  correctAnswer: Record<string, string>;
+  correctAnswer: Record<string, string> | string;
 }
 
 export type Question =
@@ -174,11 +201,12 @@ export interface ExamAssignment {
   status: AssignmentStatus;
   startTime?: string;
   endTime?: string;
-  answers?: Record<string, any>;
-  highlights?: Record<string, any>;
+  answers?: Record<string, unknown>;
+  highlights?: Record<string, unknown>;
   score?: number;
   fullMockSessionId?: string | null;
   fullMockSequence?: number | null;
+  resultsVisibleToStudent?: boolean;
   student?: User;
   section?: ExamSection;
   createdAt: string;
@@ -189,6 +217,7 @@ export interface AssignmentGroup {
   student: StudentSummary;
   latestDate: string;
   hasFullMock: boolean;
+  resultsVisibleToStudent?: boolean | null;
   stats: {
     assigned: number;
     progress: number;
@@ -219,6 +248,7 @@ export interface CreateFullMockForm {
   listeningSectionId: string;
   readingSectionId: string;
   writingSectionId: string;
+  showResultsToStudent?: boolean;
 }
 
 export interface CreateBulkFullMockForm {
@@ -226,6 +256,7 @@ export interface CreateBulkFullMockForm {
   listeningSectionId: string;
   readingSectionId: string;
   writingSectionId: string;
+  showResultsToStudent?: boolean;
 }
 
 export interface BulkFullMockResult {
@@ -246,7 +277,7 @@ export interface WritingSubmission {
   sectionId: string;
   status: "QUEUED" | "PROCESSING" | "COMPLETED" | "FAILED" | "MANUAL_REVIEW";
   bandScore?: number;
-  evaluation?: Record<string, any>;
+  evaluation?: Record<string, unknown>;
   lastError?: string;
   attempts: number;
   maxAttempts: number;
@@ -262,8 +293,8 @@ export interface ExamResult {
   score: number;
   totalScore: number;
   bandScore?: number;
-  answers: Record<string, any>;
-  feedback?: Record<string, any>;
+  answers: Record<string, unknown>;
+  feedback?: Record<string, unknown>;
   submittedAt: string;
   student?: User;
   section?: ExamSection;

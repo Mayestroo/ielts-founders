@@ -52,7 +52,11 @@ const buildFullMockSectionIdSet = (assignments: ExamAssignment[]) => {
   const fullMockSectionIds = new Set<string>();
 
   for (const assignment of assignments) {
-    if (!assignment.fullMockSessionId || !assignment.section?.id) {
+    if (
+      !assignment.fullMockSessionId ||
+      !assignment.section?.id ||
+      assignment.resultsVisibleToStudent === false
+    ) {
       continue;
     }
 
@@ -400,6 +404,14 @@ export default function FeedbackPage() {
     () => buildFullMockSectionIdSet(assignmentsQuery.data ?? []),
     [assignmentsQuery.data],
   );
+  const hasLockedOfflineResults = useMemo(() => {
+    return (assignmentsQuery.data ?? []).some(
+      (assignment) =>
+        Boolean(assignment.fullMockSessionId) &&
+        assignment.status === "SUBMITTED" &&
+        assignment.resultsVisibleToStudent === false,
+    );
+  }, [assignmentsQuery.data]);
 
   const fullCdiResults = useMemo(() => {
     return (resultsQuery.data ?? []).filter((result) => {
@@ -570,7 +582,7 @@ export default function FeedbackPage() {
                   href="/feedback"
                   className="inline-flex rounded-lg bg-black px-3 py-2 text-sm font-medium text-white"
                 >
-                  Feedback
+                  Offline Results
                 </Link>
               </li>
               <li>
@@ -578,7 +590,7 @@ export default function FeedbackPage() {
                   href="/history"
                   className="inline-flex rounded-lg px-3 py-2 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900"
                 >
-                  History
+                  Online Results
                 </Link>
               </li>
             </ul>
@@ -600,10 +612,15 @@ export default function FeedbackPage() {
 
       <main className="max-w-6xl mx-auto w-full px-4 py-8">
         <div className="mb-8">
-          <h2 className="text-2xl font-bold text-gray-900">Feedback</h2>
+          <h2 className="text-2xl font-bold text-gray-900">Offline Results</h2>
           <p className="text-gray-500 mt-1">
             Review your latest Full CDI at Founders performance.
           </p>
+          {hasLockedOfflineResults && (
+            <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              Your teacher has not released offline results yet. Please check again later.
+            </div>
+          )}
         </div>
 
         {loadingFeedback ? (

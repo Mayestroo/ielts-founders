@@ -3,13 +3,13 @@
 import { ConfirmationModal, Modal } from "@/components/ui";
 import { useAuth } from "@/contexts/AuthContext";
 import { api } from "@/lib/api";
-import { STUDENT_QUERY_TIMINGS } from "@/lib/query/config";
-import { studentQueryKeys } from "@/lib/query/keys";
 import {
-  transformAssignments,
   getDisplayAssignmentTier,
+  transformAssignments,
   type DisplayAssignment,
 } from "@/lib/examParts";
+import { STUDENT_QUERY_TIMINGS } from "@/lib/query/config";
+import { studentQueryKeys } from "@/lib/query/keys";
 import { AssignmentStatus, ExamAssignment, ExamSectionType } from "@/types";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Image from "next/image";
@@ -23,18 +23,6 @@ import {
   useTransition,
   type MouseEvent,
 } from "react";
-
-const getStatusPillClasses = (status: AssignmentStatus) => {
-  if (status === "SUBMITTED") {
-    return "inline-flex rounded-lg bg-emerald-100 px-2.5 py-1 text-xs font-semibold uppercase tracking-wide text-emerald-700";
-  }
-
-  if (status === "IN_PROGRESS") {
-    return "inline-flex rounded-lg bg-amber-100 px-2.5 py-1 text-xs font-semibold uppercase tracking-wide text-amber-700";
-  }
-
-  return "inline-flex rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-semibold uppercase tracking-wide text-slate-700";
-};
 
 const formatAssignmentDate = (timestamp: string) => {
   return new Date(timestamp).toLocaleDateString("en-US", {
@@ -79,10 +67,46 @@ const FREE_TEST_LIMITS: Record<ExamSectionType, number> = {
   WRITING: 3,
 };
 const FREE_FULL_MOCK_LIMIT = 2;
+const PAYMENT_AMOUNT =
+  process.env.NEXT_PUBLIC_PREMIUM_AMOUNT || "79 000 so'm";
 const PAYMENT_CARD_NUMBER =
-  process.env.NEXT_PUBLIC_PREMIUM_CARD_NUMBER || "8600 0000 0000 0000";
+  process.env.NEXT_PUBLIC_PREMIUM_CARD_NUMBER || "9860 3501 4203 1300";
+const PAYMENT_CARD_OWNER =
+  process.env.NEXT_PUBLIC_PREMIUM_CARD_OWNER || "Founders IELTS";
 const PAYMENT_TELEGRAM =
-  process.env.NEXT_PUBLIC_PREMIUM_TELEGRAM || "@ielts_founders";
+  process.env.NEXT_PUBLIC_PREMIUM_TELEGRAM || "FOUNDERS_IELTS_REGISTRATION";
+
+const getTelegramProfileLink = (rawValue: string): string => {
+  const value = rawValue.trim();
+
+  if (!value) {
+    return "https://t.me";
+  }
+
+  if (/^https?:\/\//i.test(value)) {
+    return value;
+  }
+
+  return `https://t.me/${value.replace(/^@+/, "")}`;
+};
+
+const getTelegramDisplayHandle = (rawValue: string): string => {
+  const value = rawValue.trim();
+
+  if (!value) {
+    return "@FOUNDERS_IELTS_REGISTRATION";
+  }
+
+  if (/^https?:\/\//i.test(value)) {
+    const normalized = value.replace(/\/$/, "");
+    return normalized;
+  }
+
+  return value.startsWith("@") ? value : `@${value}`;
+};
+
+const PAYMENT_TELEGRAM_LINK = getTelegramProfileLink(PAYMENT_TELEGRAM);
+const PAYMENT_TELEGRAM_LABEL = getTelegramDisplayHandle(PAYMENT_TELEGRAM);
 
 const SECTION_OPTIONS: Array<{ key: DashboardSection; label: string; comingSoon?: boolean }> = [
   { key: "OFFLINE_EXAM", label: "Full CDI at Founders" },
@@ -163,6 +187,7 @@ export default function DashboardPage() {
   const [isPremiumModalOpen, setIsPremiumModalOpen] = useState(false);
   const [selectedPremiumAssignment, setSelectedPremiumAssignment] =
     useState<ExamAssignment | null>(null);
+  const [isCardCopied, setIsCardCopied] = useState(false);
   const router = useRouter();
 
   const assignmentsQuery = useQuery({
@@ -253,9 +278,26 @@ export default function DashboardPage() {
     [requestFullscreen, router]
   );
 
+  const closePremiumModal = useCallback(() => {
+    setIsPremiumModalOpen(false);
+    setSelectedPremiumAssignment(null);
+    setIsCardCopied(false);
+  }, []);
+
   const handlePremiumLockedClick = useCallback((assignment: ExamAssignment) => {
     setSelectedPremiumAssignment(assignment);
     setIsPremiumModalOpen(true);
+    setIsCardCopied(false);
+  }, []);
+
+  const handleCopyPaymentCard = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(PAYMENT_CARD_NUMBER);
+      setIsCardCopied(true);
+      window.setTimeout(() => setIsCardCopied(false), 1800);
+    } catch (error) {
+      console.error("Failed to copy card number:", error);
+    }
   }, []);
 
   const activeAssignments = useMemo(() => {
@@ -336,17 +378,23 @@ export default function DashboardPage() {
 
   // Transform assignments into display items (complete + parts) for each section type
   const readingDisplayAssignments = useMemo(() => {
-    const readingAssignments = assignments.filter((a) => a.section?.type === "READING");
+    const readingAssignments = assignments.filter(
+      (a) => a.section?.type === "READING" && !a.fullMockSessionId
+    );
     return transformAssignments(readingAssignments, "READING");
   }, [assignments]);
 
   const listeningDisplayAssignments = useMemo(() => {
-    const listeningAssignments = assignments.filter((a) => a.section?.type === "LISTENING");
+    const listeningAssignments = assignments.filter(
+      (a) => a.section?.type === "LISTENING" && !a.fullMockSessionId
+    );
     return transformAssignments(listeningAssignments, "LISTENING");
   }, [assignments]);
 
   const writingDisplayAssignments = useMemo(() => {
-    const writingAssignments = assignments.filter((a) => a.section?.type === "WRITING");
+    const writingAssignments = assignments.filter(
+      (a) => a.section?.type === "WRITING" && !a.fullMockSessionId
+    );
     return transformAssignments(writingAssignments, "WRITING");
   }, [assignments]);
 
@@ -539,7 +587,7 @@ export default function DashboardPage() {
                   href="/feedback"
                   className="inline-flex rounded-lg px-3 py-2 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900"
                 >
-                  Feedback
+                  Offline Results
                 </Link>
               </li>
               <li>
@@ -547,7 +595,7 @@ export default function DashboardPage() {
                   href="/history"
                   className="inline-flex rounded-lg px-3 py-2 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900"
                 >
-                  History
+                  Online Results
                 </Link>
               </li>
             </ul>
@@ -593,6 +641,13 @@ export default function DashboardPage() {
                       onClick={() =>
                         startSectionTransition(() => {
                           setSelectedSection(section.key);
+                          if (
+                            section.key === "READING" ||
+                            section.key === "LISTENING" ||
+                            section.key === "WRITING"
+                          ) {
+                            setSelectedPlan("ALL");
+                          }
                         })
                       }
                       className={`w-full rounded-xl px-3 py-2.5 text-left text-sm font-medium transition-colors ${
@@ -1022,115 +1077,6 @@ export default function DashboardPage() {
                   </div>
                 )}
 
-                {selectedSection !== "OFFLINE_EXAM" && selectedSection !== "READING" && (
-                  <div className="max-w-6xl mx-auto mt-8 mb-16 px-4">
-                    <div className="bg-white rounded-3xl border border-gray-100 p-6 shadow-sm">
-                      <div className="flex items-center justify-between gap-4">
-                        <h3 className="text-xl font-bold text-gray-900">Your Tests</h3>
-                        <p className="text-sm text-gray-500">
-                          {displayedAssignments.length} total
-                        </p>
-                      </div>
-
-                      <div className="mt-6 space-y-4">
-                        {displayedAssignments.map((assignment) => {
-                          const hasScore =
-                            assignment.status === "SUBMITTED" &&
-                            typeof assignment.score === "number";
-                          const assignmentTier =
-                            assignmentTierById.get(assignment.id) || "FREE";
-                          const requiresPremium =
-                            assignmentTier === "PREMIUM" && !isPremiumUser;
-
-                          return (
-                            <div
-                              key={assignment.id}
-                              className="rounded-2xl border border-gray-100 p-4"
-                            >
-                              <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-                                <div>
-                                  <div className="flex flex-wrap items-center gap-2">
-                                    <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">
-                                      {assignment.section?.type || "TEST"}
-                                    </p>
-                                    <span
-                                      className={`inline-flex rounded-lg px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide ${
-                                        assignmentTier === "FREE"
-                                          ? "bg-emerald-100 text-emerald-700"
-                                          : "bg-amber-100 text-amber-700"
-                                      }`}
-                                    >
-                                      {assignmentTier}
-                                    </span>
-                                    {assignment.fullMockSessionId && (
-                                      <span className="inline-flex rounded-lg bg-gray-100 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-gray-600">
-                                        Full Mock
-                                      </span>
-                                    )}
-                                  </div>
-                                  <h4 className="mt-1 text-lg font-semibold text-gray-900">
-                                    {assignment.section?.title || "Untitled Test"}
-                                  </h4>
-                                  <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-gray-500">
-                                    <span>
-                                      {assignment.section?.duration
-                                        ? `${assignment.section.duration} mins`
-                                        : "Duration not set"}
-                                    </span>
-                                    <span>{formatAssignmentDate(assignment.createdAt)}</span>
-                                  </div>
-                                </div>
-
-                                <div className="flex flex-wrap items-center gap-3">
-                                  <span className={getStatusPillClasses(assignment.status)}>
-                                    {assignment.status.replace(/_/g, " ")}
-                                  </span>
-
-                                  {hasScore && (
-                                    <span className="inline-flex rounded-lg bg-gray-100 px-2.5 py-1 text-xs font-semibold text-gray-700">
-                                      Score: {Number(assignment.score).toFixed(1)}
-                                    </span>
-                                  )}
-
-                                  {assignment.status === "SUBMITTED" && assignment.fullMockSessionId ? (
-                                    <span className="inline-flex rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-500">
-                                      Submitted
-                                    </span>
-                                  ) : requiresPremium ? (
-                                    <button
-                                      type="button"
-                                      onClick={() => handlePremiumLockedClick(assignment)}
-                                      className="inline-flex rounded-lg bg-amber-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-amber-600"
-                                    >
-                                      Unlock Premium
-                                    </button>
-                                  ) : (
-                                    <Link
-                                      href={`/exam/${assignment.id}`}
-                                      onClick={(event) =>
-                                        handleStartExamClick(
-                                          event,
-                                          assignment.id,
-                                          Boolean(assignment.fullMockSessionId),
-                                        )
-                                      }
-                                      className="inline-flex rounded-lg bg-black px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-gray-800"
-                                    >
-                                      {getActionLabel(
-                                        assignment.status,
-                                        Boolean(assignment.fullMockSessionId),
-                                      )}
-                                    </Link>
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  </div>
-                )}
               </>
             )}
           </>
@@ -1141,48 +1087,78 @@ export default function DashboardPage() {
 
       <Modal
         isOpen={isPremiumModalOpen}
-        onClose={() => {
-          setIsPremiumModalOpen(false);
-          setSelectedPremiumAssignment(null);
-        }}
-        title="Premium Access"
+        onClose={closePremiumModal}
+        title="Premium Access Payment"
+        width="max-w-xl"
       >
-        <div className="space-y-4 text-sm text-gray-700">
-          <p>
-            {selectedPremiumAssignment?.section?.title
-              ? `"${selectedPremiumAssignment.section.title}" is available for Premium users.`
-              : "This test is available for Premium users."}
+        <div className="space-y-4 overflow-x-hidden text-sm text-gray-700">
+          <p className="text-lg font-medium text-gray-600">
+            Send {PAYMENT_AMOUNT} to the card below, then share the receipt on Telegram.
           </p>
 
-          <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
-            <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-              Card Number
+          {selectedPremiumAssignment?.section?.title && (
+            <p className="text-xs text-gray-500">
+              Premium locked test: <span className="font-semibold">{selectedPremiumAssignment.section.title}</span>
             </p>
-            <p className="mt-1 text-base font-semibold text-gray-900">{PAYMENT_CARD_NUMBER}</p>
+          )}
+
+          <div className="rounded-2xl border-2 border-dashed border-gray-300 bg-gray-50 p-4">
+            <p className="text-sm font-medium text-gray-500">Card Number</p>
+            <div className="mt-3 flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <p className="break-all text-xl font-semibold leading-tight tracking-wider text-gray-900 sm:text-2xl">
+                {PAYMENT_CARD_NUMBER}
+              </p>
+              <button
+                type="button"
+                onClick={handleCopyPaymentCard}
+                className="inline-flex min-w-[104px] shrink-0 items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-100"
+              >
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M8 16H7a2 2 0 01-2-2V7a2 2 0 012-2h7a2 2 0 012 2v1m-3 9h4a2 2 0 002-2v-4a2 2 0 00-2-2h-4a2 2 0 00-2 2v4a2 2 0 002 2z"
+                  />
+                </svg>
+                {isCardCopied ? "Copied" : "Copy"}
+              </button>
+            </div>
+            <p className="mt-2 text-sm text-gray-500">{PAYMENT_CARD_OWNER}</p>
           </div>
 
-          <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
-            <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-              Activation
-            </p>
-            <p className="mt-1 leading-relaxed">
-              After you transfer the payment, send the receipt screenshot + your email to our
-              Telegram account <span className="font-semibold">{PAYMENT_TELEGRAM}</span> so we
-              can activate Premium within a few minutes.
+          <div className="flex items-start gap-2 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-amber-800">
+            <svg className="mt-0.5 h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 9v2m0 4h.01M5.07 19h13.86c1.54 0 2.5-1.67 1.73-3L13.73 4c-.77-1.33-2.69-1.33-3.46 0L3.34 16c-.77 1.33.19 3 1.73 3z"
+              />
+            </svg>
+            <p className="leading-relaxed">
+              After you transfer the payment, send the receipt screenshot + your email/username to our
+              Telegram account <span className="font-semibold">{PAYMENT_TELEGRAM_LABEL}</span> so
+              we can activate Premium within a few minutes.
             </p>
           </div>
 
-          <div className="flex justify-end">
+          <div className="flex flex-col-reverse gap-3 pt-1 sm:flex-row sm:justify-end">
             <button
               type="button"
-              onClick={() => {
-                setIsPremiumModalOpen(false);
-                setSelectedPremiumAssignment(null);
-              }}
-              className="inline-flex rounded-lg bg-black px-4 py-2 text-sm font-medium text-white hover:bg-gray-800"
+              onClick={closePremiumModal}
+              className="inline-flex items-center justify-center rounded-xl border border-gray-300 bg-white px-5 py-2.5 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-100"
             >
               Close
             </button>
+            <a
+              href={PAYMENT_TELEGRAM_LINK}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center justify-center rounded-xl bg-red-500 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-red-600"
+            >
+              Open Telegram
+            </a>
           </div>
         </div>
       </Modal>

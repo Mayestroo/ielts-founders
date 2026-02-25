@@ -2,6 +2,7 @@
 
 import { useAuth } from "@/contexts/AuthContext";
 import { api } from "@/lib/api";
+import { getListeningPartQuestions } from "@/lib/listeningAudio";
 import { STUDENT_QUERY_TIMINGS } from "@/lib/query/config";
 import { studentQueryKeys } from "@/lib/query/keys";
 import { ExamResult, ExamSectionType, Passage, Question } from "@/types";
@@ -130,6 +131,109 @@ const isAnswerCorrect = (studentAnswer: unknown, correctAnswer: unknown): boolea
   return normalizeAnswerValue(studentAnswer) === normalizeAnswerValue(correctAnswer);
 };
 
+const resolveQuestionNumber = (question: Question, fallbackNumber: number): number => {
+  if (typeof question.number === "number" && Number.isFinite(question.number)) {
+    return question.number;
+  }
+
+  const idMatch = question.id.match(/\d+/);
+  if (idMatch) {
+    return Number(idMatch[0]);
+  }
+
+  return fallbackNumber;
+};
+
+const resolveIndependentStudentAnswers = (value: unknown): string[] => {
+  if (!hasAnswerValue(value)) {
+    return [];
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => String(entry).trim())
+      .filter((entry) => entry.length > 0);
+  }
+
+  if (typeof value === "string") {
+    return value
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0);
+  }
+
+  return [String(value).trim()].filter((entry) => entry.length > 0);
+};
+
+const buildIndependentMcqRows = ({
+  questionId,
+  questionNumber,
+  studentAnswerRaw,
+  correctAnswerRaw,
+}: {
+  questionId: string;
+  questionNumber: number;
+  studentAnswerRaw: unknown;
+  correctAnswerRaw: unknown[];
+}): PracticeAnswerRow[] => {
+  const studentAnswers = resolveIndependentStudentAnswers(studentAnswerRaw);
+  const remainingCorrectAnswers = correctAnswerRaw
+    .map((entry) => String(entry).trim())
+    .filter((entry) => entry.length > 0);
+
+  const consumeMatchingCorrectAnswer = (studentEntry: string): boolean => {
+    const normalizedStudentEntry = normalizeAnswerValue(studentEntry);
+    const matchedIndex = remainingCorrectAnswers.findIndex(
+      (correctEntry) =>
+        normalizeAnswerValue(correctEntry) === normalizedStudentEntry,
+    );
+
+    if (matchedIndex < 0) {
+      return false;
+    }
+
+    remainingCorrectAnswers.splice(matchedIndex, 1);
+    return true;
+  };
+
+  return correctAnswerRaw.map((_, offset) => {
+    const studentEntry = studentAnswers[offset];
+
+    if (!hasAnswerValue(studentEntry)) {
+      const fallbackCorrectEntry = remainingCorrectAnswers.shift();
+      return {
+        questionId: `${questionId}::${offset + 1}`,
+        questionNumber: questionNumber + offset,
+        studentAnswer: "N/A",
+        correctAnswer: formatAnswerValue(fallbackCorrectEntry),
+        hasCorrectAnswer: true,
+        isCorrect: false,
+      };
+    }
+
+    if (consumeMatchingCorrectAnswer(studentEntry)) {
+      return {
+        questionId: `${questionId}::${offset + 1}`,
+        questionNumber: questionNumber + offset,
+        studentAnswer: formatAnswerValue(studentEntry),
+        correctAnswer: formatAnswerValue(studentEntry),
+        hasCorrectAnswer: true,
+        isCorrect: true,
+      };
+    }
+
+    const fallbackCorrectEntry = remainingCorrectAnswers.shift();
+    return {
+      questionId: `${questionId}::${offset + 1}`,
+      questionNumber: questionNumber + offset,
+      studentAnswer: formatAnswerValue(studentEntry),
+      correctAnswer: formatAnswerValue(fallbackCorrectEntry),
+      hasCorrectAnswer: true,
+      isCorrect: false,
+    };
+  });
+};
+
 const getAnsweredQuestionKeys = (answers: Record<string, unknown>): string[] => {
   return Object.entries(answers)
     .filter(([key, value]) => !key.startsWith("_") && hasAnswerValue(value))
@@ -212,17 +316,18 @@ const resolveQuestionsForAttempt = ({
   }
 
   if (sectionType === "LISTENING") {
-    const partCount = 4;
-    const questionsPerPart = Math.ceil(allQuestions.length / partCount);
     const explicitPart = getExplicitPartOrTask(attemptType, "part");
-    let partIndex = explicitPart ? explicitPart - 1 : null;
+    let partNumber =
+      explicitPart && explicitPart >= 1 && explicitPart <= 4
+        ? (explicitPart as 1 | 2 | 3 | 4)
+        : null;
 
-    if (partIndex === null && !hasAttemptTypeHint && answeredKeys.length > 0) {
-      for (let index = 0; index < partCount; index += 1) {
-        const start = index * questionsPerPart;
-        const end = Math.min(start + questionsPerPart, allQuestions.length);
+    if (partNumber === null && !hasAttemptTypeHint && answeredKeys.length > 0) {
+      for (const currentPart of [1, 2, 3, 4] as const) {
         const questionIds = new Set(
-          allQuestions.slice(start, end).map((question) => question.id),
+          getListeningPartQuestions(allQuestions, currentPart).map(
+            (question) => question.id,
+          ),
         );
 
         if (questionIds.size === 0) {
@@ -230,16 +335,17 @@ const resolveQuestionsForAttempt = ({
         }
 
         if (answeredKeys.every((answerKey) => questionIds.has(answerKey))) {
-          partIndex = index;
+          partNumber = currentPart;
           break;
         }
       }
     }
 
-    if (partIndex !== null && partIndex >= 0 && partIndex < partCount) {
-      const start = partIndex * questionsPerPart;
-      const end = Math.min(start + questionsPerPart, allQuestions.length);
-      return allQuestions.slice(start, end);
+    if (partNumber !== null) {
+      const filteredQuestions = getListeningPartQuestions(allQuestions, partNumber);
+      if (filteredQuestions.length > 0) {
+        return filteredQuestions;
+      }
     }
 
     return allQuestions;
@@ -361,11 +467,26 @@ export default function HistoryReviewPage() {
   );
 
   const practiceAnswerRows = useMemo<PracticeAnswerRow[]>(() => {
-    return visibleQuestions.map((question, index) => {
-      const idMatch = question.id.match(/\d+/);
-      const questionNumber = idMatch ? Number(idMatch[0]) : index + 1;
+    return visibleQuestions.flatMap((question, index) => {
+      const questionNumber = resolveQuestionNumber(question, index + 1);
       const studentAnswerRaw = answerMap[question.id];
       const correctAnswerRaw = resolveQuestionCorrectAnswer(question);
+
+      const shouldSplitIntoIndependentRows =
+        question.type === "MCQ_MULTIPLE" &&
+        Array.isArray(correctAnswerRaw) &&
+        question.points > 1 &&
+        correctAnswerRaw.length === question.points;
+
+      if (shouldSplitIntoIndependentRows) {
+        return buildIndependentMcqRows({
+          questionId: question.id,
+          questionNumber,
+          studentAnswerRaw,
+          correctAnswerRaw,
+        });
+      }
+
       const hasCorrectAnswer = hasAnswerValue(correctAnswerRaw);
 
       return {
@@ -569,7 +690,7 @@ export default function HistoryReviewPage() {
           </div>
         </div>
 
-        {practiceAnswerRows.length > 0 && (
+        {result.section?.type !== "WRITING" && practiceAnswerRows.length > 0 && (
           <section className="mx-auto mt-8 max-w-4xl rounded-2xl border border-gray-200 bg-white p-4 md:p-6">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <h3 className="text-3xl font-semibold text-gray-900">Answer Sheet</h3>

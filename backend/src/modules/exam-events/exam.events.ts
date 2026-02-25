@@ -1,14 +1,12 @@
+import { EvaluateWritingSectionInput } from '../ai/ielts-writing.types';
+
 export class WritingSubmittedEvent {
   constructor(
     public readonly submissionId: string,
     public readonly resultId: string,
     public readonly studentId: string,
     public readonly sectionId: string,
-    public readonly tasks: Array<{
-      id: string;
-      description: string;
-      response: string;
-    }>,
+    public readonly tasks: EvaluateWritingSectionInput[],
   ) {}
 }
 

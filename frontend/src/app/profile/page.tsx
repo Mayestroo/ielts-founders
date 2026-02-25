@@ -235,7 +235,7 @@ export default function ProfilePage() {
                   href="/feedback"
                   className="inline-flex rounded-lg px-3 py-2 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900"
                 >
-                  Feedback
+                  Offline Results
                 </Link>
               </li>
             </ul>
@@ -267,7 +267,7 @@ export default function ProfilePage() {
           <div className="rounded-2xl border border-gray-200 bg-white p-8 text-center">
             <h3 className="text-lg font-semibold text-gray-900">Profile is temporarily disabled</h3>
             <p className="mt-2 text-sm text-gray-500">
-              You can continue using Dashboard, Feedback, and Exams.
+              You can continue using Dashboard, Offline Results, and Exams.
             </p>
             <Link
               href="/dashboard"

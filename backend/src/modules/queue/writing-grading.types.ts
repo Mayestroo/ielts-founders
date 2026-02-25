@@ -1,13 +1,9 @@
+import { EvaluateWritingSectionInput } from '../ai/ielts-writing.types';
+
 export interface WritingGradingJobData {
   submissionId: string;
   resultId: string;
-  tasks: WritingTask[];
-}
-
-export interface WritingTask {
-  id: string;
-  description: string;
-  response: string;
+  tasks: EvaluateWritingSectionInput[];
 }
 
 export interface WritingGradingResult {

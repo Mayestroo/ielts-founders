@@ -13,6 +13,7 @@ interface WritingSectionProps {
   assignment: ExamAssignment & { remainingTime?: number };
   section: ExamSection;
   parts: ExamPart[];
+  currentPartNumber: number;
   activePartIndex: number;
   currentQuestionId: string;
   answers: Record<string, AnswerValue>;
@@ -45,6 +46,7 @@ export function WritingSection({
   assignment,
   section,
   parts,
+  currentPartNumber,
   activePartIndex,
   currentQuestionId,
   answers,
@@ -76,6 +78,8 @@ export function WritingSection({
   const activeQuestionIndex = activePartIndex < questions.length ? activePartIndex : 0;
   const activeQuestion = questions[activeQuestionIndex];
   const writingAnswer = (answers[activeQuestion.id] || '') as string;
+  const displayTaskNumber =
+    currentPartNumber || parts[activePartIndex]?.number || activeQuestionIndex + 1;
 
   const instructionLines = activeQuestion.instruction
     ? activeQuestion.instruction
@@ -90,7 +94,7 @@ export function WritingSection({
     : 150;
 
   const bannerInstruction =
-    activeQuestionIndex === 0
+    displayTaskNumber === 1
       ? 'You should spend about 20 minutes on this task. Write at least 150 words.'
       : 'You should spend about 40 minutes on this task. Write at least 250 words.';
 
@@ -109,9 +113,9 @@ export function WritingSection({
       </div>
 
       <PartBanner
-        partNumber={activeQuestionIndex + 1}
-        startQuestion={activeQuestionIndex + 1}
-        endQuestion={activeQuestionIndex + 1}
+        partNumber={displayTaskNumber}
+        startQuestion={displayTaskNumber}
+        endQuestion={displayTaskNumber}
         type="WRITING"
         instruction={bannerInstruction}
       />

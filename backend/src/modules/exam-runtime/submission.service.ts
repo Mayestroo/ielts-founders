@@ -13,6 +13,7 @@ import {
   ExamSubmittedEvent,
   WritingSubmittedEvent,
 } from '../exam-events/exam.events';
+import { EvaluateWritingSectionInput } from '../ai/ielts-writing.types';
 import { SubmitAnswersDto } from '../exams/dto/submit-answers.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import { ResponseCacheService } from '../redis';
@@ -27,7 +28,14 @@ interface QuestionItem {
   points?: number;
   questionText?: string;
   instruction?: string;
+  imageUrl?: string;
 }
+
+const countWords = (text: string): number =>
+  text
+    .trim()
+    .split(/\s+/)
+    .filter((token) => token.length > 0).length;
 
 interface AssignmentWithSection {
   id: string;
@@ -224,38 +232,43 @@ export class SubmissionService {
     const answers = persistedAnswers as Record<string, string>;
     const questions = assignment.section.questions as QuestionItem[] | null;
 
-    const tasksToEvaluate: {
-      id: string;
-      description: string;
-      response: string;
-    }[] = [];
+    const tasksToEvaluate: EvaluateWritingSectionInput[] = [];
 
     if (questions?.[0]) {
+      const essay = answers['w1'] || answers['task1'] || '';
       tasksToEvaluate.push({
-        id: 'Task 1',
-        description:
-          (questions[0].questionText as string) || 'IELTS Writing Task 1',
-        response: answers['w1'] || answers['task1'] || '',
+        taskType: 'task1',
+        instruction:
+          (questions[0].instruction as string) ||
+          (questions[0].questionText as string) ||
+          'IELTS Academic Writing Task 1',
+        imageUrl: (questions[0].imageUrl as string) || undefined,
+        essay,
+        wordCount: countWords(essay),
       });
     }
 
     if (questions?.[1]) {
+      const essay = answers['w2'] || answers['task2'] || '';
       tasksToEvaluate.push({
-        id: 'Task 2',
-        description:
-          (questions[1].questionText as string) || 'IELTS Writing Task 2',
-        response: answers['w2'] || answers['task2'] || '',
+        taskType: 'task2',
+        question:
+          (questions[1].questionText as string) ||
+          (questions[1].instruction as string) ||
+          'IELTS Academic Writing Task 2',
+        essay,
+        wordCount: countWords(essay),
       });
     }
 
-    if (
-      tasksToEvaluate.length === 0 &&
-      (answers['writing'] || assignment.section.description)
-    ) {
+    if (tasksToEvaluate.length === 0 && answers['writing']) {
+      const essay = answers['writing'];
       tasksToEvaluate.push({
-        id: 'Writing Task',
-        description: assignment.section.description || 'IELTS Writing Task',
-        response: answers['writing'] || '',
+        taskType: 'task2',
+        question:
+          assignment.section.description || 'IELTS Academic Writing Task 2',
+        essay,
+        wordCount: countWords(essay),
       });
     }
 
@@ -534,13 +547,11 @@ export class SubmissionService {
       return { nextAssignmentId: null, breakEndsAt: null };
     }
 
-    const breakEndsAt = new Date(Date.now() + session.breakMinutes * 60 * 1000);
-
     await tx.fullMockSession.update({
       where: { id: fullMockSessionId },
       data: {
-        status: FullMockStatus.BREAK,
-        breakEndsAt,
+        status: FullMockStatus.IN_PROGRESS,
+        breakEndsAt: null,
         currentSequence:
           nextAssignment.fullMockSequence ?? session.currentSequence,
       },
@@ -548,7 +559,7 @@ export class SubmissionService {
 
     return {
       nextAssignmentId: nextAssignment.id,
-      breakEndsAt: breakEndsAt.toISOString(),
+      breakEndsAt: null,
     };
   }
 

@@ -94,14 +94,20 @@ export interface MatchItem {
 
 export interface BaseQuestion {
   id: string;
+  number?: number;
   type: QuestionType;
+  title?: string;
   questionText: string;
   passageId?: string;
   points: number;
+  partAudioUrl?: string;
+  partDurationMinutes?: number;
   instruction?: string;
   imageUrl?: string;
   questionRange?: string;
   isInSameLine?: boolean;
+  questionsLabel?: string;
+  optionsLabel?: string;
 }
 
 export interface MCQQuestion extends BaseQuestion {
@@ -157,7 +163,7 @@ export interface MatchingQuestion extends BaseQuestion {
   type: "MATCHING" | "DIAGRAM_LABELING" | "PLAN_MAP_LABELING";
   items: MatchItem[];
   matchOptions: MatchItem[];
-  correctAnswer: Record<string, string>;
+  correctAnswer: Record<string, string> | string;
 }
 
 export type Question =
@@ -202,6 +208,7 @@ export interface ExamAssignment {
   score?: number;
   fullMockSessionId?: string | null;
   fullMockSequence?: number | null;
+  resultsVisibleToStudent?: boolean;
   student?: User;
   section?: ExamSection;
   createdAt: string;

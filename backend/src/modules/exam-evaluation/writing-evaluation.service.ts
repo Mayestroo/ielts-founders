@@ -4,21 +4,129 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Role } from '@prisma/client';
+import { Prisma, Role } from '@prisma/client';
+import {
+  EvaluateWritingSectionInput,
+  IeltsWritingResult,
+  IeltsWritingScores,
+  IeltsWritingSectionResult,
+} from '../ai/ielts-writing.types';
+import { AiService } from '../ai/ai.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ResponseCacheService } from '../redis';
-import { AiService, WritingEvaluation } from '../ai/ai.service';
 
 interface QuestionItem {
   id: string;
   type: string;
   questionText?: string;
+  instruction?: string;
+  imageUrl?: string;
 }
 
-interface SectionEvaluationResult {
-  bandScore: number;
-  tasks: Record<string, WritingEvaluation>;
-}
+const pickTextAnswer = (...values: unknown[]): string => {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim().length > 0) {
+      return value;
+    }
+  }
+
+  return '';
+};
+
+const countWords = (text: string): number =>
+  text
+    .trim()
+    .split(/\s+/)
+    .filter((token) => token.length > 0).length;
+
+const roundBand = (value: number): number => Math.round(value * 2) / 2;
+
+const emptyScores = (): IeltsWritingScores => ({
+  task_achievement: 0,
+  coherence_cohesion: 0,
+  lexical_resource: 0,
+  grammar: 0,
+});
+
+const emptyEssayResult = (
+  taskType: 'task1' | 'task2',
+  wordCount: number,
+): IeltsWritingResult => ({
+  task_type: taskType,
+  scores: emptyScores(),
+  overall_band: 0,
+  word_count_penalty: taskType === 'task1' ? wordCount < 150 : wordCount < 250,
+  strengths: [],
+  weaknesses: ['No response provided for this task.'],
+  major_errors: [],
+  band_improvement_advice: [
+    'Write a complete response that directly addresses the task prompt.',
+  ],
+});
+
+const buildSectionResult = (
+  taskResults: Partial<Record<'task1' | 'task2', IeltsWritingResult>>,
+): IeltsWritingSectionResult => {
+  const weights: Record<'task1' | 'task2', number> = {
+    task1: 1,
+    task2: 2,
+  };
+
+  const available = (['task1', 'task2'] as const).filter((taskType) =>
+    Boolean(taskResults[taskType]),
+  );
+
+  if (available.length === 0) {
+    throw new Error('No writing task evaluations available');
+  }
+
+  const totalWeight = available.reduce(
+    (sum, taskType) => sum + weights[taskType],
+    0,
+  );
+
+  const weightedScores = available.reduce((acc, taskType) => {
+    const result = taskResults[taskType]!;
+    const weight = weights[taskType];
+
+    return {
+      task_achievement:
+        acc.task_achievement + result.scores.task_achievement * weight,
+      coherence_cohesion:
+        acc.coherence_cohesion + result.scores.coherence_cohesion * weight,
+      lexical_resource:
+        acc.lexical_resource + result.scores.lexical_resource * weight,
+      grammar: acc.grammar + result.scores.grammar * weight,
+    };
+  }, emptyScores());
+
+  const normalizedScores: IeltsWritingScores = {
+    task_achievement: roundBand(weightedScores.task_achievement / totalWeight),
+    coherence_cohesion: roundBand(
+      weightedScores.coherence_cohesion / totalWeight,
+    ),
+    lexical_resource: roundBand(weightedScores.lexical_resource / totalWeight),
+    grammar: roundBand(weightedScores.grammar / totalWeight),
+  };
+
+  const weightedBand = roundBand(
+    available.reduce(
+      (sum, taskType) =>
+        sum + taskResults[taskType]!.overall_band * weights[taskType],
+      0,
+    ) / totalWeight,
+  );
+
+  return {
+    overall_band: weightedBand,
+    word_count_penalty: available.some(
+      (taskType) => taskResults[taskType]!.word_count_penalty,
+    ),
+    task1: taskResults.task1,
+    task2: taskResults.task2,
+    weighted_scores: normalizedScores,
+  };
+};
 
 @Injectable()
 export class WritingEvaluationService {
@@ -61,97 +169,95 @@ export class WritingEvaluationService {
       throw new ForbiddenException('Access denied for another center');
     }
 
-    const assignment = await this.prisma.examAssignment.findUnique({
-      where: {
-        studentId_sectionId: {
+    const answers = (examResult.answers ?? {}) as Record<string, unknown>;
+    const questions = examResult.section.questions as QuestionItem[] | null;
+    const taskInputs = this.buildTaskInputs(
+      questions,
+      answers,
+      examResult.section.description,
+    );
+
+    if (taskInputs.length === 0) {
+      throw new BadRequestException('No writing response found to evaluate');
+    }
+
+    try {
+      const taskResults = await this.evaluateTaskInputs(taskInputs);
+      const sectionResult = buildSectionResult(taskResults);
+
+      const updatedResult = await this.prisma.examResult.update({
+        where: { id: resultId },
+        data: {
+          score: sectionResult.overall_band,
+          totalScore: 9,
+          bandScore: sectionResult.overall_band,
+          feedback: sectionResult as unknown as Prisma.InputJsonValue,
+        },
+      });
+
+      const latestAssignment = await this.prisma.examAssignment.findFirst({
+        where: {
           studentId: examResult.studentId,
           sectionId: examResult.sectionId,
         },
-      },
-    });
-
-    if (!assignment) {
-      throw new NotFoundException('Associated assignment not found');
-    }
-
-    const answers = (assignment.answers ?? {}) as Record<string, unknown>;
-    const tasksToEvaluate: {
-      id: string;
-      description: string;
-      response: string;
-    }[] = [];
-
-    const questions = examResult.section.questions as QuestionItem[] | null;
-
-    if (questions?.[0]) {
-      tasksToEvaluate.push({
-        id: 'Task 1',
-        description: questions[0].questionText || 'Task 1',
-        response: String(answers['w1'] || answers['task1'] || ''),
+        orderBy: { updatedAt: 'desc' },
+        select: {
+          id: true,
+          answers: true,
+        },
       });
-    }
-    if (questions?.[1]) {
-      tasksToEvaluate.push({
-        id: 'Task 2',
-        description: questions[1].questionText || 'Task 2',
-        response: String(answers['w2'] || answers['task2'] || ''),
-      });
-    }
 
-    let evaluation: WritingEvaluation | SectionEvaluationResult;
+      if (latestAssignment) {
+        const latestAnswers = (latestAssignment.answers ?? {}) as Record<
+          string,
+          unknown
+        >;
 
-    if (tasksToEvaluate.length > 0) {
-      const minTotalWeight =
-        questions?.length === 2 ? 3 : tasksToEvaluate.length;
-      evaluation = await this.aiService.evaluateWritingSection(
-        tasksToEvaluate,
-        minTotalWeight,
-      );
-    } else {
-      const w1 = answers?.['w1'];
-      const w2 = answers?.['w2'];
-      const writing = answers?.['writing'];
-      const writingResponse =
-        typeof (w1 || w2 || writing) === 'string'
-          ? ((w1 || w2 || writing) as string)
-          : '';
-
-      if (!writingResponse) {
-        throw new BadRequestException('No writing response found to evaluate');
+        await this.prisma.examAssignment.update({
+          where: { id: latestAssignment.id },
+          data: {
+            answers: {
+              ...latestAnswers,
+              _aiEvaluation: sectionResult,
+            } as unknown as Prisma.InputJsonValue,
+          },
+        });
       }
 
-      evaluation = await this.aiService.evaluateWritingTask(
-        examResult.section.description || 'IELTS Writing Task',
-        writingResponse,
-      );
+      await this.prisma.writingSubmission.updateMany({
+        where: { resultId },
+        data: {
+          status: 'COMPLETED',
+          completedAt: new Date(),
+          bandScore: sectionResult.overall_band,
+          aiResult: sectionResult as unknown as Prisma.InputJsonValue,
+          evaluation: sectionResult as unknown as Prisma.InputJsonValue,
+          lastError: null,
+        },
+      });
+
+      await this.invalidateEvaluationReadCaches();
+
+      return {
+        ...updatedResult,
+        aiEvaluation: sectionResult,
+      };
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown AI evaluation error';
+
+      await this.prisma.writingSubmission
+        .updateMany({
+          where: { resultId },
+          data: {
+            status: 'FAILED',
+            lastError: errorMessage,
+          },
+        })
+        .catch(() => undefined);
+
+      throw new BadRequestException(`AI evaluation failed: ${errorMessage}`);
     }
-
-    const updatedResult = await this.prisma.examResult.update({
-      where: { id: resultId },
-      data: {
-        score: evaluation.bandScore,
-        totalScore: 9,
-        bandScore: evaluation.bandScore,
-        feedback: evaluation as unknown as any,
-      },
-    });
-
-    await this.prisma.examAssignment.update({
-      where: { id: assignment.id },
-      data: {
-        answers: {
-          ...answers,
-          _aiEvaluation: evaluation,
-        } as unknown as any,
-      },
-    });
-
-    await this.invalidateEvaluationReadCaches();
-
-    return {
-      ...updatedResult,
-      aiEvaluation: evaluation,
-    };
   }
 
   async getWritingSubmissionStatus(
@@ -211,7 +317,9 @@ export class WritingEvaluationService {
       resultId: submission.resultId,
       bandScore: submission.bandScore,
       evaluation:
-        submission.status === 'COMPLETED' ? submission.evaluation : undefined,
+        submission.status === 'COMPLETED'
+          ? (submission.aiResult ?? submission.evaluation)
+          : undefined,
       sectionTitle: submission.section.title,
       isComplete: submission.status === 'COMPLETED',
       isFailed: submission.status === 'FAILED',
@@ -219,6 +327,78 @@ export class WritingEvaluationService {
         submission.status === 'FAILED' &&
         submission.attempts < submission.maxAttempts,
     };
+  }
+
+  private buildTaskInputs(
+    questions: QuestionItem[] | null,
+    answers: Record<string, unknown>,
+    sectionDescription: string | null,
+  ): EvaluateWritingSectionInput[] {
+    const inputs: EvaluateWritingSectionInput[] = [];
+
+    if (questions?.[0]) {
+      const essay = pickTextAnswer(answers.w1, answers.task1);
+      inputs.push({
+        taskType: 'task1',
+        instruction:
+          questions[0].instruction ||
+          questions[0].questionText ||
+          sectionDescription ||
+          'IELTS Academic Writing Task 1',
+        imageUrl: questions[0].imageUrl,
+        essay,
+        wordCount: countWords(essay),
+      });
+    }
+
+    if (questions?.[1]) {
+      const essay = pickTextAnswer(answers.w2, answers.task2);
+      inputs.push({
+        taskType: 'task2',
+        question:
+          questions[1].questionText ||
+          questions[1].instruction ||
+          sectionDescription ||
+          'IELTS Academic Writing Task 2',
+        essay,
+        wordCount: countWords(essay),
+      });
+    }
+
+    if (inputs.length === 0) {
+      const fallbackEssay = pickTextAnswer(answers.writing);
+      if (fallbackEssay) {
+        inputs.push({
+          taskType: 'task2',
+          question: sectionDescription || 'IELTS Academic Writing Task 2',
+          essay: fallbackEssay,
+          wordCount: countWords(fallbackEssay),
+        });
+      }
+    }
+
+    return inputs;
+  }
+
+  private async evaluateTaskInputs(
+    taskInputs: EvaluateWritingSectionInput[],
+  ): Promise<Partial<Record<'task1' | 'task2', IeltsWritingResult>>> {
+    const result: Partial<Record<'task1' | 'task2', IeltsWritingResult>> = {};
+
+    for (const taskInput of taskInputs) {
+      if (!taskInput.essay.trim()) {
+        result[taskInput.taskType] = emptyEssayResult(
+          taskInput.taskType,
+          taskInput.wordCount,
+        );
+        continue;
+      }
+
+      result[taskInput.taskType] =
+        await this.aiService.evaluateWritingSection(taskInput);
+    }
+
+    return result;
   }
 
   private async invalidateEvaluationReadCaches() {

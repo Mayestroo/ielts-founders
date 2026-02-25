@@ -117,7 +117,7 @@ function validateProductionReadiness() {
   ];
 
   const missing = requiredEnv.filter(
-    (key) => !process.env[key] || process.env[key]!.trim().length === 0,
+    (key) => !process.env[key] || process.env[key].trim().length === 0,
   );
 
   if (missing.length > 0) {
@@ -142,7 +142,7 @@ function validateProductionReadiness() {
   }
 }
 
-export async function setupApp(app: INestApplication) {
+export function setupApp(app: INestApplication) {
   const configService = app.get(ConfigService);
   const runtimeFaultService = app.get(RuntimeFaultService);
 
@@ -229,7 +229,7 @@ export async function setupApp(app: INestApplication) {
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
-  await setupApp(app);
+  setupApp(app);
 
   validateProductionReadiness();
 

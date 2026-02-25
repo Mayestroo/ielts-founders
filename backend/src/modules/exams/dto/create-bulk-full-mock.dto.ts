@@ -1,4 +1,10 @@
-import { ArrayMinSize, IsArray, IsString } from 'class-validator';
+import {
+  ArrayMinSize,
+  IsArray,
+  IsBoolean,
+  IsOptional,
+  IsString,
+} from 'class-validator';
 
 export class CreateBulkFullMockDto {
   @IsArray()
@@ -14,4 +20,8 @@ export class CreateBulkFullMockDto {
 
   @IsString()
   writingSectionId: string;
+
+  @IsOptional()
+  @IsBoolean()
+  showResultsToStudent?: boolean;
 }

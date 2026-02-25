@@ -1,16 +1,16 @@
 import {
-    Body,
-    Controller,
-    ForbiddenException,
-    Get,
-    Inject,
-    NotFoundException,
-    Post,
+  Body,
+  Controller,
+  ForbiddenException,
+  Get,
+  Inject,
+  NotFoundException,
+  Post,
 } from '@nestjs/common';
 import {
-    HealthCheck,
-    HealthCheckService,
-    MemoryHealthIndicator,
+  HealthCheck,
+  HealthCheckService,
+  MemoryHealthIndicator,
 } from '@nestjs/terminus';
 import { SkipThrottle } from '@nestjs/throttler';
 import Redis from 'ioredis';
@@ -54,11 +54,11 @@ export class HealthController {
               latency: Date.now() - start,
             },
           };
-        } catch (e) {
+        } catch (e: unknown) {
           return {
             database: {
               status: 'down',
-              message: e.message,
+              message: e instanceof Error ? e.message : 'Unknown error',
             },
           };
         }
@@ -74,11 +74,11 @@ export class HealthController {
               latency: Date.now() - start,
             },
           };
-        } catch (e) {
+        } catch (e: unknown) {
           return {
             redis: {
               status: 'down',
-              message: e.message,
+              message: e instanceof Error ? e.message : 'Unknown error',
             },
           };
         }

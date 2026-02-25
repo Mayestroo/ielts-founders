@@ -1,26 +1,138 @@
 import { InjectQueue } from '@nestjs/bullmq';
 import { Injectable, Logger, Optional } from '@nestjs/common';
-import { OnEvent } from '@nestjs/event-emitter';
-import { EventEmitter2 } from '@nestjs/event-emitter';
+import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
 import { Prisma } from '@prisma/client';
 import { Queue } from 'bullmq';
 import { AiService } from '../ai/ai.service';
-import { WRITING_GRADING_QUEUE } from '../queue/queue.module';
-import { WritingGradingJobData } from '../queue/writing-grading.types';
-import { PrismaService } from '../prisma/prisma.service';
-import { ResponseCacheService } from '../redis';
 import {
-  WritingSubmittedEvent,
+  EvaluateWritingSectionInput,
+  IeltsWritingResult,
+  IeltsWritingScores,
+  IeltsWritingSectionResult,
+} from '../ai/ielts-writing.types';
+import {
+  ExamStartedEvent,
+  ExamSubmittedEvent,
   WritingGradedEvent,
   WritingGradingFailedEvent,
-  ExamSubmittedEvent,
-  ExamStartedEvent,
+  WritingSubmittedEvent,
 } from '../exam-events/exam.events';
+import { PrismaService } from '../prisma/prisma.service';
+import { WRITING_GRADING_QUEUE } from '../queue/queue.module';
+import { WritingGradingJobData } from '../queue/writing-grading.types';
+import { ResponseCacheService } from '../redis';
 
-/**
- * Event listener that bridges domain events to infrastructure (queue)
- * This decouples the exams module from the queue implementation
- */
+const roundBand = (value: number): number => Math.round(value * 2) / 2;
+
+const emptyScores = (): IeltsWritingScores => ({
+  task_achievement: 0,
+  coherence_cohesion: 0,
+  lexical_resource: 0,
+  grammar: 0,
+});
+
+const emptyEssayResult = (
+  taskType: 'task1' | 'task2',
+  wordCount: number,
+): IeltsWritingResult => ({
+  task_type: taskType,
+  scores: emptyScores(),
+  overall_band: 0,
+  word_count_penalty: taskType === 'task1' ? wordCount < 150 : wordCount < 250,
+  strengths: [],
+  weaknesses: ['No response provided for this task.'],
+  major_errors: [],
+  band_improvement_advice: [
+    'Write a complete response that directly addresses the task prompt.',
+  ],
+});
+
+const buildSectionResult = (
+  taskResults: Partial<Record<'task1' | 'task2', IeltsWritingResult>>,
+): IeltsWritingSectionResult => {
+  const weights: Record<'task1' | 'task2', number> = {
+    task1: 1,
+    task2: 2,
+  };
+
+  const available = (['task1', 'task2'] as const).filter((taskType) =>
+    Boolean(taskResults[taskType]),
+  );
+
+  if (available.length === 0) {
+    throw new Error('No writing task evaluations available');
+  }
+
+  const totalWeight = available.reduce(
+    (sum, taskType) => sum + weights[taskType],
+    0,
+  );
+
+  const weightedScores = available.reduce((acc, taskType) => {
+    const result = taskResults[taskType]!;
+    const weight = weights[taskType];
+
+    return {
+      task_achievement:
+        acc.task_achievement + result.scores.task_achievement * weight,
+      coherence_cohesion:
+        acc.coherence_cohesion + result.scores.coherence_cohesion * weight,
+      lexical_resource:
+        acc.lexical_resource + result.scores.lexical_resource * weight,
+      grammar: acc.grammar + result.scores.grammar * weight,
+    };
+  }, emptyScores());
+
+  const normalizedScores: IeltsWritingScores = {
+    task_achievement: roundBand(weightedScores.task_achievement / totalWeight),
+    coherence_cohesion: roundBand(
+      weightedScores.coherence_cohesion / totalWeight,
+    ),
+    lexical_resource: roundBand(weightedScores.lexical_resource / totalWeight),
+    grammar: roundBand(weightedScores.grammar / totalWeight),
+  };
+
+  const weightedBand = roundBand(
+    available.reduce(
+      (sum, taskType) =>
+        sum + taskResults[taskType]!.overall_band * weights[taskType],
+      0,
+    ) / totalWeight,
+  );
+
+  return {
+    overall_band: weightedBand,
+    word_count_penalty: available.some(
+      (taskType) => taskResults[taskType]!.word_count_penalty,
+    ),
+    task1: taskResults.task1,
+    task2: taskResults.task2,
+    weighted_scores: normalizedScores,
+  };
+};
+
+const evaluateTaskInputs = async (
+  aiService: AiService,
+  taskInputs: EvaluateWritingSectionInput[],
+): Promise<Partial<Record<'task1' | 'task2', IeltsWritingResult>>> => {
+  const result: Partial<Record<'task1' | 'task2', IeltsWritingResult>> = {};
+
+  for (const taskInput of taskInputs) {
+    if (!taskInput.essay.trim()) {
+      result[taskInput.taskType] = emptyEssayResult(
+        taskInput.taskType,
+        taskInput.wordCount,
+      );
+      continue;
+    }
+
+    result[taskInput.taskType] =
+      await aiService.evaluateWritingSection(taskInput);
+  }
+
+  return result;
+};
+
 @Injectable()
 export class ExamEventListener {
   private readonly logger = new Logger(ExamEventListener.name);
@@ -103,11 +215,8 @@ export class ExamEventListener {
         },
       });
 
-      const minTotalWeight = event.tasks.length === 2 ? 3 : event.tasks.length;
-      const evaluation = await this.aiService.evaluateWritingSection(
-        event.tasks,
-        minTotalWeight,
-      );
+      const taskResults = await evaluateTaskInputs(this.aiService, event.tasks);
+      const sectionResult = buildSectionResult(taskResults);
 
       await this.prisma.$transaction([
         this.prisma.writingSubmission.update({
@@ -115,17 +224,18 @@ export class ExamEventListener {
           data: {
             status: 'COMPLETED',
             completedAt: new Date(),
-            bandScore: evaluation.bandScore,
-            evaluation: evaluation as unknown as Prisma.InputJsonValue,
+            bandScore: sectionResult.overall_band,
+            aiResult: sectionResult as unknown as Prisma.InputJsonValue,
+            evaluation: sectionResult as unknown as Prisma.InputJsonValue,
             lastError: null,
           },
         }),
         this.prisma.examResult.update({
           where: { id: event.resultId },
           data: {
-            bandScore: evaluation.bandScore,
-            feedback: evaluation as unknown as Prisma.InputJsonValue,
-            score: evaluation.bandScore,
+            bandScore: sectionResult.overall_band,
+            feedback: sectionResult as unknown as Prisma.InputJsonValue,
+            score: sectionResult.overall_band,
           },
         }),
       ]);
@@ -142,8 +252,8 @@ export class ExamEventListener {
           event.submissionId,
           event.resultId,
           event.studentId,
-          evaluation.bandScore,
-          evaluation,
+          sectionResult.overall_band,
+          sectionResult,
         ),
       );
     } catch (error) {
@@ -182,10 +292,6 @@ export class ExamEventListener {
     this.logger.log(
       `Writing graded event: submission ${event.submissionId} scored ${event.bandScore}`,
     );
-    // Additional business logic can be added here:
-    // - Send notifications
-    // - Update analytics
-    // - Trigger webhooks
   }
 
   @OnEvent('writing.gradingFailed')
@@ -193,10 +299,6 @@ export class ExamEventListener {
     this.logger.error(
       `Writing grading failed for submission ${event.submissionId}: ${event.error}`,
     );
-    // Additional error handling:
-    // - Alert administrators
-    // - Send failure notification to student
-    // - Log for manual review
   }
 
   @OnEvent('exam.submitted')
@@ -204,7 +306,6 @@ export class ExamEventListener {
     this.logger.log(
       `Exam submitted: ${event.sectionType} assignment ${event.assignmentId} by student ${event.studentId}`,
     );
-    // Analytics, notifications, etc.
   }
 
   @OnEvent('exam.started')
@@ -212,6 +313,5 @@ export class ExamEventListener {
     this.logger.log(
       `Exam started: assignment ${event.assignmentId} by student ${event.studentId}`,
     );
-    // Log exam start for analytics
   }
 }

@@ -41,6 +41,8 @@ export function BottomNav({
   showPartResults = false,
   onContinue,
 }: BottomNavProps) {
+  const partLabel = sectionType === 'WRITING' ? 'Task' : 'Part';
+
   return (
     <nav className="fixed bottom-0 left-0 right-0 h-[52px] bg-white border-t border-gray-300 z-50 flex items-center shadow-[0_-2px_10px_rgba(0,0,0,0.05)] transition-colors hover:bg-gray-50">
       <div className="flex-1 flex items-center justify-between h-full">
@@ -63,7 +65,7 @@ export function BottomNav({
                 {isActive ? (
                   /* Expanded State */
                   <div className="flex items-center gap-4 px-2">
-                    <span className="font-bold text-gray-900 whitespace-nowrap text-base">Part {part.number}</span>
+                    <span className="font-bold text-gray-900 whitespace-nowrap text-base">{partLabel} {part.number}</span>
                     {sectionType !== 'WRITING' && (
                       <div className="flex items-center text-sm gap-1">
                         {part.questions.map((q) => (
@@ -92,9 +94,9 @@ export function BottomNav({
                 ) : (
                   /* Collapsed State */
                   <div className="flex items-center gap-3 py-1 group">
-                    <span className="text-base font-bold text-gray-900">
-                      Part {part.number}
-                    </span>
+                      <span className="text-base font-bold text-gray-900">
+                        {partLabel} {part.number}
+                      </span>
                     <span className="text-sm text-gray-500">{part.answeredCount} of {part.questionCount}</span>
                   </div>
                 )}
@@ -149,4 +151,3 @@ export function BottomNav({
     </nav>
   );
 }
-

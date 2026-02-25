@@ -156,7 +156,6 @@ model ExamAssignment {
   examSession ExamSession?
   fullMockSession FullMockSession? @relation(fields: [fullMockSessionId], references: [id], onDelete: SetNull)
 
-  @@unique([studentId, sectionId]) // One assignment per student per section
   @@index([studentId])
   @@index([studentId, createdAt])
   @@index([sectionId])
@@ -222,6 +221,7 @@ model FullMockSession {
   studentId       String
   centerId        String
   status          FullMockStatus @default(ASSIGNED)
+  resultsVisibleToStudent Boolean @default(false)
   breakMinutes    Int            @default(2)
   currentSequence Int            @default(1)
   breakEndsAt     DateTime?
@@ -266,6 +266,7 @@ model WritingSubmission {
 
   // Results (populated by worker)
   bandScore     Float?
+  aiResult      Json?            // Full AI evaluation (current field)
   evaluation    Json?            // Full AI evaluation
 
   // Timestamps

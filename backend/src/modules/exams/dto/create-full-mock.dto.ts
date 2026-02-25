@@ -1,4 +1,4 @@
-import { IsString } from 'class-validator';
+import { IsBoolean, IsOptional, IsString } from 'class-validator';
 
 export class CreateFullMockDto {
   @IsString()
@@ -12,4 +12,8 @@ export class CreateFullMockDto {
 
   @IsString()
   writingSectionId: string;
+
+  @IsOptional()
+  @IsBoolean()
+  showResultsToStudent?: boolean;
 }

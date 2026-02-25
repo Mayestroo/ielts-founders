@@ -1,17 +1,18 @@
 import {
-    ConflictException,
-    Injectable,
-    UnauthorizedException,
+  ConflictException,
+  Injectable,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import {
-    Role,
-    SessionAttendanceMode,
-    SessionReferralSource,
+  Role,
+  SessionAttendanceMode,
+  SessionReferralSource,
 } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { createHash, randomUUID } from 'crypto';
+import type { StringValue } from 'ms';
 import { PrismaService } from '../prisma/prisma.service';
 import { ResponseCacheService } from '../redis/response-cache.service';
 
@@ -92,9 +93,9 @@ export class AuthService {
       configService.get<string>('JWT_REFRESH_EXPIRES_IN') || '7d';
   }
 
-  private sanitizeCenter(center: any) {
+  private sanitizeCenter(center: Record<string, unknown> | null | undefined) {
     if (!center) {
-      return center;
+      return null;
     }
 
     const { loginPassword, ...safeCenter } = center;
@@ -232,7 +233,9 @@ export class AuthService {
         sessionScheduledAt: user.sessionScheduledAt ?? null,
         sessionReferralSource: user.sessionReferralSource ?? null,
         phoneNumber: user.phoneNumber ?? null,
-        center: this.sanitizeCenter(user.center),
+        center: this.sanitizeCenter(
+          user.center as Record<string, unknown> | null,
+        ),
         points,
       },
     };
@@ -340,7 +343,7 @@ export class AuthService {
 
     const token = this.jwtService.sign(payload, {
       secret: this.refreshSecret,
-      expiresIn: this.refreshExpiresIn as any,
+      expiresIn: this.refreshExpiresIn as StringValue,
     });
 
     const verifiedPayload = this.jwtService.verify<RefreshPayload>(token, {
@@ -649,7 +652,7 @@ export class AuthService {
       ...result,
       premiumActive: user.premiumActive ?? false,
       isPremium: user.premiumActive ?? false,
-      center: this.sanitizeCenter(center),
+      center: this.sanitizeCenter(center as Record<string, unknown> | null),
       sessionAttendanceMode: user.sessionAttendanceMode,
       sessionScheduledAt: user.sessionScheduledAt,
       sessionReferralSource: user.sessionReferralSource,

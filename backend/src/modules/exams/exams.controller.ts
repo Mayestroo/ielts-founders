@@ -35,6 +35,7 @@ import {
   SaveHighlightsDto,
   SubmitAnswersDto,
   SyncAnswersDto,
+  UpdateFullMockResultVisibilityDto,
   UpdateExamSectionDto,
 } from './dto';
 
@@ -179,6 +180,21 @@ export class ExamsController {
       dto,
       req.user.id,
       req.user.centerId!,
+    );
+  }
+
+  @Put('full-mock-sessions/:id/result-visibility')
+  @Roles(Role.TEACHER, Role.CENTER_ADMIN, Role.SUPER_ADMIN)
+  updateFullMockResultVisibility(
+    @Param('id') id: string,
+    @Body() body: UpdateFullMockResultVisibilityDto,
+    @Request() req: AuthenticatedRequest,
+  ) {
+    return this.assignmentService.updateFullMockResultVisibility(
+      id,
+      body.showResultsToStudent,
+      req.user.role,
+      req.user.centerId,
     );
   }
 
@@ -331,7 +347,6 @@ export class ExamsController {
     @Body() body: HeartbeatDto,
     @Request() req: AuthenticatedRequest,
   ) {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-return
     return this.examSessionService.heartbeat(id, req.user.id, body.tabId);
   }
 

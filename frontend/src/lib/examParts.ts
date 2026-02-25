@@ -1,4 +1,9 @@
 import { ExamAssignment, ExamSectionType, Passage, Question } from "@/types";
+import {
+  getListeningPartQuestions,
+  resolveListeningPartAudioUrl,
+  resolveListeningPartDurationMinutes,
+} from "./listeningAudio";
 
 export type PartNumber = 1 | 2 | 3 | 4;
 export type TaskNumber = 1 | 2;
@@ -16,6 +21,50 @@ export interface TaskInfo {
   duration: number;
   questionCount: number;
 }
+
+const titleCollator = new Intl.Collator(undefined, {
+  numeric: true,
+  sensitivity: "base",
+});
+
+const extractLastNumber = (value: string): number | null => {
+  const matches = value.match(/\d+/g);
+  if (!matches || matches.length === 0) {
+    return null;
+  }
+
+  const parsed = Number.parseInt(matches[matches.length - 1], 10);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const compareAssignmentsForDisplay = (
+  left: ExamAssignment,
+  right: ExamAssignment,
+): number => {
+  const leftTitle = left.section?.title?.trim() || "";
+  const rightTitle = right.section?.title?.trim() || "";
+  const leftNumber = extractLastNumber(leftTitle);
+  const rightNumber = extractLastNumber(rightTitle);
+
+  if (leftNumber !== null && rightNumber !== null && leftNumber !== rightNumber) {
+    return leftNumber - rightNumber;
+  }
+
+  if (leftNumber !== null && rightNumber === null) {
+    return -1;
+  }
+
+  if (leftNumber === null && rightNumber !== null) {
+    return 1;
+  }
+
+  const titleOrder = titleCollator.compare(leftTitle, rightTitle);
+  if (titleOrder !== 0) {
+    return titleOrder;
+  }
+
+  return new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime();
+};
 
 const hasAnswerValue = (value: unknown): boolean => {
   if (value === undefined || value === null) {
@@ -42,6 +91,8 @@ export interface DisplayAssignment {
   originalAssignmentId: string;
   studentId: string;
   status: ExamAssignment["status"];
+  fullMockSessionId?: string | null;
+  fullMockSequence?: number | null;
   startTime?: string;
   endTime?: string;
   score?: number;
@@ -76,13 +127,7 @@ const READING_PART_TITLES: Record<PartNumber, string> = {
   4: "Part 4",
 };
 
-// Listening configuration (4 sections)
-const LISTENING_PART_DURATIONS: Record<PartNumber, number> = {
-  1: 8,
-  2: 8,
-  3: 8,
-  4: 8,
-};
+const DEFAULT_LISTENING_PART_DURATION_MINUTES = 8;
 
 const LISTENING_PART_TITLES: Record<PartNumber, string> = {
   1: "Section 1",
@@ -168,6 +213,8 @@ export function splitReadingTestIntoParts(
       originalAssignmentId: assignment.id,
       studentId: assignment.studentId,
       status: partStatus,
+      fullMockSessionId: assignment.fullMockSessionId,
+      fullMockSequence: assignment.fullMockSequence,
       startTime: assignment.startTime,
       endTime: assignment.endTime,
       score: assignment.score, // Shared score, imperfect but acceptable for now
@@ -211,46 +258,59 @@ export function splitListeningTestIntoParts(
     return [];
   }
 
-  // Split questions into 4 roughly equal parts
-  const questionsPerPart = Math.ceil(allQuestions.length / 4);
-  
-  return [1, 2, 3, 4].map((partNum): DisplayAssignment => {
-    const startIdx = (partNum - 1) * questionsPerPart;
-    const endIdx = Math.min(startIdx + questionsPerPart, allQuestions.length);
-    const partQuestions = allQuestions.slice(startIdx, endIdx);
+  return [1, 2, 3, 4]
+    .map((partNum) => {
+      const typedPartNum = partNum as PartNumber;
+      const partQuestions = getListeningPartQuestions(allQuestions, typedPartNum);
 
-    const partStatus = getPartStatus(
-      assignment.status,
-      partQuestions,
-      answers
-    );
+      if (partQuestions.length === 0) {
+        return null;
+      }
 
-    return {
-      id: `${assignment.id}-part-${partNum}`,
-      originalAssignmentId: assignment.id,
-      studentId: assignment.studentId,
-      status: partStatus,
-      startTime: assignment.startTime,
-      endTime: assignment.endTime,
-      score: assignment.score,
-      createdAt: assignment.createdAt,
-      isPart: true,
-      partInfo: {
-        part: partNum as PartNumber,
-        title: `${LISTENING_PART_TITLES[partNum as PartNumber]}`,
-        duration: LISTENING_PART_DURATIONS[partNum as PartNumber],
-        questionCount: partQuestions.length,
-      },
-      displaySection: {
-        id: section.id,
-        title: `${section.title} - ${LISTENING_PART_TITLES[partNum as PartNumber]}`,
-        type: "LISTENING",
-        duration: LISTENING_PART_DURATIONS[partNum as PartNumber],
-        questions: partQuestions,
-        audioUrl: section.audioUrl,
-      },
-    };
-  });
+      const partStatus = getPartStatus(
+        assignment.status,
+        partQuestions,
+        answers
+      );
+
+      const partAudioUrl =
+        resolveListeningPartAudioUrl(allQuestions, typedPartNum) ||
+        section.audioUrl;
+      const partDuration = resolveListeningPartDurationMinutes(
+        allQuestions,
+        typedPartNum,
+        DEFAULT_LISTENING_PART_DURATION_MINUTES,
+      );
+
+      return {
+        id: `${assignment.id}-part-${partNum}`,
+        originalAssignmentId: assignment.id,
+        studentId: assignment.studentId,
+        status: partStatus,
+        fullMockSessionId: assignment.fullMockSessionId,
+        fullMockSequence: assignment.fullMockSequence,
+        startTime: assignment.startTime,
+        endTime: assignment.endTime,
+        score: assignment.score,
+        createdAt: assignment.createdAt,
+        isPart: true,
+        partInfo: {
+          part: typedPartNum,
+          title: `${LISTENING_PART_TITLES[typedPartNum]}`,
+          duration: partDuration,
+          questionCount: partQuestions.length,
+        },
+        displaySection: {
+          id: section.id,
+          title: `${section.title} - ${LISTENING_PART_TITLES[typedPartNum]}`,
+          type: "LISTENING",
+          duration: partDuration,
+          questions: partQuestions,
+          audioUrl: partAudioUrl,
+        },
+      } as DisplayAssignment;
+    })
+    .filter((part): part is DisplayAssignment => part !== null);
 }
 
 /**
@@ -299,6 +359,8 @@ export function splitWritingTestIntoTasks(
       originalAssignmentId: assignment.id,
       studentId: assignment.studentId,
       status: taskStatus,
+      fullMockSessionId: assignment.fullMockSessionId,
+      fullMockSequence: assignment.fullMockSequence,
       startTime: assignment.startTime,
       endTime: assignment.endTime,
       score: assignment.score,
@@ -333,6 +395,8 @@ export function convertToCompleteDisplayAssignment(
     originalAssignmentId: assignment.id,
     studentId: assignment.studentId,
     status: assignment.status,
+    fullMockSessionId: assignment.fullMockSessionId,
+    fullMockSequence: assignment.fullMockSequence,
     startTime: assignment.startTime,
     endTime: assignment.endTime,
     score: assignment.score,
@@ -351,10 +415,14 @@ export function convertToCompleteDisplayAssignment(
 }
 
 /**
- * Transform assignments into display items based on section type
- * - First complete test: shown as complete (FREE)
- * - Second complete test: split into parts (FREE)
- * - Remaining tests: shown as complete (PREMIUM)
+ * Transform assignments into display items based on section type.
+ * Every assigned test is shown as:
+ * - One full test card
+ * - Split cards (parts/tasks) for that same test when possible
+ *
+ * Free/Premium is derived later by display order:
+ * - First block is FREE (Reading: full + 3 parts, Listening: full + 4 parts, Writing: full + 2 tasks)
+ * - All following full/split cards are PREMIUM
  */
 export function transformAssignments(
   assignments: ExamAssignment[],
@@ -362,35 +430,32 @@ export function transformAssignments(
 ): DisplayAssignment[] {
   const filteredAssignments = assignments
     .filter((a) => a.section?.type === sectionType)
-    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+    .sort(compareAssignmentsForDisplay);
 
   const result: DisplayAssignment[] = [];
 
-  filteredAssignments.forEach((assignment, index) => {
-    if (index === 0) {
-      // First test: show as complete (FREE)
-      result.push(convertToCompleteDisplayAssignment(assignment));
-    } else if (index === 1) {
-      // Second test: split into parts (FREE)
-      let parts: DisplayAssignment[] = [];
-      
-      switch (sectionType) {
-        case "READING":
-          parts = splitReadingTestIntoParts(assignment);
-          break;
-        case "LISTENING":
-          parts = splitListeningTestIntoParts(assignment);
-          break;
-        case "WRITING":
-          parts = splitWritingTestIntoTasks(assignment);
-          break;
-      }
-      
-      result.push(...parts);
-    } else {
-      // Remaining tests: show as complete (PREMIUM)
-      result.push(convertToCompleteDisplayAssignment(assignment));
+  filteredAssignments.forEach((assignment) => {
+    result.push(convertToCompleteDisplayAssignment(assignment));
+
+    if (assignment.fullMockSessionId) {
+      return;
     }
+
+    let parts: DisplayAssignment[] = [];
+
+    switch (sectionType) {
+      case "READING":
+        parts = splitReadingTestIntoParts(assignment);
+        break;
+      case "LISTENING":
+        parts = splitListeningTestIntoParts(assignment);
+        break;
+      case "WRITING":
+        parts = splitWritingTestIntoTasks(assignment);
+        break;
+    }
+
+    result.push(...parts);
   });
 
   return result;

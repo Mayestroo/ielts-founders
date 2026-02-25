@@ -19,9 +19,12 @@ import {
   Center,
   CreateExamSectionForm,
   ExamSectionType,
+  FlowChartData,
+  MatchItem,
   Passage,
   Question,
   QuestionType,
+  TableData,
 } from "@/types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -89,6 +92,82 @@ const questionTypes: {
   },
 ];
 
+type QuestionWithAdvancedFields = Question & {
+  title?: string;
+  questionRange?: string;
+  isInSameLine?: boolean;
+  questionsLabel?: string;
+  optionsLabel?: string;
+  tableData?: TableData;
+  flowchartData?: FlowChartData;
+  items?: MatchItem[];
+  matchOptions?: MatchItem[];
+  correctAnswer?: Record<string, string> | string;
+};
+
+const emptyTableData: TableData = {
+  headers: [],
+  rows: [],
+};
+
+const emptyFlowchartData: FlowChartData = {
+  steps: [],
+};
+
+const resolveAudioSourceUrl = (audioUrl: string): string => {
+  const trimmed = audioUrl.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  if (trimmed.startsWith("http")) {
+    return trimmed;
+  }
+
+  const baseUrl = (
+    process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000/api"
+  ).replace("/api", "");
+
+  return `${baseUrl}${trimmed.startsWith("/") ? "" : "/"}${trimmed}`;
+};
+
+const readAudioDurationMinutes = async (
+  audioUrl: string,
+): Promise<number | null> => {
+  const source = resolveAudioSourceUrl(audioUrl);
+  if (!source) {
+    return null;
+  }
+
+  return new Promise((resolve) => {
+    const audio = new Audio();
+
+    const cleanup = () => {
+      audio.removeEventListener("loadedmetadata", handleLoadedMetadata);
+      audio.removeEventListener("error", handleError);
+      audio.src = "";
+    };
+
+    const handleLoadedMetadata = () => {
+      const duration = Number.isFinite(audio.duration)
+        ? Math.ceil(audio.duration / 60)
+        : 0;
+      cleanup();
+      resolve(duration > 0 ? duration : null);
+    };
+
+    const handleError = () => {
+      cleanup();
+      resolve(null);
+    };
+
+    audio.preload = "metadata";
+    audio.addEventListener("loadedmetadata", handleLoadedMetadata);
+    audio.addEventListener("error", handleError);
+    audio.src = source;
+  });
+};
+
 export default function CreateExamPage() {
   return (
     <Suspense
@@ -112,6 +191,8 @@ function CreateExamContent() {
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [tableDataDrafts, setTableDataDrafts] = useState<Record<string, string>>({});
+  const [flowchartDataDrafts, setFlowchartDataDrafts] = useState<Record<string, string>>({});
 
   const [formData, setFormData] = useState({
     title: "",
@@ -158,27 +239,17 @@ function CreateExamContent() {
     if (formData.type === "LISTENING" && formData.audioUrl) {
       const calculateDuration = async () => {
         try {
-          const baseUrl = (
-            process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000/api"
-          ).replace("/api", "");
-          const url = formData.audioUrl.startsWith("http")
-            ? formData.audioUrl
-            : `${baseUrl}${formData.audioUrl.startsWith("/") ? "" : "/"}${
-                formData.audioUrl
-              }`;
+          const minutes = await readAudioDurationMinutes(formData.audioUrl);
+          if (!minutes) {
+            return;
+          }
 
-          const audio = new Audio(url);
-          audio.addEventListener("loadedmetadata", () => {
-            const minutes = Math.ceil(audio.duration / 60);
-            const totalDuration = minutes + 2;
-            if (totalDuration <= 2) return;
-
-            setFormData((prev) =>
-              prev.duration === totalDuration
-                ? prev
-                : { ...prev, duration: totalDuration }
-            );
-          });
+          const totalDuration = minutes + 2;
+          setFormData((prev) =>
+            prev.duration === totalDuration
+              ? prev
+              : { ...prev, duration: totalDuration }
+          );
         } catch (err) {
           console.error("Error calculating audio duration:", err);
         }
@@ -242,10 +313,12 @@ function CreateExamContent() {
   const addQuestion = (type: QuestionType) => {
     const baseQuestion = {
       id: `q-${Date.now()}`,
+      number: questions.length + 1,
       type,
       questionText: "",
       passageId: passages[0]?.id || "",
       points: 1,
+      instruction: "",
     };
 
     let newQuestion: Question;
@@ -293,19 +366,105 @@ function CreateExamContent() {
         } as Question;
     }
 
-    setQuestions([...questions, newQuestion]);
+    setQuestions((prev) => [...prev, newQuestion]);
   };
 
-  const updateQuestion = (id: string, updates: Partial<Question>) => {
-    setQuestions(
-      questions.map((q) =>
+  const updateQuestion = (
+    id: string,
+    updates: Partial<Question> & Record<string, unknown>
+  ) => {
+    setQuestions((prev) =>
+      prev.map((q) =>
         q.id === id ? ({ ...q, ...updates } as Question) : q
       )
     );
   };
 
   const removeQuestion = (id: string) => {
-    setQuestions(questions.filter((q) => q.id !== id));
+    setQuestions((prev) => prev.filter((q) => q.id !== id));
+    setTableDataDrafts((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    setFlowchartDataDrafts((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+  };
+
+  const applyStructuredJsonField = (
+    questionId: string,
+    field: "tableData" | "flowchartData",
+    rawValue: string
+  ) => {
+    const trimmed = rawValue.trim();
+    if (!trimmed) {
+      updateQuestion(questionId, {
+        [field]: undefined,
+      } as Partial<Question> & Record<string, unknown>);
+      setError("");
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(trimmed) as unknown;
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error("JSON must be an object");
+      }
+
+      updateQuestion(questionId, {
+        [field]: parsed,
+      } as Partial<Question> & Record<string, unknown>);
+      setError("");
+    } catch {
+      setError(`Invalid ${field} JSON for question ${questionId}`);
+    }
+  };
+
+  const createMatchId = (prefix: "item" | "opt") =>
+    `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+
+  const toMatchingAnswerMap = (
+    value: Record<string, string> | string | undefined
+  ): Record<string, string> => {
+    if (!value || typeof value === "string" || Array.isArray(value)) {
+      return {};
+    }
+
+    return value;
+  };
+
+  const addMatchingItem = (question: QuestionWithAdvancedFields) => {
+    const nextItems: MatchItem[] = [
+      ...(question.items || []),
+      { id: createMatchId("item"), text: "" },
+    ];
+    updateQuestion(question.id, { items: nextItems });
+  };
+
+  const addMatchingOption = (question: QuestionWithAdvancedFields) => {
+    const nextOptions: MatchItem[] = [
+      ...(question.matchOptions || []),
+      { id: createMatchId("opt"), text: "" },
+    ];
+    updateQuestion(question.id, { matchOptions: nextOptions });
+  };
+
+  const updateMatchingCorrectAnswer = (
+    question: QuestionWithAdvancedFields,
+    itemId: string,
+    optionId: string
+  ) => {
+    const answerMap = toMatchingAnswerMap(question.correctAnswer);
+    const nextMap: Record<string, string> = { ...answerMap };
+    if (!optionId) {
+      delete nextMap[itemId];
+    } else {
+      nextMap[itemId] = optionId;
+    }
+    updateQuestion(question.id, { correctAnswer: nextMap });
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -345,11 +504,13 @@ function CreateExamContent() {
     });
     setQuestions(data.questions || []);
     setPassages(data.passages || []);
+    setTableDataDrafts({});
+    setFlowchartDataDrafts({});
   };
 
   const handleFileUpload = async (
     e: React.ChangeEvent<HTMLInputElement>,
-    target: "audio" | "question-image",
+    target: "audio" | "question-image" | "part-audio",
     questionId?: string
   ) => {
     const file = e.target.files?.[0];
@@ -365,6 +526,16 @@ function CreateExamContent() {
       });
       if (target === "audio") {
         setFormData({ ...formData, audioUrl: url });
+      } else if (target === "part-audio" && questionId) {
+        const detectedDuration = await readAudioDurationMinutes(url);
+        const existingQuestion = questions.find(
+          (question) => question.id === questionId,
+        ) as QuestionWithAdvancedFields | undefined;
+        updateQuestion(questionId, {
+          partAudioUrl: url,
+          partDurationMinutes:
+            detectedDuration ?? existingQuestion?.partDurationMinutes,
+        });
       } else if (target === "question-image" && questionId) {
         updateQuestion(questionId, { imageUrl: url });
       }
@@ -723,7 +894,29 @@ function CreateExamContent() {
                     No questions added. Select a question type above to start.
                   </p>
                 ) : (
-                  questions.map((question, index) => (
+                  questions.map((question, index) => {
+                    const questionWithAdvanced =
+                      question as QuestionWithAdvancedFields;
+                    const matchingAnswerMap = toMatchingAnswerMap(
+                      questionWithAdvanced.correctAnswer
+                    );
+                    const tableDraft =
+                      tableDataDrafts[question.id] ??
+                      JSON.stringify(
+                        questionWithAdvanced.tableData || emptyTableData,
+                        null,
+                        2
+                      );
+                    const flowchartDraft =
+                      flowchartDataDrafts[question.id] ??
+                      JSON.stringify(
+                        questionWithAdvanced.flowchartData ||
+                          emptyFlowchartData,
+                        null,
+                        2
+                      );
+
+                    return (
                     <div
                       key={question.id || index}
                       className="p-4 rounded-lg border border-slate-200 dark:border-slate-700 space-y-3"
@@ -756,6 +949,131 @@ function CreateExamContent() {
                           })
                         }
                       />
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <Input
+                          label="Question Number"
+                          type="number"
+                          min={1}
+                          value={questionWithAdvanced.number ?? ""}
+                          onChange={(e) => {
+                            const parsed = Number.parseInt(e.target.value, 10);
+                            updateQuestion(question.id, {
+                              number: Number.isFinite(parsed) ? parsed : undefined,
+                            });
+                          }}
+                        />
+                        <Input
+                          label="Question Title (optional)"
+                          placeholder="e.g., Poppy Reserve"
+                          value={questionWithAdvanced.title || ""}
+                          onChange={(e) =>
+                            updateQuestion(question.id, {
+                              title: e.target.value,
+                            })
+                          }
+                        />
+                        <Input
+                          label="Question Range (optional)"
+                          placeholder="e.g., 1-5"
+                          value={questionWithAdvanced.questionRange || ""}
+                          onChange={(e) =>
+                            updateQuestion(question.id, {
+                              questionRange: e.target.value,
+                            })
+                          }
+                        />
+                        {formData.type === "LISTENING" && (
+                          <div className="space-y-2">
+                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
+                              Part Audio URL (optional)
+                            </label>
+                            <div className="flex gap-2">
+                              <Input
+                                placeholder="https://.../part1.mp3"
+                                value={questionWithAdvanced.partAudioUrl || ""}
+                                onChange={(e) =>
+                                  updateQuestion(question.id, {
+                                    partAudioUrl: e.target.value,
+                                  })
+                                }
+                                className="flex-1"
+                              />
+                              <input
+                                type="file"
+                                id={`part-audio-upload-${question.id}`}
+                                className="hidden"
+                                accept="audio/*"
+                                onChange={(e) =>
+                                  handleFileUpload(
+                                    e,
+                                    "part-audio",
+                                    question.id
+                                  )
+                                }
+                              />
+                              <Button
+                                type="button"
+                                variant="secondary"
+                                onClick={() =>
+                                  document
+                                    .getElementById(`part-audio-upload-${question.id}`)
+                                    ?.click()
+                                }
+                                className="shrink-0"
+                              >
+                                Upload Audio
+                              </Button>
+                            </div>
+                            <Input
+                              label="Part Duration (minutes)"
+                              type="number"
+                              min={1}
+                              placeholder="Auto-filled from uploaded audio"
+                              value={questionWithAdvanced.partDurationMinutes ?? ""}
+                              onChange={(e) => {
+                                const parsed = Number.parseInt(e.target.value, 10);
+                                updateQuestion(question.id, {
+                                  partDurationMinutes: Number.isFinite(parsed)
+                                    ? parsed
+                                    : undefined,
+                                });
+                              }}
+                            />
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
+                          Instruction (optional)
+                        </label>
+                        <textarea
+                          value={questionWithAdvanced.instruction || ""}
+                          onChange={(e) =>
+                            updateQuestion(question.id, {
+                              instruction: e.target.value,
+                            })
+                          }
+                          rows={3}
+                          placeholder="Write ONE WORD ONLY..."
+                          className="w-full px-4 py-2.5 rounded-lg border transition-all duration-200 bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:ring-2 focus:ring-slate-300 focus:border-slate-400"
+                        />
+                      </div>
+
+                      <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(questionWithAdvanced.isInSameLine)}
+                          onChange={(e) =>
+                            updateQuestion(question.id, {
+                              isInSameLine: e.target.checked,
+                            })
+                          }
+                          className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-400"
+                        />
+                        Render on same line (for combined summary/note lines)
+                      </label>
 
                       {[
                         "MATCHING",
@@ -803,6 +1121,166 @@ function CreateExamContent() {
                             >
                               Upload Image
                             </Button>
+                          </div>
+                        </div>
+                      )}
+
+                      {[
+                        "MATCHING",
+                        "DIAGRAM_LABELING",
+                        "PLAN_MAP_LABELING",
+                      ].includes(question.type) && (
+                        <div className="space-y-3 rounded-lg border border-slate-200 dark:border-slate-700 p-3">
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <Input
+                              label="Questions Label (optional)"
+                              placeholder="Questions"
+                              value={questionWithAdvanced.questionsLabel || ""}
+                              onChange={(e) =>
+                                updateQuestion(question.id, {
+                                  questionsLabel: e.target.value,
+                                })
+                              }
+                            />
+                            <Input
+                              label="Options Label (optional)"
+                              placeholder="Options"
+                              value={questionWithAdvanced.optionsLabel || ""}
+                              onChange={(e) =>
+                                updateQuestion(question.id, {
+                                  optionsLabel: e.target.value,
+                                })
+                              }
+                            />
+                          </div>
+
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between">
+                              <p className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+                                Match Items
+                              </p>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="secondary"
+                                onClick={() => addMatchingItem(questionWithAdvanced)}
+                              >
+                                Add Item
+                              </Button>
+                            </div>
+                            {(questionWithAdvanced.items || []).map((item) => (
+                              <div key={item.id} className="grid grid-cols-1 md:grid-cols-12 gap-2 items-center">
+                                <Input
+                                  className="md:col-span-6"
+                                  placeholder="Item text"
+                                  value={item.text}
+                                  onChange={(e) => {
+                                    const nextItems = (questionWithAdvanced.items || []).map(
+                                      (entry) =>
+                                        entry.id === item.id
+                                          ? { ...entry, text: e.target.value }
+                                          : entry
+                                    );
+                                    updateQuestion(question.id, { items: nextItems });
+                                  }}
+                                />
+                                <Select
+                                  className="md:col-span-4"
+                                  placeholder="Correct option"
+                                  options={(questionWithAdvanced.matchOptions || []).map((opt) => ({
+                                    value: opt.id,
+                                    label: opt.text || opt.id,
+                                  }))}
+                                  value={matchingAnswerMap[item.id] || ""}
+                                  onChange={(e) =>
+                                    updateMatchingCorrectAnswer(
+                                      questionWithAdvanced,
+                                      item.id,
+                                      e.target.value
+                                    )
+                                  }
+                                />
+                                <Button
+                                  type="button"
+                                  className="md:col-span-2"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => {
+                                    const nextItems = (questionWithAdvanced.items || []).filter(
+                                      (entry) => entry.id !== item.id
+                                    );
+                                    const nextMap = { ...matchingAnswerMap };
+                                    delete nextMap[item.id];
+                                    updateQuestion(question.id, {
+                                      items: nextItems,
+                                      correctAnswer: nextMap,
+                                    });
+                                  }}
+                                >
+                                  Remove
+                                </Button>
+                              </div>
+                            ))}
+                          </div>
+
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between">
+                              <p className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+                                Match Options
+                              </p>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="secondary"
+                                onClick={() => addMatchingOption(questionWithAdvanced)}
+                              >
+                                Add Option
+                              </Button>
+                            </div>
+                            {(questionWithAdvanced.matchOptions || []).map((option) => (
+                              <div key={option.id} className="grid grid-cols-1 md:grid-cols-12 gap-2 items-center">
+                                <Input
+                                  className="md:col-span-10"
+                                  placeholder="Option text"
+                                  value={option.text}
+                                  onChange={(e) => {
+                                    const nextOptions =
+                                      (questionWithAdvanced.matchOptions || []).map((entry) =>
+                                        entry.id === option.id
+                                          ? { ...entry, text: e.target.value }
+                                          : entry
+                                      );
+                                    updateQuestion(question.id, {
+                                      matchOptions: nextOptions,
+                                    });
+                                  }}
+                                />
+                                <Button
+                                  type="button"
+                                  className="md:col-span-2"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => {
+                                    const nextOptions =
+                                      (questionWithAdvanced.matchOptions || []).filter(
+                                        (entry) => entry.id !== option.id
+                                      );
+                                    const nextMap = Object.fromEntries(
+                                      Object.entries(matchingAnswerMap).filter(
+                                        ([, selectedOptionId]) =>
+                                          selectedOptionId !== option.id
+                                      )
+                                    );
+                                    updateQuestion(question.id, {
+                                      matchOptions: nextOptions,
+                                      correctAnswer: nextMap,
+                                    });
+                                  }}
+                                >
+                                  Remove
+                                </Button>
+                              </div>
+                            ))}
                           </div>
                         </div>
                       )}
@@ -930,6 +1408,76 @@ function CreateExamContent() {
                         </div>
                       )}
 
+                      {question.type === "TABLE_COMPLETION" && (
+                        <div className="space-y-2">
+                          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
+                            Table Data JSON
+                          </label>
+                          <textarea
+                            value={tableDraft}
+                            onChange={(e) =>
+                              setTableDataDrafts((prev) => ({
+                                ...prev,
+                                [question.id]: e.target.value,
+                              }))
+                            }
+                            rows={8}
+                            className="w-full px-4 py-2.5 rounded-lg border transition-all duration-200 bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 font-mono text-xs focus:ring-2 focus:ring-slate-300 focus:border-slate-400"
+                          />
+                          <div className="flex justify-end">
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="secondary"
+                              onClick={() =>
+                                applyStructuredJsonField(
+                                  question.id,
+                                  "tableData",
+                                  tableDraft
+                                )
+                              }
+                            >
+                              Apply Table Data
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+
+                      {question.type === "FLOW_CHART_COMPLETION" && (
+                        <div className="space-y-2">
+                          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
+                            Flowchart Data JSON
+                          </label>
+                          <textarea
+                            value={flowchartDraft}
+                            onChange={(e) =>
+                              setFlowchartDataDrafts((prev) => ({
+                                ...prev,
+                                [question.id]: e.target.value,
+                              }))
+                            }
+                            rows={8}
+                            className="w-full px-4 py-2.5 rounded-lg border transition-all duration-200 bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 font-mono text-xs focus:ring-2 focus:ring-slate-300 focus:border-slate-400"
+                          />
+                          <div className="flex justify-end">
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="secondary"
+                              onClick={() =>
+                                applyStructuredJsonField(
+                                  question.id,
+                                  "flowchartData",
+                                  flowchartDraft
+                                )
+                              }
+                            >
+                              Apply Flowchart Data
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+
                       {formData.type === "READING" && passages.length > 0 && (
                         <Select
                           label="Linked Passage"
@@ -959,7 +1507,8 @@ function CreateExamContent() {
                         className="w-32"
                       />
                     </div>
-                  ))
+                    );
+                  })
                 )}
               </CardBody>
             </Card>

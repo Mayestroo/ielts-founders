@@ -5,17 +5,18 @@ import { ADMIN_QUERY_TIMINGS } from '@/lib/query/config';
 import { adminQueryKeys } from '@/lib/query/keys';
 import { Role, User } from '@/types';
 import {
-    useMutation,
-    useQuery,
-    useQueryClient,
+  useMutation,
+  useQuery,
+  useQueryClient,
 } from '@tanstack/react-query';
 import {
-    createContext,
-    ReactNode,
-    useCallback,
-    useContext,
-    useMemo,
-    useRef,
+  createContext,
+  ReactNode,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
 } from 'react';
 
 interface AuthContextType {
@@ -58,28 +59,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const isAuthenticated = !!user;
 
   // Handle auth errors: clear token when we get a definitive auth failure
-  if (profileQuery.isError && !logoutTriggered.current) {
-    const error = profileQuery.error;
-    if (error instanceof Error) {
-      const msg = error.message.toLowerCase();
-      const isAuthError =
-        msg.includes('401') ||
-        msg.includes('403') ||
-        msg.includes('unauthorized') ||
-        msg.includes('forbidden') ||
-        msg.includes('session expired');
-      if (isAuthError) {
-        logoutTriggered.current = true;
-        api.logout();
-        queryClient.removeQueries({ queryKey: adminQueryKeys.authProfile() });
+  useEffect(() => {
+    if (profileQuery.isError && !logoutTriggered.current) {
+      const error = profileQuery.error;
+      if (error instanceof Error) {
+        const msg = error.message.toLowerCase();
+        const isAuthError =
+          msg.includes('401') ||
+          msg.includes('403') ||
+          msg.includes('unauthorized') ||
+          msg.includes('forbidden') ||
+          msg.includes('session expired');
+        if (isAuthError) {
+          logoutTriggered.current = true;
+          api.logout();
+          queryClient.removeQueries({ queryKey: adminQueryKeys.authProfile() });
+        }
       }
     }
-  }
+  }, [profileQuery.isError, profileQuery.error, queryClient]);
 
   // Reset the logout flag when the query succeeds
-  if (profileQuery.isSuccess) {
-    logoutTriggered.current = false;
-  }
+  useEffect(() => {
+    if (profileQuery.isSuccess) {
+      logoutTriggered.current = false;
+    }
+  }, [profileQuery.isSuccess]);
 
   const loginMutation = useMutation({
     mutationFn: ({ username, password }: { username: string; password: string }) =>

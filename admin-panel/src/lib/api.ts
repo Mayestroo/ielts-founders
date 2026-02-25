@@ -272,6 +272,19 @@ class ApiClient {
     });
   }
 
+  async updateFullMockResultVisibility(
+    sessionId: string,
+    showResultsToStudent: boolean,
+  ): Promise<{ id: string; resultsVisibleToStudent: boolean }> {
+    return this.request<{ id: string; resultsVisibleToStudent: boolean }>(
+      `/full-mock-sessions/${sessionId}/result-visibility`,
+      {
+        method: 'PUT',
+        body: JSON.stringify({ showResultsToStudent }),
+      },
+    );
+  }
+
   // Results
   async getResults(
     skip?: number,
@@ -292,10 +305,15 @@ class ApiClient {
     return this.request<ExamResult>(`/results/${id}`, this.buildReadOptions(options));
   }
 
-  async evaluateWriting(resultId: string): Promise<unknown> {
-    return this.request(`/results/${resultId}/evaluate-writing`, {
-      method: 'POST',
-    });
+  async evaluateWriting(
+    resultId: string,
+  ): Promise<ExamResult & { aiEvaluation?: unknown }> {
+    return this.request<ExamResult & { aiEvaluation?: unknown }>(
+      `/results/${resultId}/evaluate-writing`,
+      {
+        method: 'POST',
+      },
+    );
   }
 
   async reassignAssignment(assignmentId: string): Promise<unknown> {

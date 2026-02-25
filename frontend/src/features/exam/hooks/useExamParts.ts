@@ -1,7 +1,42 @@
+import {
+  getListeningPartForQuestion,
+  getListeningQuestionNumber,
+} from '@/lib/listeningAudio';
 import { Question } from '@/types';
 import { useMemo } from 'react';
 import { AnswerValue, ExamPart, Passage } from '../types';
 import { getEffectivePoints } from '../utils';
+
+const resolveWritingTaskNumber = (
+  question: Question,
+  fallbackNumber: number,
+): number => {
+  if (typeof question.number === 'number' && Number.isFinite(question.number)) {
+    const rounded = Math.floor(question.number);
+    if (rounded >= 1) {
+      return rounded;
+    }
+  }
+
+  const normalizedId = question.id.trim().toLowerCase();
+  const directMatch = normalizedId.match(/^(?:w|task)(\d+)$/);
+  if (directMatch) {
+    const parsed = Number.parseInt(directMatch[1], 10);
+    if (Number.isFinite(parsed) && parsed >= 1) {
+      return parsed;
+    }
+  }
+
+  const fallbackDigits = normalizedId.match(/\d+/);
+  if (fallbackDigits) {
+    const parsed = Number.parseInt(fallbackDigits[0], 10);
+    if (Number.isFinite(parsed) && parsed >= 1 && parsed <= 2) {
+      return parsed;
+    }
+  }
+
+  return fallbackNumber;
+};
 
 interface UseExamPartsArgs {
   section:
@@ -14,12 +49,14 @@ interface UseExamPartsArgs {
     | undefined;
   answers: Record<string, AnswerValue>;
   currentQuestionId: string;
+  forcedPartNumber?: number | null;
 }
 
 export const useExamParts = ({
   section,
   answers,
   currentQuestionId,
+  forcedPartNumber = null,
 }: UseExamPartsArgs) => {
   const questions = useMemo(
     () => (section?.questions || []) as Question[],
@@ -87,19 +124,25 @@ export const useExamParts = ({
         };
       });
     } else if (section.type === 'WRITING') {
-      generatedParts = questions.map((question, index) => ({
-        number: index + 1,
-        questionCount: 1,
-        answeredCount: answers[question.id] ? 1 : 0,
-        startQuestionNumber: index + 1,
-        questions: [
-          {
-            id: question.id,
-            number: `Task ${index + 1}`,
-            isAnswered: !!answers[question.id],
-          },
-        ],
-      }));
+      generatedParts = questions
+        .map((question, index) => {
+          const taskNumber = resolveWritingTaskNumber(question, index + 1);
+
+          return {
+            number: taskNumber,
+            questionCount: 1,
+            answeredCount: answers[question.id] ? 1 : 0,
+            startQuestionNumber: taskNumber,
+            questions: [
+              {
+                id: question.id,
+                number: `Task ${taskNumber}`,
+                isAnswered: !!answers[question.id],
+              },
+            ],
+          };
+        })
+        .sort((left, right) => left.number - right.number);
     } else {
       const partRanges = [
         { start: 1, end: 10 },
@@ -109,10 +152,10 @@ export const useExamParts = ({
       ];
 
       generatedParts = partRanges.map((range, index) => {
-        const partQuestions = questions.filter((question) => {
-          const questionNumber = parseInt(question.id.replace(/\D/g, '')) || 0;
-          return questionNumber >= range.start && questionNumber <= range.end;
-        });
+        const partNumber = (index + 1) as 1 | 2 | 3 | 4;
+        const partQuestions = questions.filter(
+          (question) => getListeningPartForQuestion(question) === partNumber
+        );
 
         if (partQuestions.length === 0) {
           return {
@@ -139,8 +182,7 @@ export const useExamParts = ({
         );
 
         const navQuestions = partQuestions.map((question) => {
-          const match = question.id.match(/\d+/);
-          const start = match ? parseInt(match[0]) : 0;
+          const start = getListeningQuestionNumber(question) || 0;
           const points = getEffectivePoints(question);
           const displayLabel =
             points > 1 ? `${start}-${start + points - 1}` : start;
@@ -164,15 +206,38 @@ export const useExamParts = ({
       });
     }
     
-    return generatedParts.filter(part => part.questionCount > 0);
-  }, [answers, passages, questions, section]);
+    let visibleParts = generatedParts.filter((part) => part.questionCount > 0);
+
+    if (forcedPartNumber && visibleParts.length > 0) {
+      // For split routes (/exam/{id}-part-{n} or /exam/{id}-task-{n}),
+      // the filtered section may contain only one visible part/task.
+      // Keep the displayed number aligned with the route segment.
+      visibleParts = visibleParts.map((part, index) =>
+        index === 0
+          ? {
+              ...part,
+              number: forcedPartNumber,
+              questions:
+                section.type === 'WRITING'
+                  ? part.questions.map((question) => ({
+                      ...question,
+                      number: `Task ${forcedPartNumber}`,
+                    }))
+                  : part.questions,
+            }
+          : part,
+      );
+    }
+
+    return visibleParts;
+  }, [answers, forcedPartNumber, passages, questions, section]);
 
   const currentPartNumber = useMemo(() => {
-    if (!currentQuestionId) return 1;
+    if (!currentQuestionId) return parts[0]?.number ?? 1;
     const part = parts.find((currentPart) =>
       currentPart.questions.some((question) => question.id === currentQuestionId)
     );
-    return part ? part.number : 1;
+    return part ? part.number : (parts[0]?.number ?? 1);
   }, [currentQuestionId, parts]);
 
   const activePartIndex = useMemo(

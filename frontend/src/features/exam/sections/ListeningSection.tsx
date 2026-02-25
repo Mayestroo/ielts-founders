@@ -382,15 +382,30 @@ export function ListeningSection({
                       await onRequestFullscreen();
                     }
                     if (audioRef.current) {
-                      // Synchronize audio position if the test has already started
-                      if (assignment.remainingTime !== undefined) {
+                      const remainingSeconds = assignment.remainingTime;
+                      const shouldResumeFromRemainingTime =
+                        Boolean(assignment.fullMockSessionId) &&
+                        assignment.status === "IN_PROGRESS" &&
+                        typeof remainingSeconds === "number";
+
+                      if (shouldResumeFromRemainingTime) {
                         const totalDurationSeconds = section.duration * 60;
-                        const elapsedSeconds = totalDurationSeconds - assignment.remainingTime;
-                        
+                        const elapsedSeconds = Math.max(
+                          0,
+                          totalDurationSeconds - remainingSeconds,
+                        );
+
                         if (elapsedSeconds > 0) {
-                          console.log(`Resuming audio at ${elapsedSeconds}s (Elapsed from ${totalDurationSeconds}s total)`);
+                          console.log(
+                            `Resuming audio at ${elapsedSeconds}s (Elapsed from ${totalDurationSeconds}s total)`,
+                          );
                           audioRef.current.currentTime = elapsedSeconds;
+                        } else {
+                          audioRef.current.currentTime = 0;
                         }
+                      } else {
+                        // Self-study section/part restarts should always begin from 00:00.
+                        audioRef.current.currentTime = 0;
                       }
 
                       audioRef.current
