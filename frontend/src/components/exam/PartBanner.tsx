@@ -4,7 +4,7 @@ interface PartBannerProps {
   partNumber: number;
   startQuestion: number;
   endQuestion: number;
-  type: 'READING' | 'LISTENING' | 'WRITING';
+  type: 'READING' | 'LISTENING' | 'WRITING' | 'SPEAKING';
   instruction?: string;
 }
 
@@ -20,6 +20,8 @@ export function PartBanner({ partNumber, startQuestion, endQuestion, type, instr
     instruction = `Answer questions ${startQuestion}–${endQuestion}.`;
   } else if (type === 'WRITING') {
     instruction = `Task ${partNumber}`;
+  } else if (type === 'SPEAKING') {
+    instruction = `Answer the speaking prompt clearly and naturally.`;
   }
 
   return (

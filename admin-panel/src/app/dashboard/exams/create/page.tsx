@@ -2,29 +2,31 @@
 
 import { ImportModal } from "@/components/exam/ImportModal";
 import {
-  Button,
-  Card,
-  CardBody,
-  CardHeader,
-  Input,
-  Modal,
-  Select,
-  useToast,
+    Button,
+    Card,
+    CardBody,
+    CardHeader,
+    Input,
+    MultiSelectCheckbox,
+    Modal,
+    Select,
+    useToast,
 } from "@/components/ui";
 import { useAuth } from "@/contexts/AuthContext";
 import { api } from "@/lib/api";
 import { ADMIN_QUERY_TIMINGS } from "@/lib/query/config";
 import { adminQueryKeys } from "@/lib/query/keys";
 import {
-  Center,
-  CreateExamSectionForm,
-  ExamSectionType,
-  FlowChartData,
-  MatchItem,
-  Passage,
-  Question,
-  QuestionType,
-  TableData,
+    Center,
+    CreateExamSectionForm,
+    ExamSection,
+    ExamSectionType,
+    FlowChartData,
+    MatchItem,
+    Passage,
+    Question,
+    QuestionType,
+    TableData,
 } from "@/types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -202,6 +204,7 @@ function CreateExamContent() {
     audioUrl: "",
     centerId: "",
   });
+  const [selectedCenterIds, setSelectedCenterIds] = useState<string[]>([]);
 
   const [passages, setPassages] = useState<Passage[]>([]);
   const [questions, setQuestions] = useState<Question[]>([]);
@@ -218,7 +221,16 @@ function CreateExamContent() {
   });
 
   const createExamMutation = useMutation({
-    mutationFn: (payload: CreateExamSectionForm) => api.createExamSection(payload),
+    mutationFn: async (
+      payload: CreateExamSectionForm | CreateExamSectionForm[]
+    ): Promise<ExamSection[]> => {
+      if (Array.isArray(payload)) {
+        return Promise.all(payload.map((item) => api.createExamSection(item)));
+      }
+
+      const created = await api.createExamSection(payload);
+      return [created];
+    },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: adminQueryKeys.examSections() });
       await queryClient.invalidateQueries({ queryKey: adminQueryKeys.examSectionOptions() });
@@ -229,7 +241,7 @@ function CreateExamContent() {
   const centers = centersQuery.data ?? [];
 
   useEffect(() => {
-    if (typeParam && ["READING", "LISTENING", "WRITING"].includes(typeParam)) {
+    if (typeParam && ["READING", "LISTENING", "WRITING", "SPEAKING"].includes(typeParam)) {
       setFormData((prev) => ({ ...prev, type: typeParam as ExamSectionType }));
     }
   }, [typeParam]);
@@ -283,6 +295,35 @@ function CreateExamContent() {
           questionText: "",
           points: 6,
           instruction: "Write at least 250 words.",
+        } as Question,
+      ]);
+    }
+
+    if (formData.type === "SPEAKING" && questions.length === 0) {
+      setQuestions([
+        {
+          id: "s1",
+          type: "SHORT_ANSWER",
+          questionText: "Part 1: Personal introduction and familiar topics.",
+          points: 3,
+          instruction:
+            "Answer briefly and naturally about yourself, your studies, and daily routines.",
+        } as Question,
+        {
+          id: "s2",
+          type: "SHORT_ANSWER",
+          questionText: "Part 2: Individual long turn.",
+          points: 3,
+          instruction:
+            "Speak for 1-2 minutes on the cue card topic with clear examples.",
+        } as Question,
+        {
+          id: "s3",
+          type: "SHORT_ANSWER",
+          questionText: "Part 3: Discussion and abstract questions.",
+          points: 3,
+          instruction:
+            "Discuss broader ideas related to Part 2 and justify your opinions.",
         } as Question,
       ]);
     }
@@ -483,8 +524,32 @@ function CreateExamContent() {
         delete submissionData.audioUrl;
       }
 
-      await createExamMutation.mutateAsync(submissionData as CreateExamSectionForm);
-      success("Exam section created");
+      if (user?.role === "SUPER_ADMIN") {
+        const uniqueCenterIds = Array.from(
+          new Set(selectedCenterIds.filter((centerId) => centerId.trim().length > 0))
+        );
+
+        if (uniqueCenterIds.length === 0) {
+          setError("Please select at least one center");
+          return;
+        }
+
+        const payloads = uniqueCenterIds.map((centerId) => ({
+          ...submissionData,
+          centerId,
+        }));
+
+        await createExamMutation.mutateAsync(payloads);
+        success(
+          uniqueCenterIds.length === 1
+            ? "Exam section created"
+            : `Exam sections created for ${uniqueCenterIds.length} centers`
+        );
+      } else {
+        await createExamMutation.mutateAsync(submissionData);
+        success("Exam section created");
+      }
+
       router.push("/dashboard/exams");
     } catch (err) {
       setError(
@@ -494,16 +559,29 @@ function CreateExamContent() {
   };
 
   const handleImport = (data: CreateExamSectionForm) => {
+    const importedPayload = data as CreateExamSectionForm & {
+      centerIds?: string[];
+    };
+    const importedCenterIds = Array.isArray(importedPayload.centerIds)
+      ? importedPayload.centerIds.filter(
+          (centerId): centerId is string =>
+            typeof centerId === "string" && centerId.trim().length > 0
+        )
+      : data.centerId
+        ? [data.centerId]
+        : [];
+
     setFormData({
       title: data.title || "",
       type: data.type || "READING",
       description: data.description || "",
       duration: data.duration || 60,
       audioUrl: data.audioUrl || "",
-      centerId: data.centerId || "",
+      centerId: importedCenterIds[0] || "",
     });
     setQuestions(data.questions || []);
     setPassages(data.passages || []);
+    setSelectedCenterIds(importedCenterIds);
     setTableDataDrafts({});
     setFlowchartDataDrafts({});
   };
@@ -630,6 +708,7 @@ function CreateExamContent() {
                   { value: "READING", label: "Reading" },
                   { value: "LISTENING", label: "Listening" },
                   { value: "WRITING", label: "Writing" },
+                  { value: "SPEAKING", label: "Speaking" },
                 ]}
                 value={formData.type}
                 onChange={(e) => {
@@ -701,17 +780,21 @@ function CreateExamContent() {
             )}
 
             {user?.role === "SUPER_ADMIN" && (
-              <Select
-                label="Assigned Center"
-                value={formData.centerId}
-                onChange={(e) =>
-                  setFormData({ ...formData, centerId: e.target.value })
-                }
-                options={[
-                  { value: "", label: "Select a center" },
-                  ...centers.map((c) => ({ value: c.id, label: c.name })),
-                ]}
-                required
+              <MultiSelectCheckbox
+                id="assigned-centers"
+                label="Assigned Centers"
+                options={centers.map((center) => ({
+                  value: center.id,
+                  label: center.name,
+                }))}
+                value={selectedCenterIds}
+                onChange={(nextCenterIds) => {
+                  setSelectedCenterIds(nextCenterIds);
+                  setFormData((prev) => ({
+                    ...prev,
+                    centerId: nextCenterIds[0] || "",
+                  }));
+                }}
               />
             )}
           </CardBody>

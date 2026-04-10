@@ -2,6 +2,7 @@ export * from './create-assignment.dto';
 export * from './create-bulk-full-mock.dto';
 export * from './create-exam-section.dto';
 export * from './create-full-mock.dto';
+export * from './manual-grade-speaking.dto';
 export * from './session.dto';
 export * from './submit-answers.dto';
 export * from './update-exam-section.dto';

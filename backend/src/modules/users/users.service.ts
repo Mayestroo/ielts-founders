@@ -10,6 +10,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 
+type TariffLabel = 'PREMIUM' | 'GOLD' | 'FREE';
+
 @Injectable()
 export class UsersService {
   constructor(private prisma: PrismaService) {}
@@ -56,6 +58,21 @@ export class UsersService {
     creatorRole: Role,
     creatorCenterId: string | null,
   ) {
+    if (createUserDto.premiumActive && createUserDto.goldActive) {
+      throw new BadRequestException(
+        'A user cannot have both Gold and Premium access at the same time',
+      );
+    }
+
+    if (
+      createUserDto.role !== Role.STUDENT &&
+      (createUserDto.premiumActive || createUserDto.goldActive)
+    ) {
+      throw new BadRequestException(
+        'Gold or Premium access can only be set for students',
+      );
+    }
+
     // Validate role creation permissions
     if (!this.canCreateRole(creatorRole, createUserDto.role)) {
       throw new ForbiddenException(
@@ -90,9 +107,13 @@ export class UsersService {
     // Hash password
     const hashedPassword = await bcrypt.hash(createUserDto.password, 10);
 
+    const { sessionReferralSource, ...restCreateUserData } = createUserDto;
+
     const user = await this.prisma.user.create({
       data: {
-        ...createUserDto,
+        ...restCreateUserData,
+        sessionReferralSource:
+          createUserDto.role === Role.STUDENT ? null : sessionReferralSource,
         password: hashedPassword,
         centerId,
       },
@@ -267,6 +288,66 @@ export class UsersService {
     return { users, total };
   }
 
+  async getTariffReport(requesterRole: Role, requesterCenterId: string | null) {
+    if (
+      requesterRole !== Role.SUPER_ADMIN &&
+      requesterRole !== Role.CENTER_ADMIN &&
+      requesterRole !== Role.TEACHER
+    ) {
+      throw new ForbiddenException(
+        'You do not have permission to access reports',
+      );
+    }
+
+    if (requesterRole !== Role.SUPER_ADMIN && !requesterCenterId) {
+      throw new ForbiddenException('Center context is required');
+    }
+
+    const where: Prisma.UserWhereInput = {
+      role: Role.STUDENT,
+      ...(requesterRole === Role.SUPER_ADMIN
+        ? {}
+        : { centerId: requesterCenterId }),
+    };
+
+    const students = await this.prisma.user.findMany({
+      where,
+      select: {
+        id: true,
+        username: true,
+        firstName: true,
+        lastName: true,
+        sessionReferralSource: true,
+        premiumActive: true,
+        goldActive: true,
+        updatedAt: true,
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+
+    return students.map((student) => {
+      const tariff: TariffLabel = student.premiumActive
+        ? 'PREMIUM'
+        : student.goldActive
+          ? 'GOLD'
+          : 'FREE';
+
+      return {
+        userId: student.id,
+        user:
+          `${student.firstName || ''} ${student.lastName || ''}`.trim() ||
+          student.username,
+        username: student.username,
+        referral: student.sessionReferralSource,
+        tariff,
+        tariffActivatedAt:
+          tariff === 'FREE' ? null : student.updatedAt.toISOString(),
+      };
+    });
+  }
+
   async findOne(
     id: string,
     requesterId: string,
@@ -345,21 +426,43 @@ export class UsersService {
       if (
         updateUserDto.role ||
         updateUserDto.centerId ||
-        updateUserDto.premiumActive !== undefined
+        updateUserDto.premiumActive !== undefined ||
+        updateUserDto.goldActive !== undefined
       ) {
         throw new ForbiddenException(
-          'You cannot change role, center, or premium access',
+          'You cannot change role, center, or tariff access',
         );
       }
     }
 
     if (
-      updateUserDto.premiumActive !== undefined &&
+      (updateUserDto.premiumActive !== undefined ||
+        updateUserDto.goldActive !== undefined) &&
       user.role !== Role.STUDENT
     ) {
       throw new ForbiddenException(
-        'Premium access can only be changed for students',
+        'Gold or Premium access can only be changed for students',
       );
+    }
+
+    if (updateUserDto.premiumActive && updateUserDto.goldActive) {
+      throw new BadRequestException(
+        'A user cannot have both Gold and Premium access at the same time',
+      );
+    }
+
+    if (
+      updateUserDto.premiumActive === true &&
+      updateUserDto.goldActive === undefined
+    ) {
+      updateUserDto.goldActive = false;
+    }
+
+    if (
+      updateUserDto.goldActive === true &&
+      updateUserDto.premiumActive === undefined
+    ) {
+      updateUserDto.premiumActive = false;
     }
 
     if (

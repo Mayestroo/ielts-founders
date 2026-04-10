@@ -2,7 +2,10 @@ import { QueryProvider } from "@/components/providers/QueryProvider";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { SettingsProvider } from "@/contexts/SettingsContext";
 import type { Metadata } from "next";
+import { Inter } from "next/font/google";
 import "./globals.css";
+
+const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
   title: "IELTS Mock Exam - Student Portal",
@@ -33,7 +36,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" translate="no" className="notranslate">
-      <body className="antialiased notranslate">
+      <body className={`antialiased notranslate ${inter.className}`}>
         <QueryProvider>
           <AuthProvider>
             <SettingsProvider>{children}</SettingsProvider>

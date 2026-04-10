@@ -3,6 +3,7 @@ export { Button } from "./Button";
 export { Card, CardBody, CardFooter, CardHeader } from "./Card";
 export { ConfirmationModal } from "./ConfirmationModal";
 export { Input } from "./Input";
+export { MultiSelectCheckbox } from "./MultiSelectCheckbox";
 export * from "./Modal";
 export * from "./Select";
 export { ThemeSwitcher } from "./ThemeSwitcher";

@@ -7,7 +7,7 @@ import Image from 'next/image';
 interface ExamHeaderProps {
   title: string;
   remainingSeconds: number;
-  sectionType: 'READING' | 'LISTENING' | 'WRITING';
+  sectionType: 'READING' | 'LISTENING' | 'WRITING' | 'SPEAKING';
   isAudioPlaying?: boolean;
   autoStart?: boolean;
   showTimer?: boolean;

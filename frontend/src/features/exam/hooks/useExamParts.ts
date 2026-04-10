@@ -143,6 +143,37 @@ export const useExamParts = ({
           };
         })
         .sort((left, right) => left.number - right.number);
+    } else if (section.type === 'SPEAKING') {
+      const normalizedQuestions =
+        questions.length > 0
+          ? questions
+          : [
+              {
+                id: 's1',
+                type: 'SHORT_ANSWER',
+                questionText: '',
+                points: 1,
+              } as Question,
+            ];
+
+      generatedParts = normalizedQuestions.slice(0, 3).map((question, index) => {
+        const partNumber = index + 1;
+        const answer = answers[question.id];
+
+        return {
+          number: partNumber,
+          questionCount: 1,
+          answeredCount: answer ? 1 : 0,
+          startQuestionNumber: partNumber,
+          questions: [
+            {
+              id: question.id,
+              number: partNumber,
+              isAnswered: !!answer,
+            },
+          ],
+        };
+      });
     } else {
       const partRanges = [
         { start: 1, end: 10 },

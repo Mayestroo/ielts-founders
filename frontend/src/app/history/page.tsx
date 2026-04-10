@@ -10,9 +10,9 @@ import { useQuery } from "@tanstack/react-query";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
-type HistorySectionType = Extract<ExamSectionType, "LISTENING" | "READING" | "WRITING">;
+type HistorySectionType = Extract<ExamSectionType, "LISTENING" | "READING" | "WRITING" | "SPEAKING">;
 type ScoreFilter = "ALL" | "BELOW_40" | "BETWEEN_40_70" | "ABOVE_70";
 
 interface SectionMetadata {
@@ -36,13 +36,19 @@ interface AttemptListItem {
   submittedAtMs: number;
 }
 
-const SECTION_ORDER: HistorySectionType[] = ["READING", "LISTENING", "WRITING"];
+const SECTION_ORDER: HistorySectionType[] = ["READING", "LISTENING", "WRITING", "SPEAKING"];
+const SPLIT_SECTION_ORDER: Array<Extract<HistorySectionType, "READING" | "LISTENING" | "WRITING">> = [
+  "READING",
+  "LISTENING",
+  "WRITING",
+];
 const PAGE_SIZE = 8;
 
 const SECTION_LABELS: Record<HistorySectionType, string> = {
   READING: "Reading",
   LISTENING: "Listening",
   WRITING: "Writing",
+  SPEAKING: "Speaking",
 };
 
 const SCORE_FILTER_OPTIONS: Array<{ value: ScoreFilter; label: string }> = [
@@ -55,7 +61,12 @@ const SCORE_FILTER_OPTIONS: Array<{ value: ScoreFilter; label: string }> = [
 const isHistorySectionType = (
   sectionType: ExamSectionType | undefined,
 ): sectionType is HistorySectionType => {
-  return sectionType === "READING" || sectionType === "LISTENING" || sectionType === "WRITING";
+  return (
+    sectionType === "READING" ||
+    sectionType === "LISTENING" ||
+    sectionType === "WRITING" ||
+    sectionType === "SPEAKING"
+  );
 };
 
 const buildFullMockOnlySectionIdSet = (assignments: ExamAssignment[]) => {
@@ -102,12 +113,36 @@ const hasAnswerValue = (value: unknown): boolean => {
 
 const getAnsweredKeys = (answers: Record<string, unknown> | undefined): string[] => {
   return Object.entries(answers || {})
-    .filter(([key, value]) => !key.startsWith("_") && hasAnswerValue(value))
+    .filter(([key, value]) => {
+      if (key.startsWith("_")) {
+        return false;
+      }
+
+      if (
+        key === "speakingAudioUrl" ||
+        key === "audioDurationSeconds" ||
+        key.endsWith("__durationSeconds")
+      ) {
+        return false;
+      }
+
+      return hasAnswerValue(value);
+    })
     .map(([key]) => key);
 };
 
 const getResultAnswers = (result: ExamResult): Record<string, unknown> => {
   return (result.answers || {}) as Record<string, unknown>;
+};
+
+const isObjectRecord = (value: unknown): value is Record<string, unknown> => {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+};
+
+const getAttemptMode = (answers: Record<string, unknown>): string => {
+  return typeof answers._attemptMode === "string"
+    ? answers._attemptMode.trim().toLowerCase()
+    : "";
 };
 
 const getStoredAttemptType = (answers: Record<string, unknown>): string => {
@@ -128,11 +163,20 @@ const getStoredAttemptQuestionCount = (
 };
 
 const isStandaloneResult = (answers: Record<string, unknown>): boolean => {
-  if (answers._attemptMode === "standalone") {
+  if (getAttemptMode(answers) === "standalone") {
     return true;
   }
 
   return answers._isStandalone === true;
+};
+
+const isOfflineModeResult = (answers: Record<string, unknown>): boolean => {
+  const attemptMode = getAttemptMode(answers);
+  return attemptMode === "full-mock" || attemptMode === "offline-manual";
+};
+
+const hasManualSpeakingFeedback = (feedback: unknown): boolean => {
+  return isObjectRecord(feedback) && isObjectRecord(feedback.manualEvaluation);
 };
 
 const getResultFullMockSessionId = (answers: Record<string, unknown>): string => {
@@ -237,6 +281,36 @@ const resolveWritingTestType = (
   return "Full";
 };
 
+const resolveSpeakingTestType = (
+  answeredKeys: string[],
+  metadata?: SectionMetadata,
+): string => {
+  if (answeredKeys.length === 0) {
+    return "Full";
+  }
+
+  const normalizedKeys = answeredKeys.map((key) => key.toLowerCase());
+  const partQuestionIds = [
+    metadata?.questions[0]?.id?.toLowerCase(),
+    metadata?.questions[1]?.id?.toLowerCase(),
+    metadata?.questions[2]?.id?.toLowerCase(),
+  ];
+
+  for (let index = 0; index < 3; index += 1) {
+    const accepted = new Set<string>([`s${index + 1}`]);
+    const questionId = partQuestionIds[index];
+    if (questionId) {
+      accepted.add(questionId);
+    }
+
+    if (normalizedKeys.length > 0 && normalizedKeys.every((key) => accepted.has(key))) {
+      return `Part ${index + 1}`;
+    }
+  }
+
+  return "Full";
+};
+
 const resolveTestType = (
   sectionType: HistorySectionType,
   result: ExamResult,
@@ -273,6 +347,10 @@ const resolveTestType = (
 
   if (sectionType === "LISTENING") {
     return resolveListeningTestType(answeredKeys, metadata);
+  }
+
+  if (sectionType === "SPEAKING") {
+    return resolveSpeakingTestType(answeredKeys, metadata);
   }
 
   return resolveWritingTestType(answeredKeys, metadata);
@@ -385,6 +463,41 @@ const resolveQuestionsForAttempt = ({
     return allQuestions;
   }
 
+  if (sectionType === "SPEAKING") {
+    const explicitPart = getExplicitPartOrTask(attemptType, "part");
+    if (explicitPart && allQuestions[explicitPart - 1]) {
+      return [allQuestions[explicitPart - 1]];
+    }
+
+    if (hasAttemptTypeHint) {
+      return allQuestions;
+    }
+
+    const normalizedKeys = answeredKeys.map((key) => key.toLowerCase());
+    const partQuestionIds = [
+      allQuestions[0]?.id?.toLowerCase(),
+      allQuestions[1]?.id?.toLowerCase(),
+      allQuestions[2]?.id?.toLowerCase(),
+    ];
+
+    for (let index = 0; index < 3; index += 1) {
+      const accepted = new Set<string>([`s${index + 1}`]);
+      const questionId = partQuestionIds[index];
+      if (questionId) {
+        accepted.add(questionId);
+      }
+
+      if (normalizedKeys.length > 0 && normalizedKeys.every((key) => accepted.has(key))) {
+        const scoped = allQuestions[index];
+        if (scoped) {
+          return [scoped];
+        }
+      }
+    }
+
+    return allQuestions;
+  }
+
   const explicitTask = getExplicitPartOrTask(attemptType, "task");
   if (explicitTask === 1 && allQuestions[0]) {
     return [allQuestions[0]];
@@ -440,6 +553,14 @@ const getScorePercent = (result: ExamResult) => {
   const totalScore = Number(result.totalScore);
 
   if (Number.isFinite(score) && Number.isFinite(totalScore) && totalScore > 0) {
+    // For writing, prefer recalculated band from feedback
+    const sectionType = result.section?.type;
+    if (sectionType === "WRITING") {
+      const recalcBand = getWritingBandFromFeedback(result.feedback);
+      if (recalcBand != null && recalcBand > 0) {
+        return clamp((recalcBand / 9) * 100, 0, 100);
+      }
+    }
     return clamp((score / totalScore) * 100, 0, 100);
   }
 
@@ -448,6 +569,41 @@ const getScorePercent = (result: ExamResult) => {
   }
 
   return 0;
+};
+
+/**
+ * Recalculate the correct writing band from feedback JSON, ignoring
+ * all-zero placeholder tasks that legacy code produced for empty essays.
+ */
+const getWritingBandFromFeedback = (feedback: unknown): number | null => {
+  if (typeof feedback !== "object" || feedback === null || Array.isArray(feedback)) return null;
+  const fb = feedback as Record<string, unknown>;
+  if (typeof fb.overall_band !== "number") return null;
+
+  const weights: Record<string, number> = { task1: 1, task2: 2 };
+  const taskKeys = ["task1", "task2"] as const;
+  const validTasks: { key: string; band: number }[] = [];
+
+  for (const key of taskKeys) {
+    const t = fb[key];
+    if (typeof t !== "object" || t === null || Array.isArray(t)) continue;
+    const task = t as Record<string, unknown>;
+    const band = Number(task.overall_band) || 0;
+    const scores = task.scores;
+    if (typeof scores !== "object" || scores === null || Array.isArray(scores)) continue;
+    const s = scores as Record<string, unknown>;
+    const hasAny =
+      band > 0 ||
+      (Number(s.task_achievement) || 0) > 0 ||
+      (Number(s.coherence_cohesion) || 0) > 0 ||
+      (Number(s.lexical_resource) || 0) > 0 ||
+      (Number(s.grammar) || 0) > 0;
+    if (hasAny) validTasks.push({ key, band });
+  }
+
+  if (validTasks.length === 0) return null;
+  const totalWeight = validTasks.reduce((s, t) => s + (weights[t.key] ?? 1), 0);
+  return Math.round((validTasks.reduce((s, t) => s + t.band * (weights[t.key] ?? 1), 0) / totalWeight) * 2) / 2;
 };
 
 const formatPercent = (value: number) => `${Math.round(value)}%`;
@@ -561,6 +717,25 @@ export default function HistoryPage() {
     gcTime: STUDENT_QUERY_TIMINGS.center.gcTime,
   });
 
+  const hasAnyPendingWriting = useCallback(
+    (results: ExamResult[] | undefined): boolean => {
+      if (!results) return false;
+      return results.some((r) => {
+        if (r.section?.type !== "WRITING") return false;
+        const score = Number(r.score);
+        const totalScore = Number(r.totalScore);
+        const hasObjectiveScore =
+          Number.isFinite(score) && Number.isFinite(totalScore) && totalScore > 0;
+        if (hasObjectiveScore) return false;
+        const recalcBand = getWritingBandFromFeedback(r.feedback);
+        if (recalcBand != null && recalcBand > 0) return false;
+        if (typeof r.bandScore === "number" && r.bandScore > 0) return false;
+        return true; // still pending
+      });
+    },
+    [],
+  );
+
   const resultsQuery = useQuery({
     queryKey: studentQueryKeys.myResults(),
     queryFn: ({ signal }) => api.getMyResults({ signal }),
@@ -571,6 +746,8 @@ export default function HistoryPage() {
     staleTime: STUDENT_QUERY_TIMINGS.results.staleTime,
     gcTime: STUDENT_QUERY_TIMINGS.results.gcTime,
     placeholderData: (previousData) => previousData,
+    refetchInterval: (query) =>
+      hasAnyPendingWriting(query.state.data) ? 3000 : false,
   });
 
   const needsLegacyAssignmentMetadata = useMemo(() => {
@@ -663,6 +840,7 @@ export default function HistoryPage() {
       READING: [],
       LISTENING: [],
       WRITING: [],
+      SPEAKING: [],
     };
 
     for (const assignment of assignmentsQuery.data ?? []) {
@@ -676,7 +854,7 @@ export default function HistoryPage() {
 
     const splitSectionIds = new Set<string>();
 
-    for (const sectionType of SECTION_ORDER) {
+    for (const sectionType of SPLIT_SECTION_ORDER) {
       const sorted = [...grouped[sectionType]].sort(
         (left, right) =>
           new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime(),
@@ -700,6 +878,17 @@ export default function HistoryPage() {
       }
 
       const resultAnswers = getResultAnswers(result);
+
+      // Manual speaking grading belongs to offline results, even when legacy
+      // records were stamped as standalone.
+      if (sectionType === "SPEAKING" && hasManualSpeakingFeedback(result.feedback)) {
+        return false;
+      }
+
+      if (isOfflineModeResult(resultAnswers)) {
+        return false;
+      }
+
       if (isStandaloneResult(resultAnswers)) {
         return true;
       }
@@ -765,13 +954,21 @@ export default function HistoryPage() {
           isObjectiveSection && scopedTotalScore > 0 ? scopedTotalScore : totalScore;
 
         let scorePercent = getScorePercent(result);
-        if (hasObjectiveScore && effectiveTotalScore > 0) {
+        if (isObjectiveSection && hasObjectiveScore && effectiveTotalScore > 0) {
           scorePercent = clamp((score / effectiveTotalScore) * 100, 0, 100);
         }
 
         let correctDisplay = "Score pending";
-        if (hasObjectiveScore && effectiveTotalScore > 0) {
+        if (isObjectiveSection && hasObjectiveScore && effectiveTotalScore > 0) {
           correctDisplay = `${Math.round(score)}/${Math.round(effectiveTotalScore)} correct`;
+        } else if (sectionType === "WRITING") {
+          const recalcBand = getWritingBandFromFeedback(result.feedback);
+          if (recalcBand != null && recalcBand > 0) {
+            correctDisplay = `Band ${recalcBand.toFixed(1)}`;
+            scorePercent = clamp((recalcBand / 9) * 100, 0, 100);
+          } else if (typeof result.bandScore === "number") {
+            correctDisplay = `Band ${result.bandScore.toFixed(1)}`;
+          }
         } else if (typeof result.bandScore === "number") {
           correctDisplay = `Band ${result.bandScore.toFixed(1)}`;
         }
@@ -932,6 +1129,14 @@ export default function HistoryPage() {
                   Online Results
                 </Link>
               </li>
+              <li>
+                <Link
+                  href="/pricing"
+                  className="inline-flex rounded-lg px-3 py-2 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900"
+                >
+                  Pricing
+                </Link>
+              </li>
             </ul>
           </nav>
 
@@ -1084,7 +1289,7 @@ export default function HistoryPage() {
               <section className="mt-6 rounded-2xl border border-[#e3e3e6] bg-white p-8 text-center">
                 <h3 className="text-lg font-semibold text-gray-900">No self-study attempts yet</h3>
                 <p className="mt-2 text-sm text-gray-500">
-                  Complete Reading, Listening, or Writing standalone tests and your history will appear here.
+                  Complete Reading, Listening, Writing, or Speaking standalone tests and your history will appear here.
                 </p>
               </section>
             ) : filteredAttempts.length === 0 ? (

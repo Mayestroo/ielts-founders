@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -27,11 +28,31 @@ export class ExamSectionService {
     return {} satisfies Prisma.ExamSectionWhereInput;
   }
 
+  private validateSpeakingStructure(
+    type: string | undefined,
+    questions: unknown,
+  ): void {
+    if (type !== 'SPEAKING') {
+      return;
+    }
+
+    if (!Array.isArray(questions) || questions.length !== 3) {
+      throw new BadRequestException(
+        'Speaking sections must contain exactly 3 parts/questions',
+      );
+    }
+  }
+
   async create(
     createSectionDto: CreateExamSectionDto,
     teacherId: string,
     centerId: string,
   ) {
+    this.validateSpeakingStructure(
+      createSectionDto.type,
+      createSectionDto.questions,
+    );
+
     const section = await this.prisma.examSection.create({
       data: {
         ...createSectionDto,
@@ -159,6 +180,11 @@ export class ExamSectionService {
     requesterCenterId: string | null,
   ) {
     const section = await this.findById(id, userRole, requesterCenterId);
+
+    this.validateSpeakingStructure(
+      updateSectionDto.type ?? section.type,
+      updateSectionDto.questions,
+    );
 
     if (userRole === Role.TEACHER && section.teacherId !== userId) {
       throw new ForbiddenException('You can only update your own sections');

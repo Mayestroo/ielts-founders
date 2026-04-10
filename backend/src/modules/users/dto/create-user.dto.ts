@@ -57,4 +57,8 @@ export class CreateUserDto {
   @IsOptional()
   @IsBoolean()
   premiumActive?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  goldActive?: boolean;
 }

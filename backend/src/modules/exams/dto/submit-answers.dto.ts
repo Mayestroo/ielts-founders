@@ -1,4 +1,10 @@
-import { IsBoolean, IsNotEmpty, IsObject, IsOptional, IsString } from 'class-validator';
+import {
+  IsBoolean,
+  IsNotEmpty,
+  IsObject,
+  IsOptional,
+  IsString,
+} from 'class-validator';
 
 export class SubmitAnswersDto {
   @IsObject()

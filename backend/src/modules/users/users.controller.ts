@@ -71,6 +71,12 @@ export class UsersController {
     );
   }
 
+  @Get('tariff-report')
+  @Roles(Role.SUPER_ADMIN, Role.CENTER_ADMIN, Role.TEACHER)
+  getTariffReport(@Request() req) {
+    return this.usersService.getTariffReport(req.user.role, req.user.centerId);
+  }
+
   @Get(':id')
   findOne(@Param('id') id: string, @Request() req) {
     return this.usersService.findOne(

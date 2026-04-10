@@ -1,7 +1,7 @@
 // Type definitions for IELTS Mock Platform
 
 export type Role = "SUPER_ADMIN" | "CENTER_ADMIN" | "TEACHER" | "STUDENT";
-export type ExamSectionType = "LISTENING" | "READING" | "WRITING";
+export type ExamSectionType = "LISTENING" | "READING" | "WRITING" | "SPEAKING";
 export type AssignmentStatus = "ASSIGNED" | "IN_PROGRESS" | "SUBMITTED";
 export type SessionAttendanceMode = "ONLINE" | "OFFLINE";
 export type SessionReferralSource =
@@ -32,6 +32,7 @@ export interface User {
   lastName?: string;
   role: Role;
   points?: number;
+  goldActive?: boolean;
   premiumActive?: boolean;
   isPremium?: boolean;
   sessionAttendanceMode?: SessionAttendanceMode;
@@ -285,6 +286,23 @@ export interface ExamResult {
   submittedAt: string;
   student?: User;
   section?: ExamSection;
+}
+
+export interface WritingSubmissionStatus {
+  id: string;
+  status: string;
+  resultId: string;
+  bandScore?: number | null;
+  evaluation?: Record<string, any>;
+  isComplete: boolean;
+  isFailed: boolean;
+  canRetry: boolean;
+  attempts: number;
+  maxAttempts: number;
+  sectionTitle?: string;
+  queuedAt?: string;
+  processingAt?: string;
+  completedAt?: string;
 }
 
 // Form types

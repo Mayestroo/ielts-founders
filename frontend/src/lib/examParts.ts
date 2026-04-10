@@ -369,7 +369,7 @@ export function splitWritingTestIntoTasks(
       isTask: true,
       taskInfo: {
         task: taskNum as TaskNumber,
-        title: question?.questionText?.substring(0, 50) + "..." || WRITING_TASK_TITLES[taskNum as TaskNumber],
+        title: (question?.questionText ? question.questionText.substring(0, 50) + "..." : WRITING_TASK_TITLES[taskNum as TaskNumber]),
         duration: WRITING_TASK_DURATIONS[taskNum as TaskNumber],
         questionCount: 1,
       },
@@ -453,6 +453,9 @@ export function transformAssignments(
       case "WRITING":
         parts = splitWritingTestIntoTasks(assignment);
         break;
+      case "SPEAKING":
+        parts = [];
+        break;
     }
 
     result.push(...parts);
@@ -481,6 +484,8 @@ export function getDisplayAssignmentTier(
     freeCount = 5; // 1 complete + 4 parts
   } else if (sectionType === "WRITING") {
     freeCount = 3; // 1 complete + 2 tasks
+  } else if (sectionType === "SPEAKING") {
+    freeCount = 1;
   }
 
   if (index < freeCount) {

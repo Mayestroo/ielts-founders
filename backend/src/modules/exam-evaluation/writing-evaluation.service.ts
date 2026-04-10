@@ -48,22 +48,6 @@ const emptyScores = (): IeltsWritingScores => ({
   grammar: 0,
 });
 
-const emptyEssayResult = (
-  taskType: 'task1' | 'task2',
-  wordCount: number,
-): IeltsWritingResult => ({
-  task_type: taskType,
-  scores: emptyScores(),
-  overall_band: 0,
-  word_count_penalty: taskType === 'task1' ? wordCount < 150 : wordCount < 250,
-  strengths: [],
-  weaknesses: ['No response provided for this task.'],
-  major_errors: [],
-  band_improvement_advice: [
-    'Write a complete response that directly addresses the task prompt.',
-  ],
-});
-
 const buildSectionResult = (
   taskResults: Partial<Record<'task1' | 'task2', IeltsWritingResult>>,
 ): IeltsWritingSectionResult => {
@@ -338,31 +322,35 @@ export class WritingEvaluationService {
 
     if (questions?.[0]) {
       const essay = pickTextAnswer(answers.w1, answers.task1);
-      inputs.push({
-        taskType: 'task1',
-        instruction:
-          questions[0].instruction ||
-          questions[0].questionText ||
-          sectionDescription ||
-          'IELTS Academic Writing Task 1',
-        imageUrl: questions[0].imageUrl,
-        essay,
-        wordCount: countWords(essay),
-      });
+      if (essay.trim()) {
+        inputs.push({
+          taskType: 'task1',
+          instruction:
+            questions[0].instruction ||
+            questions[0].questionText ||
+            sectionDescription ||
+            'IELTS Academic Writing Task 1',
+          imageUrl: questions[0].imageUrl,
+          essay,
+          wordCount: countWords(essay),
+        });
+      }
     }
 
     if (questions?.[1]) {
       const essay = pickTextAnswer(answers.w2, answers.task2);
-      inputs.push({
-        taskType: 'task2',
-        question:
-          questions[1].questionText ||
-          questions[1].instruction ||
-          sectionDescription ||
-          'IELTS Academic Writing Task 2',
-        essay,
-        wordCount: countWords(essay),
-      });
+      if (essay.trim()) {
+        inputs.push({
+          taskType: 'task2',
+          question:
+            questions[1].questionText ||
+            questions[1].instruction ||
+            sectionDescription ||
+            'IELTS Academic Writing Task 2',
+          essay,
+          wordCount: countWords(essay),
+        });
+      }
     }
 
     if (inputs.length === 0) {
@@ -387,10 +375,6 @@ export class WritingEvaluationService {
 
     for (const taskInput of taskInputs) {
       if (!taskInput.essay.trim()) {
-        result[taskInput.taskType] = emptyEssayResult(
-          taskInput.taskType,
-          taskInput.wordCount,
-        );
         continue;
       }
 

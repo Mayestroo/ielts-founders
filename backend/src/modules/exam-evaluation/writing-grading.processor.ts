@@ -30,22 +30,6 @@ const emptyScores = (): IeltsWritingScores => ({
   grammar: 0,
 });
 
-const emptyEssayResult = (
-  taskType: 'task1' | 'task2',
-  wordCount: number,
-): IeltsWritingResult => ({
-  task_type: taskType,
-  scores: emptyScores(),
-  overall_band: 0,
-  word_count_penalty: taskType === 'task1' ? wordCount < 150 : wordCount < 250,
-  strengths: [],
-  weaknesses: ['No response provided for this task.'],
-  major_errors: [],
-  band_improvement_advice: [
-    'Write a complete response that directly addresses the task prompt.',
-  ],
-});
-
 const buildSectionResult = (
   taskResults: Partial<Record<'task1' | 'task2', IeltsWritingResult>>,
 ): IeltsWritingSectionResult => {
@@ -118,10 +102,6 @@ const evaluateTaskInputs = async (
 
   for (const taskInput of taskInputs) {
     if (!taskInput.essay.trim()) {
-      result[taskInput.taskType] = emptyEssayResult(
-        taskInput.taskType,
-        taskInput.wordCount,
-      );
       continue;
     }
 

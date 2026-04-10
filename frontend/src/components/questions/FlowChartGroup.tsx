@@ -29,15 +29,16 @@ export function FlowChartGroup({
   const firstQ = questions[0];
   const flowchartData = firstQ ? (firstQ as any).flowchartData : null;
   const options = firstQ ? (firstQ as any).options as { id: string; text: string }[] | undefined : undefined;
+  const canReuseOptions = (options?.length ?? 0) < questions.length;
   const usedOptionIds = new Set(
     questions
       .map((question) => answers[question.id])
       .filter((value): value is string => typeof value === 'string' && value.length > 0)
       .map((value) => value.toUpperCase()),
   );
-  const availableOptions = (options || []).filter(
-    (option) => !usedOptionIds.has(option.id.toUpperCase()),
-  );
+  const availableOptions = canReuseOptions
+    ? (options || [])
+    : (options || []).filter((option) => !usedOptionIds.has(option.id.toUpperCase()));
 
   let questionIndex = 0;
 

@@ -45,7 +45,7 @@ export default function UsersPage() {
     firstName: '',
     lastName: '',
     sessionAttendanceMode: 'OFFLINE',
-    sessionReferralSource: 'TELEGRAM',
+    sessionReferralSource: undefined,
     sessionScheduledAt: '',
     phoneNumber: '',
     role: currentUser?.role === 'SUPER_ADMIN' ? 'CENTER_ADMIN' : 'TEACHER',
@@ -125,9 +125,16 @@ export default function UsersPage() {
     },
   });
 
-  const togglePremiumMutation = useMutation({
-    mutationFn: ({ id, premiumActive }: { id: string; premiumActive: boolean }) =>
-      api.updateUser(id, { premiumActive }),
+  const updateTariffMutation = useMutation({
+    mutationFn: ({
+      id,
+      goldActive,
+      premiumActive,
+    }: {
+      id: string;
+      goldActive?: boolean;
+      premiumActive?: boolean;
+    }) => api.updateUser(id, { goldActive, premiumActive }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['admin', 'users'] });
     },
@@ -186,7 +193,7 @@ export default function UsersPage() {
         firstName: '',
         lastName: '',
         sessionAttendanceMode: 'OFFLINE',
-        sessionReferralSource: 'TELEGRAM',
+        sessionReferralSource: undefined,
         sessionScheduledAt: '',
         phoneNumber: '',
         role: currentUser?.role === 'SUPER_ADMIN' ? 'CENTER_ADMIN' : 'TEACHER',
@@ -205,7 +212,7 @@ export default function UsersPage() {
       firstName: user.firstName || '',
       lastName: user.lastName || '',
       sessionAttendanceMode: user.sessionAttendanceMode || 'OFFLINE',
-      sessionReferralSource: user.sessionReferralSource || 'TELEGRAM',
+      sessionReferralSource: user.sessionReferralSource,
       sessionScheduledAt: toDateTimeLocalValue(user.sessionScheduledAt),
       phoneNumber: user.phoneNumber || '',
       role: user.role,
@@ -230,13 +237,31 @@ export default function UsersPage() {
     }
   };
 
+  const handleToggleGold = async (targetUser: User) => {
+    const currentPremiumState = Boolean(targetUser.premiumActive ?? targetUser.isPremium);
+    const currentGoldState = Boolean(targetUser.goldActive);
+    const nextGoldState = !currentGoldState;
+
+    try {
+      await updateTariffMutation.mutateAsync({
+        id: targetUser.id,
+        goldActive: nextGoldState,
+        premiumActive: nextGoldState ? false : currentPremiumState,
+      });
+      success(nextGoldState ? 'Gold opened for user' : 'Gold access disabled');
+    } catch (err) {
+      showError(err instanceof Error ? err.message : 'Failed to update gold access');
+    }
+  };
+
   const handleTogglePremium = async (targetUser: User) => {
     const currentPremiumState = Boolean(targetUser.premiumActive ?? targetUser.isPremium);
     const nextPremiumState = !currentPremiumState;
 
     try {
-      await togglePremiumMutation.mutateAsync({
+      await updateTariffMutation.mutateAsync({
         id: targetUser.id,
+        goldActive: nextPremiumState ? false : Boolean(targetUser.goldActive),
         premiumActive: nextPremiumState,
       });
       success(nextPremiumState ? 'Premium opened for user' : 'Premium access disabled');
@@ -262,6 +287,21 @@ export default function UsersPage() {
     }
   };
 
+  const formatReferralSource = (user: User) => {
+    if (user.role !== 'STUDENT') {
+      return '—';
+    }
+
+    if (!user.sessionReferralSource) {
+      return 'By Admin';
+    }
+
+    return user.sessionReferralSource
+      .toLowerCase()
+      .replace(/_/g, ' ')
+      .replace(/\b\w/g, (character) => character.toUpperCase());
+  };
+
 
 
   return (
@@ -279,7 +319,7 @@ export default function UsersPage() {
             firstName: '',
             lastName: '',
             sessionAttendanceMode: 'OFFLINE',
-            sessionReferralSource: 'TELEGRAM',
+            sessionReferralSource: undefined,
             sessionScheduledAt: '',
             phoneNumber: '',
             role: currentUser?.role === 'SUPER_ADMIN' ? 'CENTER_ADMIN' : 'TEACHER',
@@ -360,8 +400,8 @@ export default function UsersPage() {
                 <tr>
                   <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">User</th>
                   <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Role</th>
-                  <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Premium</th>
-                  <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Center</th>
+                  <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Tariff</th>
+                  <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Referral</th>
                   <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Created</th>
                   <th className="px-6 py-4 text-right text-xs font-semibold text-slate-500 uppercase tracking-wider">Actions</th>
                 </tr>
@@ -389,15 +429,26 @@ export default function UsersPage() {
                     </td>
                     <td className="px-6 py-4">
                       {user.role === 'STUDENT' ? (
-                        <Badge variant={Boolean(user.premiumActive ?? user.isPremium) ? 'success' : 'default'}>
-                          {Boolean(user.premiumActive ?? user.isPremium) ? 'OPEN' : 'LOCKED'}
-                        </Badge>
+                        (() => {
+                          const isPremiumOpen = Boolean(user.premiumActive ?? user.isPremium);
+                          const isGoldOpen = !isPremiumOpen && Boolean(user.goldActive);
+
+                          if (isPremiumOpen) {
+                            return <Badge variant="success">PREMIUM</Badge>;
+                          }
+
+                          if (isGoldOpen) {
+                            return <Badge variant="warning">GOLD</Badge>;
+                          }
+
+                          return <Badge variant="default">FREE</Badge>;
+                        })()
                       ) : (
                         <span className="text-slate-400">—</span>
                       )}
                     </td>
                     <td className="px-6 py-4 text-slate-500 dark:text-slate-400">
-                      {user.center?.name || '—'}
+                      {formatReferralSource(user)}
                     </td>
                     <td className="px-6 py-4 text-slate-500 dark:text-slate-400">
                       {new Date(user.createdAt).toLocaleDateString()}
@@ -411,16 +462,28 @@ export default function UsersPage() {
                         Edit
                       </Button>
                       {user.role === 'STUDENT' && (
-                        <Button
-                          variant={Boolean(user.premiumActive ?? user.isPremium) ? 'warning' : 'info'}
-                          size="sm"
-                          onClick={() => void handleTogglePremium(user)}
-                          disabled={togglePremiumMutation.isPending}
-                        >
-                          {Boolean(user.premiumActive ?? user.isPremium)
-                            ? 'Disable Premium'
-                            : 'Open Premium'}
-                        </Button>
+                        <>
+                          <Button
+                            variant="warning"
+                            size="sm"
+                            onClick={() => void handleToggleGold(user)}
+                            disabled={updateTariffMutation.isPending}
+                          >
+                            {Boolean(user.goldActive) && !Boolean(user.premiumActive ?? user.isPremium)
+                              ? 'Disable Gold'
+                              : 'Open Gold'}
+                          </Button>
+                          <Button
+                            variant={Boolean(user.premiumActive ?? user.isPremium) ? 'warning' : 'info'}
+                            size="sm"
+                            onClick={() => void handleTogglePremium(user)}
+                            disabled={updateTariffMutation.isPending}
+                          >
+                            {Boolean(user.premiumActive ?? user.isPremium)
+                              ? 'Disable Premium'
+                              : 'Open Premium'}
+                          </Button>
+                        </>
                       )}
                       <Button
                         variant="danger"
@@ -526,7 +589,7 @@ export default function UsersPage() {
             firstName: '',
             lastName: '',
             sessionAttendanceMode: 'OFFLINE',
-            sessionReferralSource: 'TELEGRAM',
+            sessionReferralSource: undefined,
             sessionScheduledAt: '',
             phoneNumber: '',
             role: currentUser?.role === 'SUPER_ADMIN' ? 'CENTER_ADMIN' : 'TEACHER',

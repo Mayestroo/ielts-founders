@@ -172,6 +172,17 @@ export class ScoringService {
     questionText?: string,
     instruction?: string,
   ): boolean {
+    if (Array.isArray(correctAnswer)) {
+      return correctAnswer.some((answer) =>
+        this.compareTextAnswer(
+          studentAnswer,
+          answer,
+          questionText,
+          instruction,
+        ),
+      );
+    }
+
     const studentStr = String(studentAnswer).trim();
     const correctStr = String(correctAnswer).trim();
 
@@ -179,8 +190,25 @@ export class ScoringService {
       return text.replace(/(\d+)%/g, '$1 percent');
     };
 
-    const studentNormalized = normalizePercentage(studentStr);
-    const correctNormalized = normalizePercentage(correctStr);
+    const normalizeTextVariant = (text: string): string =>
+      normalizePercentage(text)
+        .toLowerCase()
+        .replace(/\bcentres\b/g, 'centers')
+        .replace(/\bcentre\b/g, 'center')
+        .replace(/\b1st\b/g, 'first')
+        .replace(/\b2nd\b/g, 'second')
+        .replace(/\b3rd\b/g, 'third')
+        .replace(/\b4th\b/g, 'fourth')
+        .replace(/\b5th\b/g, 'fifth')
+        .replace(/\b6th\b/g, 'sixth')
+        .replace(/\b7th\b/g, 'seventh')
+        .replace(/\b8th\b/g, 'eighth')
+        .replace(/\b9th\b/g, 'ninth')
+        .replace(/\b10th\b/g, 'tenth')
+        .trim();
+
+    const studentNormalized = normalizeTextVariant(studentStr);
+    const correctNormalized = normalizeTextVariant(correctStr);
 
     if (studentNormalized.toLowerCase() === correctNormalized.toLowerCase()) {
       return true;

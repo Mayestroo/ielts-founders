@@ -9,6 +9,7 @@ interface StudentReportData {
     listening?: ExamResult;
     reading?: ExamResult;
     writing?: ExamResult;
+    speaking?: ExamResult;
   };
   centerName?: string;
   testDate: string;
@@ -20,6 +21,16 @@ interface LoadedImage {
   height: number;
   ratio: number;
 }
+
+interface JsPdfWithGState {
+  GState?: new (settings: { opacity: number }) => unknown;
+  setGState?: (state: unknown) => void;
+}
+
+const CERTIFICATE_TITLE = 'English Proficiency Mock Test';
+const REPORT_TITLE = 'Performance Report';
+const DISCLAIMER_TEXT =
+  'THIS IS NOT AN IELTS CERTIFICATE.\nNOT VALID FOR UNIVERSITIES OR VISA PURPOSES.';
 
 async function loadImage(url: string): Promise<LoadedImage> {
   return new Promise((resolve, reject) => {
@@ -78,7 +89,6 @@ async function drawReportPage(doc: jsPDF, data: StudentReportData, logoData: Loa
 
   // Colors & Styles
   const darkGray = [30, 30, 30] as [number, number, number];
-  const midGray = [100, 100, 100] as [number, number, number];
   const lightGray = [240, 240, 240] as [number, number, number];
   const borderColor = [50, 50, 50] as [number, number, number];
 
@@ -118,24 +128,27 @@ async function drawReportPage(doc: jsPDF, data: StudentReportData, logoData: Loa
 
   // 1. Watermark
   if (logoData) {
-    // @ts-ignore
-    doc.setGState(new (doc as any).GState({ opacity: 0.04 }));
+    const docWithGState = doc as jsPDF & JsPdfWithGState;
+
+    if (docWithGState.GState && typeof docWithGState.setGState === 'function') {
+      docWithGState.setGState(new docWithGState.GState({ opacity: 0.04 }));
+    }
     const watermarkWidth = 120;
     const watermarkHeight = watermarkWidth / logoData.ratio;
     doc.addImage(logoData.base64, 'PNG', (pageWidth - watermarkWidth)/2, (pageHeight - watermarkHeight)/2, watermarkWidth, watermarkHeight);
-    // @ts-ignore
-    doc.setGState(new (doc as any).GState({ opacity: 1 }));
+
+    if (docWithGState.GState && typeof docWithGState.setGState === 'function') {
+      docWithGState.setGState(new docWithGState.GState({ opacity: 1 }));
+    }
   }
 
   let y = 15;
 
   // 2. Header
-  doc.setFontSize(36);
+  doc.setFontSize(16);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(0, 0, 0);
-  doc.text('IELTS', margin, y + 10);
-  doc.setFontSize(8);
-  doc.text('TM', margin + 34, y + 2);
+  doc.text(CERTIFICATE_TITLE, margin, y + 9);
 
   // ACADEMIC Box
   doc.setFontSize(11);
@@ -145,15 +158,27 @@ async function drawReportPage(doc: jsPDF, data: StudentReportData, logoData: Loa
   y += 22;
   doc.setFontSize(14);
   doc.setFont('helvetica', 'bold');
-  doc.text('Test Report Form', margin, y);
+  doc.text(REPORT_TITLE, margin, y);
 
   y += 5;
-  doc.setFontSize(7);
-  doc.setFont('helvetica', 'normal');
-  const noteText = "NOTE: This Test Report Form is issued by Founders English School as a record of performance in a Mock IELTS examination. It is intended for practice and assessment purposes only and is not an official document from the IELTS partners.\nThe results provided reflect the candidate's performance under simulated test conditions and serve as a guide for further preparation.\nFor more information about our intensive IELTS preparation programs, please visit our website or contact our center.";
-  doc.text(noteText, margin, y, { maxWidth: contentWidth - 10 });
+  doc.setFillColor(255, 233, 233);
+  doc.setDrawColor(180, 0, 0);
+  doc.setLineWidth(0.4);
+  doc.rect(margin, y, contentWidth, 18, 'FD');
 
-  y += 18;
+  doc.setTextColor(180, 0, 0);
+  doc.setFontSize(11);
+  doc.setFont('helvetica', 'bold');
+  doc.text(DISCLAIMER_TEXT, pageWidth / 2, y + 6, {
+    align: 'center',
+    maxWidth: contentWidth - 6,
+  });
+
+  doc.setTextColor(0, 0, 0);
+  doc.setDrawColor(0, 0, 0);
+  doc.setLineWidth(0.05);
+
+  y += 22;
   doc.line(margin, y, pageWidth - margin, y);
 
   // 3. Info Bar
@@ -210,7 +235,7 @@ async function drawReportPage(doc: jsPDF, data: StudentReportData, logoData: Loa
   const lScore = data.results.listening?.bandScore || 0;
   const rScore = data.results.reading?.bandScore || 0;
   const wScore = data.results.writing?.bandScore || 0;
-  const sScore = 0; 
+  const sScore = data.results.speaking?.bandScore || 0;
   
   const bandScores = [lScore, rScore, wScore, sScore].filter(s => s > 0);
   const overallBand = bandScores.length > 0 ? Math.round((bandScores.reduce((a, b) => a + b, 0) / bandScores.length) * 2) / 2 : 0;
@@ -220,15 +245,15 @@ async function drawReportPage(doc: jsPDF, data: StudentReportData, logoData: Loa
   const gap = (contentWidth - (numBoxes * boxWidth)) / (numBoxes + 1);
   let currentX = margin + gap;
 
-  drawScoreBox(currentX, y, 'Listening', lScore || '-');
+  drawScoreBox(currentX, y, 'Listening', lScore);
   currentX += boxWidth + gap;
-  drawScoreBox(currentX, y, 'Reading', rScore || '-');
+  drawScoreBox(currentX, y, 'Reading', rScore);
   currentX += boxWidth + gap;
-  drawScoreBox(currentX, y, 'Writing', wScore || '-');
+  drawScoreBox(currentX, y, 'Writing', wScore);
   currentX += boxWidth + gap;
-  drawScoreBox(currentX, y, 'Speaking', sScore || '-');
+  drawScoreBox(currentX, y, 'Speaking', sScore);
   currentX += boxWidth + gap;
-  drawScoreBox(currentX, y, 'Overall Band\nScore', overallBand || '-');
+  drawScoreBox(currentX, y, 'Overall Band\nScore', overallBand);
   currentX += boxWidth + gap;
   drawScoreBox(currentX, y, 'CEFR\nLevel', getCEFR(overallBand));
 
@@ -260,8 +285,8 @@ async function drawReportPage(doc: jsPDF, data: StudentReportData, logoData: Loa
   doc.circle(pageWidth - margin - 17.5, y + 17.5, 12);
   doc.setFontSize(6);
   doc.setTextColor(200, 0, 0);
-  doc.text('OFFICIAL MOCK TEST', pageWidth - margin - 17.5, y + 16, { align: 'center' });
-  doc.text('VALIDATED', pageWidth - margin - 17.5, y + 20, { align: 'center' });
+  doc.text('THIS IS NOT', pageWidth - margin - 17.5, y + 16, { align: 'center' });
+  doc.text('OFFICIAL TEST', pageWidth - margin - 17.5, y + 20, { align: 'center' });
   doc.setTextColor(0, 0, 0);
   doc.setDrawColor(0, 0, 0);
 
@@ -272,7 +297,7 @@ async function drawReportPage(doc: jsPDF, data: StudentReportData, logoData: Loa
   const reportDate = new Date().toLocaleDateString('en-GB');
   doc.text(reportDate, margin + 90, y + 5.5, { align: 'center' });
 
-  doc.text('Test Report\nForm Number', margin + 115, y + 3);
+  doc.text('Performance\nReport Number', margin + 115, y + 3);
   doc.setFillColor(230, 230, 230);
   doc.rect(margin + 140, y, 45, 8, 'F');
   doc.rect(margin + 140, y, 45, 8);
@@ -296,13 +321,13 @@ export async function generateResultPDF(data: StudentReportData) {
   let logoData: LoadedImage | null = null;
   try {
     logoData = await loadImage(logoUrl);
-  } catch (e) {}
+  } catch {}
 
   await drawReportPage(doc, data, logoData);
 
   const formattedDate = new Date(data.testDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).replace(/ /g, '-').toUpperCase();
   const namePart = `${data.student.firstName || ''}_${data.student.lastName || ''}`.trim().replace(/\s+/g, '_').toUpperCase() || data.student.username.toUpperCase();
-  const fileName = `IELTS_${namePart}_${formattedDate}.pdf`;
+  const fileName = `English_Proficiency_Mock_Test_${namePart}_${formattedDate}.pdf`;
   doc.save(fileName);
 }
 
@@ -312,7 +337,7 @@ export async function generateBatchPDF(reports: StudentReportData[]) {
   let logoData: LoadedImage | null = null;
   try {
     logoData = await loadImage(logoUrl);
-  } catch (e) {}
+  } catch {}
 
   for (let i = 0; i < reports.length; i++) {
     if (i > 0) doc.addPage();
@@ -325,9 +350,9 @@ export async function generateBatchPDF(reports: StudentReportData[]) {
     const data = reports[0];
     const formattedDate = new Date(data.testDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).replace(/ /g, '-').toUpperCase();
     const namePart = `${data.student.firstName || ''}_${data.student.lastName || ''}`.trim().replace(/\s+/g, '_').toUpperCase() || data.student.username.toUpperCase();
-    doc.save(`IELTS_${namePart}_${formattedDate}.pdf`);
+    doc.save(`English_Proficiency_Mock_Test_${namePart}_${formattedDate}.pdf`);
   } else {
-    doc.save(`IELTS_Batch_Report_${dateStr}.pdf`);
+    doc.save(`English_Proficiency_Mock_Test_Batch_Report_${dateStr}.pdf`);
   }
 }
 

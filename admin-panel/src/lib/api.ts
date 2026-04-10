@@ -15,6 +15,7 @@ import {
   LoginResponse,
   Role,
   StudentSummary,
+  TariffReportRow,
   User
 } from '@/types';
 
@@ -130,6 +131,13 @@ class ApiClient {
     const query = params.toString() ? `?${params.toString()}` : '';
     return this.request<{ users: StudentSummary[]; total: number }>(
       `/users/students${query}`,
+      this.buildReadOptions(options),
+    );
+  }
+
+  async getTariffReport(options: ApiReadOptions = {}): Promise<TariffReportRow[]> {
+    return this.request<TariffReportRow[]>(
+      '/users/tariff-report',
       this.buildReadOptions(options),
     );
   }
@@ -312,6 +320,43 @@ class ApiClient {
       `/results/${resultId}/evaluate-writing`,
       {
         method: 'POST',
+      },
+    );
+  }
+
+  async manualGradeSpeaking(
+    resultId: string,
+    data: {
+      fluencyCoherence: number;
+      lexicalResource: number;
+      grammaticalRangeAccuracy: number;
+      pronunciation: number;
+      overallBand?: number;
+      comment?: string;
+    },
+  ): Promise<ExamResult> {
+    return this.request<ExamResult>(`/results/${resultId}/manual-grade-speaking`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async manualGradeSpeakingByStudent(
+    studentId: string,
+    data: {
+      fluencyCoherence: number;
+      lexicalResource: number;
+      grammaticalRangeAccuracy: number;
+      pronunciation: number;
+      overallBand?: number;
+      comment?: string;
+    },
+  ): Promise<ExamResult> {
+    return this.request<ExamResult>(
+      `/results/student/${studentId}/manual-grade-speaking`,
+      {
+        method: 'POST',
+        body: JSON.stringify(data),
       },
     );
   }

@@ -5,6 +5,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { AssignmentStatus, FullMockStatus, Prisma } from '@prisma/client';
@@ -13,6 +14,7 @@ import {
   ExamSubmittedEvent,
   WritingSubmittedEvent,
 } from '../exam-events/exam.events';
+import { AiService } from '../ai/ai.service';
 import { EvaluateWritingSectionInput } from '../ai/ielts-writing.types';
 import { SubmitAnswersDto } from '../exams/dto/submit-answers.dto';
 import { PrismaService } from '../prisma/prisma.service';
@@ -57,6 +59,7 @@ export class SubmissionService {
   constructor(
     private prisma: PrismaService,
     private scoringService: ScoringService,
+    private aiService: AiService,
     private sessionService: SessionService,
     private eventEmitter: EventEmitter2,
     private responseCache: ResponseCacheService,
@@ -179,6 +182,13 @@ export class SubmissionService {
           studentId,
           targetStatus,
         );
+      } else if (assignment.section.type === 'SPEAKING') {
+        submitResult = await this.submitSpeakingWithAi(
+          assignment as AssignmentWithSection,
+          persistedAnswers,
+          studentId,
+          targetStatus,
+        );
       } else {
         submitResult = await this.submitReadingListeningSync(
           assignment as AssignmentWithSection,
@@ -236,29 +246,33 @@ export class SubmissionService {
 
     if (questions?.[0]) {
       const essay = answers['w1'] || answers['task1'] || '';
-      tasksToEvaluate.push({
-        taskType: 'task1',
-        instruction:
-          (questions[0].instruction as string) ||
-          (questions[0].questionText as string) ||
-          'IELTS Academic Writing Task 1',
-        imageUrl: (questions[0].imageUrl as string) || undefined,
-        essay,
-        wordCount: countWords(essay),
-      });
+      if (essay.trim()) {
+        tasksToEvaluate.push({
+          taskType: 'task1',
+          instruction:
+            (questions[0].instruction as string) ||
+            (questions[0].questionText as string) ||
+            'IELTS Academic Writing Task 1',
+          imageUrl: (questions[0].imageUrl as string) || undefined,
+          essay,
+          wordCount: countWords(essay),
+        });
+      }
     }
 
     if (questions?.[1]) {
       const essay = answers['w2'] || answers['task2'] || '';
-      tasksToEvaluate.push({
-        taskType: 'task2',
-        question:
-          (questions[1].questionText as string) ||
-          (questions[1].instruction as string) ||
-          'IELTS Academic Writing Task 2',
-        essay,
-        wordCount: countWords(essay),
-      });
+      if (essay.trim()) {
+        tasksToEvaluate.push({
+          taskType: 'task2',
+          question:
+            (questions[1].questionText as string) ||
+            (questions[1].instruction as string) ||
+            'IELTS Academic Writing Task 2',
+          essay,
+          wordCount: countWords(essay),
+        });
+      }
     }
 
     if (tasksToEvaluate.length === 0 && answers['writing']) {
@@ -453,6 +467,260 @@ export class SubmissionService {
       score: calculation.score,
       totalScore: calculation.totalScore,
       bandScore: calculation.bandScore,
+      nextAssignmentId: mockProgress?.nextAssignmentId ?? null,
+      breakEndsAt: mockProgress?.breakEndsAt ?? null,
+      fullMockSessionId: assignment.fullMockSessionId ?? null,
+    };
+  }
+
+  private async submitSpeakingWithAi(
+    assignment: AssignmentWithSection,
+    persistedAnswers: Record<string, unknown>,
+    studentId: string,
+    targetStatus: AssignmentStatus = AssignmentStatus.SUBMITTED,
+  ) {
+    const questions =
+      (assignment.section.questions as QuestionItem[] | null) || [];
+
+    const speakingParts = (
+      questions.length > 0 ? questions.slice(0, 3) : []
+    ).map((question, index) => {
+      const partNumber = index + 1;
+
+      const prompt =
+        question.instruction ||
+        question.questionText ||
+        assignment.section.description ||
+        `IELTS Speaking Part ${partNumber}`;
+
+      const answerByQuestionId =
+        typeof persistedAnswers[question.id] === 'string'
+          ? String(persistedAnswers[question.id]).trim()
+          : '';
+      const answerByDefaultId =
+        typeof persistedAnswers[`s${partNumber}`] === 'string'
+          ? String(persistedAnswers[`s${partNumber}`]).trim()
+          : '';
+      const answerByLegacy =
+        partNumber === 1
+          ? typeof persistedAnswers.speakingAudioUrl === 'string'
+            ? String(persistedAnswers.speakingAudioUrl).trim()
+            : typeof persistedAnswers.audioUrl === 'string'
+              ? String(persistedAnswers.audioUrl).trim()
+              : ''
+          : '';
+
+      const audioUrl =
+        answerByQuestionId || answerByDefaultId || answerByLegacy;
+
+      return {
+        partNumber,
+        questionId: question.id,
+        prompt,
+        audioUrl,
+      };
+    });
+
+    if (speakingParts.length === 0) {
+      const fallbackAudioUrl =
+        typeof persistedAnswers.speakingAudioUrl === 'string'
+          ? String(persistedAnswers.speakingAudioUrl).trim()
+          : typeof persistedAnswers.audioUrl === 'string'
+            ? String(persistedAnswers.audioUrl).trim()
+            : typeof persistedAnswers.s1 === 'string'
+              ? String(persistedAnswers.s1).trim()
+              : '';
+
+      speakingParts.push({
+        partNumber: 1,
+        questionId: 's1',
+        prompt: assignment.section.description || 'IELTS Speaking prompt',
+        audioUrl: fallbackAudioUrl,
+      });
+    }
+
+    const evaluableParts = speakingParts.filter(
+      (part) => part.audioUrl.length > 0,
+    );
+    if (evaluableParts.length === 0) {
+      throw new BadRequestException(
+        'Speaking audio URL is required for at least one part',
+      );
+    }
+
+    if (speakingParts.length === 3 && evaluableParts.length < 3) {
+      throw new BadRequestException(
+        'Please upload recordings for all 3 speaking parts before submitting',
+      );
+    }
+
+    const evaluatedParts: Array<{
+      partNumber: number;
+      questionId: string;
+      prompt: string;
+      audioUrl: string;
+      transcription: string;
+      evaluation: unknown;
+      bandScore: number;
+    }> = [];
+
+    for (const part of evaluableParts) {
+      const partDurationKey = `${part.questionId}__durationSeconds`;
+      const partDurationRaw =
+        persistedAnswers[partDurationKey] ??
+        persistedAnswers.audioDurationSeconds;
+      const parsedDuration = Number(partDurationRaw);
+      const audioDurationSeconds =
+        Number.isFinite(parsedDuration) && parsedDuration > 0
+          ? parsedDuration
+          : undefined;
+
+      let transcription = '';
+      try {
+        transcription = await this.aiService.transcribeAudioFromUrl(
+          part.audioUrl,
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const normalized = message.toLowerCase();
+
+        if (
+          normalized.includes('no_speech_detected') ||
+          normalized.includes('empty text') ||
+          normalized.includes('transcription is empty')
+        ) {
+          throw new BadRequestException(
+            `No clear speech was detected in Part ${part.partNumber}. Please record Part ${part.partNumber} again and speak clearly.`,
+          );
+        }
+
+        if (normalized.includes('audio file not found')) {
+          throw new BadRequestException(
+            `Recording for Part ${part.partNumber} was not found. Please upload that part again.`,
+          );
+        }
+
+        this.logger.error(
+          `Speaking transcription failed for assignment ${assignment.id}, part ${part.partNumber}: ${message}`,
+        );
+        throw new ServiceUnavailableException(
+          'Speaking transcription service is temporarily unavailable. Please try again in a moment.',
+        );
+      }
+
+      let speakingEvaluation: Awaited<
+        ReturnType<AiService['evaluateSpeakingSection']>
+      >;
+      try {
+        speakingEvaluation = await this.aiService.evaluateSpeakingSection({
+          prompt: part.prompt,
+          transcription,
+          audioDurationSeconds,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.error(
+          `Speaking evaluation failed for assignment ${assignment.id}, part ${part.partNumber}: ${message}`,
+        );
+        throw new ServiceUnavailableException(
+          'Speaking evaluation service is temporarily unavailable. Please try again in a moment.',
+        );
+      }
+
+      evaluatedParts.push({
+        partNumber: part.partNumber,
+        questionId: part.questionId,
+        prompt: part.prompt,
+        audioUrl: part.audioUrl,
+        transcription,
+        evaluation: speakingEvaluation,
+        bandScore: speakingEvaluation.overall_band,
+      });
+    }
+
+    const averageBand =
+      evaluatedParts.reduce((sum, part) => sum + part.bandScore, 0) /
+      evaluatedParts.length;
+    const overallBand = Math.min(
+      9,
+      Math.max(0, Math.round(averageBand * 2) / 2),
+    );
+
+    const persisted = await this.prisma.$transaction(async (tx) => {
+      const claimed = await tx.examAssignment.updateMany({
+        where: {
+          id: assignment.id,
+          status: { not: AssignmentStatus.SUBMITTED },
+        },
+        data: {
+          status: targetStatus,
+          answers: persistedAnswers as Prisma.InputJsonValue,
+          score: overallBand,
+        },
+      });
+
+      if (claimed.count === 0) {
+        return { alreadySubmitted: true as const };
+      }
+
+      const result = await tx.examResult.create({
+        data: {
+          studentId,
+          sectionId: assignment.sectionId,
+          score: overallBand,
+          totalScore: 9,
+          bandScore: overallBand,
+          answers: persistedAnswers as Prisma.InputJsonValue,
+          feedback: {
+            parts: evaluatedParts,
+            summary: {
+              evaluatedParts: evaluatedParts.length,
+              overallBand,
+            },
+          } as unknown as Prisma.InputJsonValue,
+        },
+      });
+
+      const mockProgress = await this.updateFullMockProgressInTransaction(
+        tx,
+        assignment.fullMockSessionId,
+        assignment.fullMockSequence,
+      );
+
+      return {
+        alreadySubmitted: false as const,
+        result,
+        mockProgress,
+      };
+    });
+
+    if (persisted.alreadySubmitted) {
+      return { message: 'Already submitted', idempotent: true };
+    }
+
+    const { result, mockProgress } = persisted;
+
+    this.eventEmitter.emit(
+      'exam.submitted',
+      new ExamSubmittedEvent(
+        assignment.id,
+        studentId,
+        assignment.sectionId,
+        assignment.section.type,
+        overallBand,
+        result.id,
+      ),
+    );
+
+    return {
+      message: 'Exam submitted successfully',
+      assignmentId: assignment.id,
+      status: 'SUBMITTED',
+      resultId: result.id,
+      score: overallBand,
+      totalScore: 9,
+      bandScore: overallBand,
+      note: `Speaking section graded with AI evaluation across ${evaluatedParts.length} part(s).`,
       nextAssignmentId: mockProgress?.nextAssignmentId ?? null,
       breakEndsAt: mockProgress?.breakEndsAt ?? null,
       fullMockSessionId: assignment.fullMockSessionId ?? null,

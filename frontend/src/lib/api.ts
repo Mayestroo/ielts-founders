@@ -10,7 +10,8 @@ import {
     StartExamResponse,
     SubmitExamResponse,
     SyncResponse,
-    User
+    User,
+    WritingSubmissionStatus
 } from "@/types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000/api";
@@ -423,6 +424,16 @@ class ApiClient {
     return this.request<ExamResult>(`/results/${id}`, options);
   }
 
+  async getWritingSubmissionStatus(
+    submissionId: string,
+    options: ApiReadOptions = {},
+  ): Promise<WritingSubmissionStatus> {
+    return this.request<WritingSubmissionStatus>(
+      `/writing-submissions/${submissionId}/status`,
+      options,
+    );
+  }
+
   async startExam(
     assignmentId: string
   ): Promise<StartExamResponse> {
@@ -438,13 +449,40 @@ class ApiClient {
     answers: Record<string, unknown>,
     tabId: string,
     isPartial?: boolean,
+    timeoutMs = 20000,
   ): Promise<SubmitExamResponse> {
     return this.request<SubmitExamResponse>(`/assignments/${assignmentId}/submit`, {
       method: "POST",
       body: JSON.stringify({ answers, tabId, isPartial }),
-      timeoutMs: 20000,
+      timeoutMs,
       retries: 2,
     });
+  }
+
+  async uploadSpeakingAudio(file: File): Promise<{ url: string }> {
+    const token = this.getToken();
+    if (!token) {
+      throw new Error("Not authenticated");
+    }
+
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const response = await fetch(`${API_URL}/uploads/speaking`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      body: formData,
+      credentials: "omit",
+    });
+
+    if (!response.ok) {
+      const message = await this.extractErrorMessage(response);
+      throw new Error(message || `HTTP error! status: ${response.status}`);
+    }
+
+    return response.json();
   }
 
   // Session Management

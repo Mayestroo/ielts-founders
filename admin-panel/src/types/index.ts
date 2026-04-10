@@ -1,7 +1,7 @@
 // Type definitions for IELTS Mock Platform
 
 export type Role = "SUPER_ADMIN" | "CENTER_ADMIN" | "TEACHER" | "STUDENT";
-export type ExamSectionType = "LISTENING" | "READING" | "WRITING";
+export type ExamSectionType = "LISTENING" | "READING" | "WRITING" | "SPEAKING";
 export type AssignmentStatus = "ASSIGNED" | "IN_PROGRESS" | "SUBMITTED";
 export type SessionAttendanceMode = "ONLINE" | "OFFLINE";
 export type SessionReferralSource =
@@ -31,6 +31,7 @@ export interface User {
   firstName?: string;
   lastName?: string;
   role: Role;
+  goldActive?: boolean;
   premiumActive?: boolean;
   isPremium?: boolean;
   sessionAttendanceMode?: SessionAttendanceMode;
@@ -41,6 +42,15 @@ export interface User {
   center?: Center;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface TariffReportRow {
+  userId: string;
+  user: string;
+  username: string;
+  referral: SessionReferralSource | null;
+  tariff: 'PREMIUM' | 'GOLD' | 'FREE';
+  tariffActivatedAt: string | null;
 }
 
 export interface StudentSummary {
@@ -307,6 +317,7 @@ export interface CreateUserForm {
   password: string;
   firstName?: string;
   lastName?: string;
+  goldActive?: boolean;
   premiumActive?: boolean;
   sessionAttendanceMode?: SessionAttendanceMode;
   sessionScheduledAt?: string;

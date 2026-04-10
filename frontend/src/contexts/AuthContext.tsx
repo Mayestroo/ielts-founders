@@ -59,6 +59,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     enabled: hasSessionToken,
     staleTime: STUDENT_QUERY_TIMINGS.profile.staleTime,
     gcTime: STUDENT_QUERY_TIMINGS.profile.gcTime,
+    refetchOnWindowFocus: 'always',
   });
 
   useEffect(() => {

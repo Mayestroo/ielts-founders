@@ -27,6 +27,9 @@ export interface IeltsWritingResult {
   scores: IeltsWritingScores;
   overall_band: number;
   word_count_penalty: boolean;
+  off_topic: boolean;
+  paragraph_count: number;
+  copied_from_question: string[];
   strengths: string[];
   weaknesses: string[];
   major_errors: IeltsWritingMajorError[];

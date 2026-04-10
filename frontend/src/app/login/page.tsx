@@ -5,7 +5,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import Image from 'next/image';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 export default function LoginPage() {
   const [identifier, setIdentifier] = useState('');
@@ -21,12 +21,37 @@ export default function LoginPage() {
   } = useAuth();
   const router = useRouter();
   const googleClientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
+  const formCardRef = useRef<HTMLDivElement | null>(null);
+  const [mediaHeight, setMediaHeight] = useState<number | null>(null);
 
   useEffect(() => {
     if (!authLoading && isAuthenticated) {
       router.push('/dashboard');
     }
   }, [isAuthenticated, authLoading, router]);
+
+  useEffect(() => {
+    const formCard = formCardRef.current;
+
+    if (!formCard) {
+      return;
+    }
+
+    const updateHeight = () => {
+      setMediaHeight(formCard.getBoundingClientRect().height);
+    };
+
+    updateHeight();
+
+    const observer = new ResizeObserver(updateHeight);
+    observer.observe(formCard);
+    window.addEventListener('resize', updateHeight);
+
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', updateHeight);
+    };
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -58,104 +83,123 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50">
-      <div className="absolute inset-0 overflow-hidden">
-        <div className="absolute -top-1/2 -left-1/2 w-full h-full bg-linear-to-br from-black/5 to-transparent rounded-full blur-3xl" />
-        <div className="absolute -bottom-1/2 -right-1/2 w-full h-full bg-linear-to-tl from-black/5 to-transparent rounded-full blur-3xl" />
-      </div>
-
-      <div className="relative z-10 w-full max-w-md px-4">
-        <div className="bg-white rounded-2xl border border-gray-200 p-8 shadow-xl shadow-gray-200/50">
-          {/* Logo */}
-          <div className="text-center mb-8">
-            <div className="inline-flex items-center justify-center mb-8">
-             <Image
-               src="/logo.png"
-               alt="Logo"
-               width={156}
-               height={156}
-               style={{ width: 'auto', height: 'auto' }}
-             />
-            </div>
-            <h1 className="text-2xl font-bold text-gray-900">IELTS Mock Exam</h1>
-            <p className="text-gray-500 mt-2">Student Portal</p>
-          </div>
-
-          {/* Login Form */}
-          <form onSubmit={handleSubmit} className="space-y-5">
-            {error && (
-              <div className="p-3 rounded-lg bg-black text-white text-sm border border-black/10 text-center">
-                {error}
-              </div>
-            )}
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Email or Username</label>
-              <input
-                type="text"
-                placeholder="Enter your email or username"
-                value={identifier}
-                onChange={(e) => setIdentifier(e.target.value)}
-                className="w-full px-4 py-3 rounded-lg bg-gray-50 border border-gray-200 text-gray-900 placeholder-gray-400 focus:ring-2 focus:ring-black focus:border-transparent outline-none transition-all"
-                disabled={isLoading || isGoogleLoading}
-                autoComplete="username"
-                required
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
-              <input
-                type="password"
-                placeholder="Enter your password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full px-4 py-3 rounded-lg bg-gray-50 border border-gray-200 text-gray-900 placeholder-gray-400 focus:ring-2 focus:ring-black focus:border-transparent outline-none transition-all"
-                disabled={isLoading || isGoogleLoading}
-                required
-              />
-            </div>
-
-            <button
-              type="submit"
-              disabled={isLoading || isGoogleLoading}
-              className="w-full py-3 rounded-lg bg-black text-white font-semibold hover:bg-gray-900 transition-all shadow-lg shadow-black/20 disabled:opacity-50"
+    <div className="min-h-screen bg-gray-50">
+      <div className="mx-auto grid min-h-screen w-full lg:grid-cols-[minmax(360px,1.15fr)_minmax(420px,0.85fr)] xl:grid-cols-[minmax(440px,1.15fr)_minmax(480px,0.85fr)]">
+        <section className="hidden h-screen overflow-hidden bg-white lg:block">
+          <div className="flex h-full items-center justify-center p-3 xl:p-4">
+            <div
+              className="relative h-[620px] w-full overflow-hidden rounded-[30px] xl:rounded-[36px]"
+              style={mediaHeight ? { height: `${mediaHeight}px` } : undefined}
             >
-              {isLoading ? (
-                <span className="flex items-center justify-center gap-2">
-                  <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                  </svg>
-                  Signing in...
-                </span>
-              ) : 'Sign In'}
-            </button>
+              <video
+                src="/videos/login.mp4"
+                className="absolute inset-0 h-full w-full object-cover object-center"
+                autoPlay
+                muted
+                loop
+                playsInline
+              />
+            </div>
+          </div>
+        </section>
 
-            <div className="relative py-1">
-              <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-gray-200" />
+        <section className="flex items-center justify-center bg-white px-4 py-8 sm:px-6 lg:px-8 xl:px-12">
+          <div
+            ref={formCardRef}
+            className="w-full max-w-[440px] rounded-2xl border border-gray-200 bg-white p-5 shadow-lg shadow-gray-200/60 sm:p-8"
+          >
+            {/* Logo */}
+            <div className="mb-7 text-center sm:mb-8">
+              <div className="mb-6 inline-flex items-center justify-center sm:mb-8">
+                <Image
+                  src="/logo.png"
+                  alt="Logo"
+                  width={280}
+                  height={83}
+                  className="h-auto w-[170px] sm:w-[220px]"
+                  priority
+                />
               </div>
-              <div className="relative flex justify-center">
-                <span className="bg-white px-3 text-xs uppercase tracking-wide text-gray-400">Or</span>
-              </div>
+              <h1 className="text-2xl font-bold text-gray-900 sm:text-3xl">IELTS Mock Exam</h1>
+              <p className="mt-2 text-sm text-gray-500 sm:text-base">Student Portal</p>
             </div>
 
-            <GoogleAuthButton
-              clientId={googleClientId}
-              text="signin_with"
-              disabled={isLoading || isGoogleLoading}
-              onCredential={handleGoogleLogin}
-            />
+            {/* Login Form */}
+            <form onSubmit={handleSubmit} className="space-y-4 sm:space-y-5">
+              {error && (
+                <div className="p-3 rounded-lg bg-black text-white text-sm border border-black/10 text-center">
+                  {error}
+                </div>
+              )}
 
-            <p className="text-center text-sm text-gray-500">
-              New student?{' '}
-              <Link href="/register" className="font-semibold text-gray-900 hover:underline">
-                Register
-              </Link>
-            </p>
-          </form>
-        </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Email or Username</label>
+                <input
+                  type="text"
+                  placeholder="Enter your email or username"
+                  value={identifier}
+                  onChange={(e) => setIdentifier(e.target.value)}
+                  className="w-full px-4 py-3 rounded-lg bg-gray-50 border border-gray-200 text-gray-900 placeholder-gray-400 focus:ring-2 focus:ring-black focus:border-transparent outline-none transition-all"
+                  disabled={isLoading || isGoogleLoading}
+                  autoComplete="username"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+                <input
+                  type="password"
+                  placeholder="Enter your password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full px-4 py-3 rounded-lg bg-gray-50 border border-gray-200 text-gray-900 placeholder-gray-400 focus:ring-2 focus:ring-black focus:border-transparent outline-none transition-all"
+                  disabled={isLoading || isGoogleLoading}
+                  required
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={isLoading || isGoogleLoading}
+                className="w-full py-3 rounded-lg bg-black text-white font-semibold hover:bg-gray-900 transition-all shadow-lg shadow-black/20 disabled:opacity-50"
+              >
+                {isLoading ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                    Signing in...
+                  </span>
+                ) : 'Sign In'}
+              </button>
+
+              <div className="relative py-1">
+                <div className="absolute inset-0 flex items-center">
+                  <div className="w-full border-t border-gray-200" />
+                </div>
+                <div className="relative flex justify-center">
+                  <span className="bg-white px-3 text-xs uppercase tracking-wide text-gray-400">Or</span>
+                </div>
+              </div>
+
+              <GoogleAuthButton
+                clientId={googleClientId}
+                text="signin_with"
+                disabled={isLoading || isGoogleLoading}
+                onCredential={handleGoogleLogin}
+              />
+
+              <p className="text-center text-sm text-gray-500">
+                New student?{' '}
+                <Link href="/register" className="font-semibold text-gray-900 hover:underline">
+                  Register
+                </Link>
+              </p>
+            </form>
+          </div>
+        </section>
       </div>
     </div>
   );

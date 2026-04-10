@@ -162,10 +162,30 @@ const menuItems: {
       </svg>
     ),
   },
+  {
+    label: "Reports",
+    href: "/dashboard/reports",
+    roles: ["CENTER_ADMIN", "SUPER_ADMIN", "TEACHER"],
+    icon: (
+      <svg
+        className="w-5 h-5"
+        fill="none"
+        stroke="currentColor"
+        viewBox="0 0 24 24"
+      >
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M9 17v-6m4 6V7m4 10v-3M5 21h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v14a2 2 0 002 2z"
+        />
+      </svg>
+    ),
+  },
 ];
 
 export default function DashboardLayout({ children }: DashboardLayoutProps) {
-  const { user, isLoading, isAuthenticated, logout, hasRole } = useAuth();
+  const { user, isLoading, isAuthenticated, logout } = useAuth();
   const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false);
   const router = useRouter();
   const pathname = usePathname();
@@ -315,6 +335,8 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
                 ? "Results"
                 : pathname.includes("/downloads")
                 ? "Downloads"
+                : pathname.includes('/reports')
+                ? 'Reports'
                 : ""}
             </h2>
             <div className="flex items-center gap-4">

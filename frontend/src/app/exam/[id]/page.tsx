@@ -6,6 +6,7 @@ import { useSettings } from "@/contexts/SettingsContext";
 import { useExamParts } from "@/features/exam/hooks/useExamParts";
 import { ListeningSection } from "@/features/exam/sections/ListeningSection";
 import { ReadingSection } from "@/features/exam/sections/ReadingSection";
+import { SpeakingSection } from "@/features/exam/sections/SpeakingSection";
 import { WritingSection } from "@/features/exam/sections/WritingSection";
 import { AnswerValue } from "@/features/exam/types";
 import { useAntiCheat, useExamSession } from "@/hooks";
@@ -44,6 +45,7 @@ interface AttemptHistoryItem {
 
 interface PracticeSubmitMeta {
   resultId: string | null;
+  submissionId: string | null;
   score: number | null;
   totalScore: number | null;
   bandScore: number | null;
@@ -60,7 +62,21 @@ interface PracticeAnswerRow {
 }
 
 const normalizeAnswerValue = (value: unknown): string =>
-  String(value ?? "").trim().toLowerCase();
+  String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\bcentres\b/g, "centers")
+    .replace(/\bcentre\b/g, "center")
+    .replace(/\b1st\b/g, "first")
+    .replace(/\b2nd\b/g, "second")
+    .replace(/\b3rd\b/g, "third")
+    .replace(/\b4th\b/g, "fourth")
+    .replace(/\b5th\b/g, "fifth")
+    .replace(/\b6th\b/g, "sixth")
+    .replace(/\b7th\b/g, "seventh")
+    .replace(/\b8th\b/g, "eighth")
+    .replace(/\b9th\b/g, "ninth")
+    .replace(/\b10th\b/g, "tenth");
 
 const hasAnswerValue = (value: unknown): boolean => {
   if (value === undefined || value === null) {
@@ -120,12 +136,16 @@ const resolveQuestionCorrectAnswer = (question: Question): unknown => {
   return correctAnswer;
 };
 
-const isAnswerCorrect = (studentAnswer: unknown, correctAnswer: unknown): boolean => {
+const isAnswerCorrect = (
+  studentAnswer: unknown,
+  correctAnswer: unknown,
+  questionType?: Question["type"],
+): boolean => {
   if (!hasAnswerValue(studentAnswer) || !hasAnswerValue(correctAnswer)) {
     return false;
   }
 
-  if (Array.isArray(correctAnswer)) {
+  if (questionType === "MCQ_MULTIPLE" && Array.isArray(correctAnswer)) {
     const studentValues = Array.isArray(studentAnswer)
       ? studentAnswer
       : [studentAnswer];
@@ -143,6 +163,21 @@ const isAnswerCorrect = (studentAnswer: unknown, correctAnswer: unknown): boolea
     }
 
     return true;
+  }
+
+  if (Array.isArray(correctAnswer)) {
+    if (Array.isArray(studentAnswer)) {
+      if (studentAnswer.length !== 1) {
+        return false;
+      }
+      return correctAnswer.some(
+        (entry) => normalizeAnswerValue(studentAnswer[0]) === normalizeAnswerValue(entry),
+      );
+    }
+
+    return correctAnswer.some(
+      (entry) => normalizeAnswerValue(studentAnswer) === normalizeAnswerValue(entry),
+    );
   }
 
   if (
@@ -306,6 +341,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const forceShowVideo = searchParams.get("showVideo") === "1";
+  const isProctoredPractice = searchParams.get("proctored") === "1";
 
   const [assignment, setAssignment] = useState<
     (ExamAssignment & { remainingTime?: number }) | null
@@ -325,7 +361,6 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
   const [sessionError, setSessionError] = useState<{ type: string; message: string } | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(true); // Default to true to avoid flash on load until checked
   const [showExitWarningModal, setShowExitWarningModal] = useState(false);
-  const [isExamCompleted, setIsExamCompleted] = useState(false);
   const [showPartResults, setShowPartResults] = useState(false);
   const [pendingNavigation, setPendingNavigation] = useState<{
     nextAssignmentId: string | null;
@@ -341,6 +376,8 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
   const [isPracticeResultLoading, setIsPracticeResultLoading] = useState(false);
   const [showCorrectAnswers, setShowCorrectAnswers] = useState(true);
   const wasFullscreenRef = useRef<boolean>(true);
+  const isExamCompletedRef = useRef<boolean>(false);
+  const showExitWarningRef = useRef<boolean>(false);
 
   // Detect if this is a partial assignment (part or task)
   const isPartialAssignment = useMemo(
@@ -470,6 +507,8 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
   const requiresProctoring = Boolean(assignment?.fullMockSessionId);
   const isPracticeMode = !requiresProctoring;
   const isTimerActive = requiresProctoring || timerEnabled;
+  // Fullscreen enforcement applies to offline (proctored) exams AND non-free practice tests
+  const requiresFullscreen = requiresProctoring || isProctoredPractice;
 
   const resolvePracticeAttemptType = useCallback(() => {
     if (!isPartialAssignment) {
@@ -488,7 +527,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
   }, [isPartialAssignment, assignmentPart, assignmentTask]);
 
   const exitExamToDashboard = useCallback(async () => {
-    setIsExamCompleted(true);
+    isExamCompletedRef.current = true;
     if (document.fullscreenElement) {
       try {
         await document.exitFullscreen();
@@ -507,7 +546,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
       // unless we are in a full mock session (which we handle in handleFinalSubmit anyway)
       const allowedTypes = isPartialAssignment && assignment?.section?.type 
         ? [assignment.section.type] 
-        : ["LISTENING", "READING", "WRITING"];
+        : ["LISTENING", "READING", "WRITING", "SPEAKING"];
 
       const nextAssignment = allowedTypes
         .map((type) => allAssignments.find((a) => a.section?.type === type))
@@ -873,24 +912,29 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
 
   // Attempt fullscreen on first user interaction if not already fullscreen
   useEffect(() => {
-    if (!requiresProctoring) {
+    if (!requiresFullscreen) {
       return;
     }
 
     const handlePointerDown = () => {
-      if (!document.fullscreenElement && (showIntroVideo || isExamStarted || assignment?.status === "ASSIGNED")) {
+      if (
+        !document.fullscreenElement &&
+        !isExamCompletedRef.current &&
+        !showExitWarningRef.current &&
+        (showIntroVideo || isExamStarted || assignment?.status === "ASSIGNED")
+      ) {
         enterFullscreen();
       }
     };
 
     window.addEventListener("pointerdown", handlePointerDown, { capture: true });
     return () => window.removeEventListener("pointerdown", handlePointerDown, { capture: true });
-  }, [enterFullscreen, showIntroVideo, isExamStarted, assignment?.status, requiresProctoring]);
+  }, [enterFullscreen, showIntroVideo, isExamStarted, assignment?.status, requiresFullscreen]);
 
   const handleStartExam = useCallback(async () => {
     if (sessionError) return;
     if (isStartingRef.current) return;
-    if (requiresProctoring && !document.fullscreenElement) {
+    if (requiresFullscreen && !document.fullscreenElement) {
       console.log("Blocking startExam - not in fullscreen");
       return;
     }
@@ -903,7 +947,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
     } finally {
       isStartingRef.current = false;
     }
-  }, [originalAssignmentId, handleStartResponse, sessionError, requiresProctoring]);
+  }, [originalAssignmentId, handleStartResponse, sessionError, requiresFullscreen]);
 
   const handleVideoEnded = useCallback(() => {
     if (sessionError) return;
@@ -918,7 +962,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
   useEffect(() => {
     if (
       !showIntroVideo &&
-      (requiresProctoring ? isFullscreen : true) &&
+      (requiresFullscreen ? isFullscreen : true) &&
       assignment?.status === "ASSIGNED" &&
       !sessionError &&
       !isLoading &&
@@ -927,7 +971,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
     ) {
       handleStartExam();
     }
-  }, [showIntroVideo, isFullscreen, assignment?.status, assignment?.section?.type, sessionError, isLoading, handleStartExam, showPlayOverlay, requiresProctoring]);
+  }, [showIntroVideo, isFullscreen, assignment?.status, assignment?.section?.type, sessionError, isLoading, handleStartExam, showPlayOverlay, requiresFullscreen]);
 
   useEffect(() => {
     if (showIntroVideo && introVideoRef.current) {
@@ -951,12 +995,14 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
       setIsFullscreen(isFs);
       
       // Show warning if user exits fullscreen during active exam
+      // Use ref for isExamCompleted to avoid stale closure when exitExamToDashboard
+      // sets state and calls document.exitFullscreen() in the same tick
       if (
-        requiresProctoring &&
+        requiresFullscreen &&
         wasFs &&
         !isFs &&
         isExamStarted &&
-        !isExamCompleted &&
+        !isExamCompletedRef.current &&
         !showIntroVideo
       ) {
         setShowExitWarningModal(true);
@@ -973,7 +1019,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
     return () => {
       document.removeEventListener("fullscreenchange", handleFullscreenChange);
     };
-  }, [isExamStarted, isExamCompleted, showIntroVideo, requiresProctoring]);
+  }, [isExamStarted, showIntroVideo, requiresFullscreen]);
 
   // If fullscreen is restored, ensure the warning modal closes
   useEffect(() => {
@@ -982,9 +1028,14 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
     }
   }, [isFullscreen, showExitWarningModal]);
 
+  // Keep ref in sync so capture-phase handlers can read the latest value synchronously
+  useEffect(() => {
+    showExitWarningRef.current = showExitWarningModal;
+  }, [showExitWarningModal]);
+
   // Block Escape key globally
   useEffect(() => {
-    if (!requiresProctoring) {
+    if (!requiresFullscreen) {
       return;
     }
 
@@ -1004,17 +1055,17 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
       window.removeEventListener("keydown", handleKeyDown, { capture: true });
       window.removeEventListener("keyup", handleKeyDown, { capture: true });
     };
-  }, [requiresProctoring]);
+  }, [requiresFullscreen]);
   // Re-acquire lock on any user interaction to be safe, if we are in fullscreen
   useEffect(() => {
-    if (!requiresProctoring) {
+    if (!requiresFullscreen) {
       return;
     }
 
     const handleInteraction = () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const nav = navigator as any;
-      if (document.fullscreenElement && nav?.keyboard?.lock) {
+      if (document.fullscreenElement && !showExitWarningRef.current && nav?.keyboard?.lock) {
          // eslint-disable-next-line @typescript-eslint/no-explicit-any
          nav.keyboard.lock(["Escape"]).catch((e: any) => console.log("Silent lock update failed", e));
       }
@@ -1022,7 +1073,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
 
     window.addEventListener("click", handleInteraction);
     return () => window.removeEventListener("click", handleInteraction);
-  }, [requiresProctoring]);
+  }, [requiresFullscreen]);
 
 
 
@@ -1039,9 +1090,16 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
 
         return newAnswers;
       });
-      setCurrentQuestionId(questionId);
+
+      const isActualQuestionId =
+        Array.isArray(assignment?.section?.questions) &&
+        assignment.section.questions.some((question) => question.id === questionId);
+
+      if (isActualQuestionId) {
+        setCurrentQuestionId(questionId);
+      }
     },
-    [syncAnswers]
+    [syncAnswers, assignment?.section?.questions]
   );
 
   const handleQuestionClick = useCallback(
@@ -1231,6 +1289,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
   const handleFinalSubmit = useCallback(async () => {
     if (!assignment || isSubmitting) return;
     setIsSubmitting(true);
+    setError("");
 
     let assignmentForSubmit: ExamAssignment & { remainingTime?: number } = assignment;
 
@@ -1280,11 +1339,15 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
         _attemptQuestionCount: attemptQuestionCount,
       };
 
+      const submitTimeoutMs =
+        assignmentForSubmit.section?.type === "SPEAKING" ? 180000 : 20000;
+
       const submitResult = await api.submitExam(
         assignmentForSubmit.id,
         submitAnswers,
         tabId,
         isPracticeMode,
+        submitTimeoutMs,
       );
 
       const isOfflineMock = Boolean(submitResult.fullMockSessionId);
@@ -1292,6 +1355,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
       if (isPracticeMode && !isOfflineMock && !submitResult.breakEndsAt) {
         const submitMeta: PracticeSubmitMeta = {
           resultId: submitResult.resultId ?? null,
+          submissionId: submitResult.submissionId ?? null,
           score: typeof submitResult.score === "number" ? submitResult.score : null,
           totalScore:
             typeof submitResult.totalScore === "number"
@@ -1471,8 +1535,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
       const shouldSplitIntoIndependentRows =
         question.type === "MCQ_MULTIPLE" &&
         Array.isArray(correctAnswerRaw) &&
-        question.points > 1 &&
-        correctAnswerRaw.length === question.points;
+        correctAnswerRaw.length > 1;
 
       if (shouldSplitIntoIndependentRows) {
         return buildIndependentMcqRows({
@@ -1492,7 +1555,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
         correctAnswer: formatAnswerValue(correctAnswerRaw),
         hasCorrectAnswer,
         isCorrect: hasCorrectAnswer
-          ? isAnswerCorrect(studentAnswerRaw, correctAnswerRaw)
+          ? isAnswerCorrect(studentAnswerRaw, correctAnswerRaw, question.type)
           : null,
       };
     });
@@ -1547,6 +1610,142 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
     return entries.filter((entry) => hasAnswerValue(entry.value));
   }, [section?.type, practiceAnswerMap]);
 
+  const speakingFeedback = useMemo(() => {
+    if (section?.type !== "SPEAKING") {
+      return null;
+    }
+
+    const feedback = (practiceResultDetail?.feedback || {}) as Record<string, unknown>;
+    const rawParts = Array.isArray(feedback.parts)
+      ? (feedback.parts as Array<Record<string, unknown>>)
+      : [];
+
+    const legacyEvaluation =
+      feedback.evaluation && typeof feedback.evaluation === "object"
+        ? (feedback.evaluation as Record<string, unknown>)
+        : null;
+
+    const normalizedParts =
+      rawParts.length > 0
+        ? rawParts
+        : legacyEvaluation
+          ? [
+              {
+                partNumber: 1,
+                transcription: feedback.transcription,
+                evaluation: legacyEvaluation,
+              } as Record<string, unknown>,
+            ]
+          : [];
+
+    const parts = normalizedParts.map((part, index) => {
+      const evaluation = (part.evaluation || {}) as Record<string, unknown>;
+      return {
+        partNumber:
+          typeof part.partNumber === "number" && Number.isFinite(part.partNumber)
+            ? Math.max(1, Math.floor(part.partNumber))
+            : index + 1,
+        transcription: String(part.transcription || ""),
+        strengths: Array.isArray(evaluation.strengths)
+          ? (evaluation.strengths as unknown[]).map((item) => String(item))
+          : [],
+        weaknesses: Array.isArray(evaluation.weaknesses)
+          ? (evaluation.weaknesses as unknown[]).map((item) => String(item))
+          : [],
+      };
+    });
+
+    return {
+      parts,
+    };
+  }, [section?.type, practiceResultDetail?.feedback]);
+
+  // ── Writing grading polling ──────────────────────────────────────
+  // When the student submits a writing exam and lands on the inline results
+  // screen, poll the backend for grading status every 3 seconds.  Once
+  // grading completes, update the displayed score and auto-navigate to the
+  // detailed review page.
+  const [writingGradingLabel, setWritingGradingLabel] = useState<string>("Evaluating your writing...");
+
+  useEffect(() => {
+    if (!showPartResults) return;
+    if (section?.type !== "WRITING") return;
+
+    const subId = practiceSubmitMeta?.submissionId;
+    const resultId = practiceSubmitMeta?.resultId;
+    if (!subId) return;
+
+    // If we already have a band score, no need to poll
+    if (typeof practiceSubmitMeta?.bandScore === "number" && practiceSubmitMeta.bandScore > 0) {
+      return;
+    }
+
+    let cancelled = false;
+    let pollCount = 0;
+
+    const poll = async () => {
+      while (!cancelled) {
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+        if (cancelled) break;
+
+        pollCount++;
+
+        try {
+          const status = await api.getWritingSubmissionStatus(subId);
+
+          if (cancelled) break;
+
+          if (status.isComplete) {
+            // Update the score display immediately
+            if (typeof status.bandScore === "number") {
+              setPracticeSubmitMeta((prev) =>
+                prev ? { ...prev, bandScore: status.bandScore ?? null } : prev,
+              );
+            }
+
+            setWritingGradingLabel("Grading complete!");
+
+            // Auto-navigate to the review page after a short delay
+            if (resultId) {
+              setTimeout(() => {
+                if (!cancelled) {
+                  router.push(`/history/review/${resultId}`);
+                }
+              }, 1500);
+            }
+            return;
+          }
+
+          if (status.isFailed) {
+            setWritingGradingLabel(
+              status.canRetry
+                ? "Grading is being retried..."
+                : "Grading failed. You can view your result later from History.",
+            );
+            if (!status.canRetry) return;
+          }
+
+          // Update progress label
+          if (pollCount <= 3) {
+            setWritingGradingLabel("Evaluating your writing...");
+          } else if (pollCount <= 8) {
+            setWritingGradingLabel("AI is still grading, please wait...");
+          } else {
+            setWritingGradingLabel("Taking longer than usual, hang tight...");
+          }
+        } catch {
+          // Network error — keep trying silently
+        }
+      }
+    };
+
+    void poll();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [showPartResults, section?.type, practiceSubmitMeta?.submissionId, practiceSubmitMeta?.resultId, practiceSubmitMeta?.bandScore, router]);
+
   const handlePartClick = useCallback(
     (partNumber: number) => {
       const part = parts.find((current) => current.number === partNumber);
@@ -1583,7 +1782,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
 
   const timerStart =
     isTimerActive &&
-    (requiresProctoring ? isFullscreen : true) &&
+    (requiresFullscreen ? isFullscreen : true) &&
     isExamStarted &&
     !showIntroVideo &&
     !showPartResults;
@@ -1618,10 +1817,22 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
           <div className="mx-auto mt-6 max-w-4xl rounded-2xl bg-gray-50 p-5">
             <div className="flex items-center justify-between gap-3">
               <p className="text-lg font-medium text-gray-700">Your Score</p>
-              <p className="text-4xl font-bold text-red-500">{practiceScoreText}</p>
+              {section.type === "WRITING" && practiceScoreText === "Pending" ? (
+                <div className="flex items-center gap-3">
+                  <div className="h-5 w-5 animate-spin rounded-full border-2 border-gray-300 border-t-red-500"></div>
+                  <p className="text-lg font-semibold text-gray-500">{writingGradingLabel}</p>
+                </div>
+              ) : (
+                <p className="text-4xl font-bold text-red-500">{practiceScoreText}</p>
+              )}
             </div>
-            {practiceSubmitMeta?.note && (
+            {practiceSubmitMeta?.note && section.type !== "WRITING" && (
               <p className="mt-2 text-sm text-gray-600">{practiceSubmitMeta.note}</p>
+            )}
+            {section.type === "WRITING" && practiceScoreText === "Pending" && (
+              <p className="mt-2 text-sm text-gray-500">
+                Your essay is being evaluated by AI. Results will appear automatically.
+              </p>
             )}
           </div>
 
@@ -1634,7 +1845,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
             </div>
           ) : (
             <>
-              {section.type !== "WRITING" && practiceAnswerRows.length > 0 && (
+              {(section.type === "READING" || section.type === "LISTENING") && practiceAnswerRows.length > 0 && (
                 <section className="mx-auto mt-8 max-w-4xl rounded-2xl border border-gray-200 bg-white p-4 md:p-6">
                   <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                     <h3 className="text-3xl font-semibold text-gray-900">Answer Sheet</h3>
@@ -1715,6 +1926,37 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
                   </div>
                 </section>
               )}
+
+              {section.type === "SPEAKING" && speakingFeedback && (
+                <section className="mx-auto mt-8 max-w-4xl rounded-2xl border border-gray-200 bg-white p-4 md:p-6">
+                  <h3 className="text-xl font-semibold text-gray-900">Speaking Feedback</h3>
+                  {speakingFeedback.parts.map((part) => (
+                    <article
+                      key={`speaking-feedback-part-${part.partNumber}`}
+                      className="mt-4 rounded-xl border border-gray-200 bg-gray-50 p-4"
+                    >
+                      <h4 className="text-sm font-bold uppercase tracking-wide text-gray-600">
+                        Part {part.partNumber}
+                      </h4>
+                      {part.transcription && (
+                        <p className="mt-2 whitespace-pre-wrap text-sm text-gray-800">
+                          {part.transcription}
+                        </p>
+                      )}
+                      {part.strengths.length > 0 && (
+                        <p className="mt-2 text-sm text-emerald-700">
+                          Strengths: {part.strengths.join("; ")}
+                        </p>
+                      )}
+                      {part.weaknesses.length > 0 && (
+                        <p className="mt-2 text-sm text-amber-700">
+                          Areas to improve: {part.weaknesses.join("; ")}
+                        </p>
+                      )}
+                    </article>
+                  ))}
+                </section>
+              )}
             </>
           )}
 
@@ -1787,21 +2029,46 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
   return (
     <>
       {/* Fullscreen Exit Warning Modal */}
-      {requiresProctoring && (
-        <ConfirmationModal
-          isOpen={showExitWarningModal}
-          onClose={() => setShowExitWarningModal(false)}
-          onConfirm={() => {
-            setShowExitWarningModal(false);
-            enterFullscreen();
-          }}
-          title="Warning: Exit Fullscreen?"
-          message="You are about to exit fullscreen mode. If you exit now, your exam progress may be lost and your results could be invalidated. Please stay in fullscreen to continue the exam safely."
-          confirmText="Stay in Fullscreen"
-          cancelText={null}
-          variant="danger"
-          dismissible={false}
-        />
+      {requiresFullscreen && (
+        <>
+          {/* Offline exam: non-dismissible, no exit option */}
+          {requiresProctoring && (
+            <ConfirmationModal
+              isOpen={showExitWarningModal}
+              onClose={() => setShowExitWarningModal(false)}
+              onConfirm={() => {
+                setShowExitWarningModal(false);
+                enterFullscreen();
+              }}
+              title="Warning: Exit Fullscreen?"
+              message="You are about to exit fullscreen mode. If you exit now, your exam progress may be lost and your results could be invalidated. Please stay in fullscreen to continue the exam safely."
+              confirmText="Stay in Fullscreen"
+              cancelText={null}
+              variant="danger"
+              dismissible={false}
+            />
+          )}
+          {/* Non-free practice test: allow exit with session loss warning */}
+          {isProctoredPractice && !requiresProctoring && (
+            <ConfirmationModal
+              isOpen={showExitWarningModal}
+              onClose={() => {
+                setShowExitWarningModal(false);
+                exitExamToDashboard();
+              }}
+              onConfirm={() => {
+                setShowExitWarningModal(false);
+                enterFullscreen();
+              }}
+              title="Exit Test?"
+              message="If you exit fullscreen, your current session will be lost and all progress will be discarded. Are you sure you want to leave?"
+              confirmText="Stay in Fullscreen"
+              cancelText="Exit Test"
+              variant="danger"
+              dismissible={false}
+            />
+          )}
+        </>
       )}
 
       <div>
@@ -1876,6 +2143,38 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
             onPartClick={handlePartClick}
             onSubmit={handleFinalSubmit}
             isSubmitting={isSubmitting}
+            sessionError={sessionError}
+            onSessionResolve={() => setSessionError(null)}
+            timerStart={timerStart}
+            showTimer={isTimerActive}
+            showPartResults={showPartResults}
+            onContinue={handleContinuePart}
+          />
+        ) : section.type === "SPEAKING" ? (
+          <SpeakingSection
+            assignment={assignment}
+            section={section}
+            parts={parts}
+            activePartIndex={activePartIndex}
+            currentQuestionId={currentQuestionId}
+            answers={answers}
+            showIntroVideo={showIntroVideo}
+            isSettingsOpen={isSettingsOpen}
+            isVideoAutoplayBlocked={isVideoAutoplayBlocked}
+            introVideoRef={introVideoRef}
+            introContainerRef={introContainerRef}
+            onVideoAutoplayBlockedChange={setIsVideoAutoplayBlocked}
+            onVideoEnded={handleVideoEnded}
+            onRequestFullscreen={enterFullscreen}
+            onOpenSettings={() => setIsSettingsOpen(true)}
+            onCloseSettings={() => setIsSettingsOpen(false)}
+            onTimerExpire={handleTimerExpire}
+            onAnswerChange={handleAnswerChange}
+            onQuestionClick={handleQuestionClick}
+            onPartClick={handlePartClick}
+            onSubmit={handleFinalSubmit}
+            isSubmitting={isSubmitting}
+            submitError={error}
             sessionError={sessionError}
             onSessionResolve={() => setSessionError(null)}
             timerStart={timerStart}

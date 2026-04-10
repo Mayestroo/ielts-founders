@@ -61,9 +61,11 @@ export function GoogleAuthButton({
   disabled,
   onCredential,
 }: GoogleAuthButtonProps) {
+  const measureRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLDivElement>(null);
   const onCredentialRef = useRef(onCredential);
   const renderedConfigKeyRef = useRef<string | null>(null);
+  const [buttonWidth, setButtonWidth] = useState<number | null>(null);
   const [scriptReady, setScriptReady] = useState(
     typeof window !== "undefined" && Boolean(window.google),
   );
@@ -95,12 +97,46 @@ export function GoogleAuthButton({
   );
 
   useEffect(() => {
+    const buttonElement = measureRef.current;
+    if (!buttonElement) {
+      return;
+    }
+
+    const updateWidth = () => {
+      const measuredWidth = Math.floor(buttonElement.getBoundingClientRect().width);
+      if (measuredWidth > 0) {
+        setButtonWidth(measuredWidth);
+      }
+    };
+
+    updateWidth();
+
+    const observer =
+      typeof ResizeObserver !== "undefined"
+        ? new ResizeObserver(() => updateWidth())
+        : null;
+
+    observer?.observe(buttonElement);
+    window.addEventListener("resize", updateWidth);
+
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", updateWidth);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!scriptReady || !clientId || !window.google || !buttonRef.current) {
       renderedConfigKeyRef.current = null;
       return;
     }
 
-    const configKey = `${clientId}:${text}`;
+    if (!buttonWidth || buttonWidth <= 0) {
+      renderedConfigKeyRef.current = null;
+      return;
+    }
+
+    const configKey = `${clientId}:${text}:${buttonWidth}`;
     if (renderedConfigKeyRef.current === configKey) {
       return;
     }
@@ -119,11 +155,12 @@ export function GoogleAuthButton({
       text,
       locale: "en",
       shape: "pill",
-      width: 360,
+      logo_alignment: "center",
+      width: buttonWidth,
     });
 
     renderedConfigKeyRef.current = configKey;
-  }, [clientId, handleCredential, scriptReady, text]);
+  }, [buttonWidth, clientId, handleCredential, scriptReady, text]);
 
   if (!clientId) {
     return (
@@ -143,9 +180,11 @@ export function GoogleAuthButton({
       />
 
       <div
-        className={`min-h-[44px] ${disabled ? "pointer-events-none opacity-60" : ""}`}
+        className={`flex min-h-[44px] items-center justify-center ${disabled ? "pointer-events-none opacity-60" : ""}`}
       >
-        <div ref={buttonRef} className="w-full" />
+        <div ref={measureRef} className="w-full">
+          <div ref={buttonRef} className="flex w-full justify-center" />
+        </div>
       </div>
 
       {error && <p className="text-sm text-red-600">{error}</p>}

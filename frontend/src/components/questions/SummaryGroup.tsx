@@ -30,14 +30,15 @@ export function SummaryGroup({
   const firstQuestion = questions[0];
   const hasOptions = firstQuestion && 'options' in firstQuestion && Array.isArray((firstQuestion as any).options);
   const options = hasOptions ? (firstQuestion as any).options : [];
+  const canReuseOptions = options.length < questions.length;
   const usedOptionIds = new Set(
     questions
       .map((question) => answers[question.id])
       .filter((value): value is string => typeof value === 'string' && value.length > 0),
   );
-  const availableOptions = options.filter(
-    (option: any) => !usedOptionIds.has(option.id),
-  );
+  const availableOptions = canReuseOptions
+    ? options
+    : options.filter((option: any) => !usedOptionIds.has(option.id));
 
   // Drag and drop handlers
   const handleDragStart = (e: React.DragEvent, optionId: string) => {

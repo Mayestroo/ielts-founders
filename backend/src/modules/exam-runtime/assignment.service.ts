@@ -27,6 +27,7 @@ const AUTO_ASSIGN_SECTION_TYPES: ExamSectionType[] = [
   ExamSectionType.LISTENING,
   ExamSectionType.READING,
   ExamSectionType.WRITING,
+  ExamSectionType.SPEAKING,
 ];
 
 export interface AssignmentWithSection {
@@ -1450,8 +1451,6 @@ export class AssignmentService {
             type: q.type,
             number: q.number,
             passageId: q.passageId,
-            questionText: q.questionText,
-            points: q.points,
             partAudioUrl: q.partAudioUrl,
             partDurationMinutes: q.partDurationMinutes,
           };

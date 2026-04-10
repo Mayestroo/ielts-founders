@@ -35,7 +35,9 @@ export class UploadsController {
         },
       }),
       fileFilter: (req, file, cb) => {
-        if (file.mimetype.match(/\/(jpg|jpeg|png|gif|mp3|mpeg|wav|ogg|opus)$/i)) {
+        if (
+          file.mimetype.match(/\/(jpg|jpeg|png|gif|mp3|mpeg|wav|ogg|opus)$/i)
+        ) {
           cb(null, true);
         } else {
           cb(new BadRequestException('Unsupported file type'), false);
@@ -47,6 +49,44 @@ export class UploadsController {
     }),
   )
   async uploadFile(@UploadedFile() file: Express.Multer.File) {
+    if (!file) {
+      throw new BadRequestException('No file uploaded');
+    }
+
+    await this.uploadsService.validateUploadedFile(file);
+
+    return {
+      url: this.uploadsService.getFileUrl(file.filename),
+    };
+  }
+
+  @Post('speaking')
+  @Roles(Role.STUDENT, Role.SUPER_ADMIN, Role.CENTER_ADMIN, Role.TEACHER)
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: diskStorage({
+        destination: './uploads',
+        filename: (req, file, cb) => {
+          const randomName = Array(32)
+            .fill(null)
+            .map(() => Math.round(Math.random() * 16).toString(16))
+            .join('');
+          cb(null, `${randomName}${extname(file.originalname)}`);
+        },
+      }),
+      fileFilter: (req, file, cb) => {
+        if (file.mimetype.match(/\/(webm|mp4|mpeg|wav|ogg|opus|x-m4a)$/i)) {
+          cb(null, true);
+        } else {
+          cb(new BadRequestException('Unsupported audio file type'), false);
+        }
+      },
+      limits: {
+        fileSize: 200 * 1024 * 1024,
+      },
+    }),
+  )
+  async uploadSpeakingAudio(@UploadedFile() file: Express.Multer.File) {
     if (!file) {
       throw new BadRequestException('No file uploaded');
     }

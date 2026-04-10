@@ -1,6 +1,6 @@
 'use client';
 
-import { Badge, Button, Card, CardBody, useToast } from '@/components/ui';
+import { Badge, Button, Card, CardBody, Input, Modal, useToast } from '@/components/ui';
 import { api } from '@/lib/api';
 import { generateBatchPDF } from '@/lib/generatePDF';
 import { ADMIN_QUERY_TIMINGS } from '@/lib/query/config';
@@ -15,15 +15,178 @@ interface StudentReportGroup {
     listening?: ExamResult;
     reading?: ExamResult;
     writing?: ExamResult;
+    speaking?: ExamResult;
   };
   testDate: string;
 }
+
+interface ManualSpeakingEvaluation {
+  isManual: boolean;
+  overallBand: number;
+  scores?: {
+    fluency_coherence?: number;
+    lexical_resource?: number;
+    grammatical_range_accuracy?: number;
+    pronunciation?: number;
+  };
+  comment?: string | null;
+}
+
+interface SpeakingManualGradeForm {
+  fluencyCoherence: string;
+  lexicalResource: string;
+  grammaticalRangeAccuracy: string;
+  pronunciation: string;
+  comment: string;
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null;
+
+const clampHalfBand = (value: number): number => {
+  const normalized = Number.isFinite(value) ? value : 0;
+  const clamped = Math.min(9, Math.max(0, normalized));
+  return Math.round(clamped * 2) / 2;
+};
+
+const parseBandFromUnknown = (value: unknown): number | null => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+
+  if (parsed < 0 || parsed > 9) {
+    return null;
+  }
+
+  return clampHalfBand(parsed);
+};
+
+const getResultAnswers = (result?: ExamResult): Record<string, unknown> => {
+  if (!result || !isRecord(result.answers)) {
+    return {};
+  }
+
+  return result.answers as Record<string, unknown>;
+};
+
+const isStandaloneSpeakingResult = (result?: ExamResult): boolean => {
+  if (!result) {
+    return false;
+  }
+
+  const answers = getResultAnswers(result);
+  const attemptMode =
+    typeof answers._attemptMode === 'string'
+      ? answers._attemptMode.trim().toLowerCase()
+      : '';
+
+  if (attemptMode === 'standalone') {
+    return true;
+  }
+
+  return answers._isStandalone === true;
+};
+
+const shouldUseIncomingSpeakingResult = (
+  currentResult: ExamResult | undefined,
+  incomingResult: ExamResult,
+): boolean => {
+  if (!currentResult) {
+    return true;
+  }
+
+  const currentStandalone = isStandaloneSpeakingResult(currentResult);
+  const incomingStandalone = isStandaloneSpeakingResult(incomingResult);
+
+  if (currentStandalone !== incomingStandalone) {
+    return currentStandalone && !incomingStandalone;
+  }
+
+  return (
+    new Date(incomingResult.submittedAt).getTime() >
+    new Date(currentResult.submittedAt).getTime()
+  );
+};
+
+const getManualSpeakingEvaluation = (
+  speakingResult?: ExamResult,
+): ManualSpeakingEvaluation | null => {
+  if (!speakingResult || isStandaloneSpeakingResult(speakingResult)) {
+    return null;
+  }
+
+  const feedback = speakingResult?.feedback;
+  if (!isRecord(feedback) || !isRecord(feedback.manualEvaluation)) {
+    return null;
+  }
+
+  const manualEvaluation = feedback.manualEvaluation as Record<string, unknown>;
+  const overallBand = parseBandFromUnknown(manualEvaluation.overallBand);
+  if (overallBand === null) {
+    return null;
+  }
+
+  const scores = isRecord(manualEvaluation.scores)
+    ? (manualEvaluation.scores as Record<string, unknown>)
+    : null;
+
+  return {
+    isManual: manualEvaluation.isManual === true,
+    overallBand,
+    scores: scores
+      ? {
+          fluency_coherence: parseBandFromUnknown(scores.fluency_coherence) ?? undefined,
+          lexical_resource: parseBandFromUnknown(scores.lexical_resource) ?? undefined,
+          grammatical_range_accuracy:
+            parseBandFromUnknown(scores.grammatical_range_accuracy) ?? undefined,
+          pronunciation: parseBandFromUnknown(scores.pronunciation) ?? undefined,
+        }
+      : undefined,
+    comment:
+      typeof manualEvaluation.comment === 'string'
+        ? manualEvaluation.comment
+        : null,
+  };
+};
+
+const getManualSpeakingBand = (speakingResult?: ExamResult): number | null => {
+  const manualEvaluation = getManualSpeakingEvaluation(speakingResult);
+  if (!manualEvaluation || !manualEvaluation.isManual) {
+    return null;
+  }
+
+  return manualEvaluation.overallBand;
+};
+
+const isReportReadyForDownload = (group: StudentReportGroup): boolean => {
+  return Boolean(
+    group.results.listening &&
+      group.results.reading &&
+      group.results.writing &&
+      getManualSpeakingBand(group.results.speaking) !== null,
+  );
+};
 
 export default function DownloadsPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isDownloading, setIsDownloading] = useState(false);
   const [page, setPage] = useState(1);
   const [pageSize] = useState(10);
+  const [gradeTarget, setGradeTarget] = useState<{
+    studentId: string;
+    studentName: string;
+    speakingResult?: ExamResult;
+  } | null>(null);
+  const [gradeForm, setGradeForm] = useState<SpeakingManualGradeForm>({
+    fluencyCoherence: '',
+    lexicalResource: '',
+    grammaticalRangeAccuracy: '',
+    pronunciation: '',
+    comment: '',
+  });
+  const [gradeError, setGradeError] = useState('');
+  const [isSavingGrade, setIsSavingGrade] = useState(false);
   
   // Filtering State
   const [searchTerm, setSearchTerm] = useState('');
@@ -52,9 +215,21 @@ export default function DownloadsPage() {
       }
 
       const type = result.section?.type;
-      if (type === 'LISTENING') grouped[studentId].results.listening = result;
-      if (type === 'READING') grouped[studentId].results.reading = result;
-      if (type === 'WRITING') grouped[studentId].results.writing = result;
+      if (type === 'LISTENING' && !grouped[studentId].results.listening) {
+        grouped[studentId].results.listening = result;
+      }
+      if (type === 'READING' && !grouped[studentId].results.reading) {
+        grouped[studentId].results.reading = result;
+      }
+      if (type === 'WRITING' && !grouped[studentId].results.writing) {
+        grouped[studentId].results.writing = result;
+      }
+      if (type === 'SPEAKING') {
+        const currentSpeaking = grouped[studentId].results.speaking;
+        if (shouldUseIncomingSpeakingResult(currentSpeaking, result)) {
+          grouped[studentId].results.speaking = result;
+        }
+      }
     });
 
     return Object.values(grouped);
@@ -79,6 +254,16 @@ export default function DownloadsPage() {
     );
   }), [reportGroups, searchTerm]);
 
+  const groupByStudentId = useMemo(
+    () => new Map(reportGroups.map((group) => [group.student.id, group])),
+    [reportGroups],
+  );
+
+  const selectableGroups = useMemo(
+    () => filteredGroups.filter((group) => isReportReadyForDownload(group)),
+    [filteredGroups],
+  );
+
   // Client-side pagination logic
   const paginatedGroups = useMemo(
     () => filteredGroups.slice((page - 1) * pageSize, page * pageSize),
@@ -87,6 +272,12 @@ export default function DownloadsPage() {
   const total = filteredGroups.length;
 
   const toggleSelect = (studentId: string) => {
+    const group = groupByStudentId.get(studentId);
+    if (!group || !isReportReadyForDownload(group)) {
+      showError('Download is available only after Listening, Reading, Writing, and manually graded Speaking are completed.');
+      return;
+    }
+
     const next = new Set(selectedIds);
     if (next.has(studentId)) {
       next.delete(studentId);
@@ -97,10 +288,10 @@ export default function DownloadsPage() {
   };
 
   const toggleSelectAll = () => {
-    if (selectedIds.size === filteredGroups.length) {
+    if (selectedIds.size === selectableGroups.length) {
       setSelectedIds(new Set());
     } else {
-      setSelectedIds(new Set(filteredGroups.map(g => g.student.id)));
+      setSelectedIds(new Set(selectableGroups.map((group) => group.student.id)));
     }
   };
 
@@ -127,6 +318,145 @@ export default function DownloadsPage() {
     }
   };
 
+  const openSpeakingGradeModal = (group: StudentReportGroup) => {
+    const speakingResult =
+      group.results.speaking && !isStandaloneSpeakingResult(group.results.speaking)
+        ? group.results.speaking
+        : undefined;
+
+    const manualEvaluation = getManualSpeakingEvaluation(speakingResult);
+    const defaultBand = manualEvaluation?.overallBand ??
+      parseBandFromUnknown(speakingResult?.bandScore) ??
+      6;
+
+    setGradeTarget({
+      studentId: group.student.id,
+      studentName:
+        group.student.firstName || group.student.lastName
+          ? `${group.student.firstName || ''} ${group.student.lastName || ''}`.trim()
+          : group.student.username,
+      speakingResult,
+    });
+    setGradeError('');
+    setGradeForm({
+      fluencyCoherence: String(
+        manualEvaluation?.scores?.fluency_coherence ?? defaultBand,
+      ),
+      lexicalResource: String(
+        manualEvaluation?.scores?.lexical_resource ?? defaultBand,
+      ),
+      grammaticalRangeAccuracy: String(
+        manualEvaluation?.scores?.grammatical_range_accuracy ?? defaultBand,
+      ),
+      pronunciation: String(
+        manualEvaluation?.scores?.pronunciation ?? defaultBand,
+      ),
+      comment: manualEvaluation?.comment || '',
+    });
+  };
+
+  const closeSpeakingGradeModal = () => {
+    setGradeTarget(null);
+    setGradeError('');
+    setGradeForm({
+      fluencyCoherence: '',
+      lexicalResource: '',
+      grammaticalRangeAccuracy: '',
+      pronunciation: '',
+      comment: '',
+    });
+  };
+
+  const parsedSpeakingScores = useMemo(() => {
+    const fluencyCoherence = parseBandFromUnknown(gradeForm.fluencyCoherence);
+    const lexicalResource = parseBandFromUnknown(gradeForm.lexicalResource);
+    const grammaticalRangeAccuracy = parseBandFromUnknown(
+      gradeForm.grammaticalRangeAccuracy,
+    );
+    const pronunciation = parseBandFromUnknown(gradeForm.pronunciation);
+
+    const valid =
+      fluencyCoherence !== null &&
+      lexicalResource !== null &&
+      grammaticalRangeAccuracy !== null &&
+      pronunciation !== null;
+
+    const overallBand = valid
+      ? clampHalfBand(
+          (fluencyCoherence +
+            lexicalResource +
+            grammaticalRangeAccuracy +
+            pronunciation) /
+            4,
+        )
+      : null;
+
+    return {
+      fluencyCoherence,
+      lexicalResource,
+      grammaticalRangeAccuracy,
+      pronunciation,
+      overallBand,
+      isValid: valid,
+    };
+  }, [gradeForm]);
+
+  const handleSaveSpeakingGrade = async () => {
+    if (!gradeTarget) {
+      return;
+    }
+
+    const fluencyCoherence = parsedSpeakingScores.fluencyCoherence;
+    const lexicalResource = parsedSpeakingScores.lexicalResource;
+    const grammaticalRangeAccuracy = parsedSpeakingScores.grammaticalRangeAccuracy;
+    const pronunciation = parsedSpeakingScores.pronunciation;
+    const overallBand = parsedSpeakingScores.overallBand;
+
+    if (
+      fluencyCoherence === null ||
+      lexicalResource === null ||
+      grammaticalRangeAccuracy === null ||
+      pronunciation === null ||
+      overallBand === null
+    ) {
+      setGradeError('Please enter valid speaking scores between 0 and 9.');
+      return;
+    }
+
+    setIsSavingGrade(true);
+    setGradeError('');
+
+    try {
+      const payload = {
+        fluencyCoherence,
+        lexicalResource,
+        grammaticalRangeAccuracy,
+        pronunciation,
+        overallBand,
+        comment: gradeForm.comment.trim() || undefined,
+      };
+
+      if (gradeTarget.speakingResult) {
+        await api.manualGradeSpeaking(gradeTarget.speakingResult.id, payload);
+      } else {
+        await api.manualGradeSpeakingByStudent(gradeTarget.studentId, payload);
+      }
+
+      success('Speaking manual grade saved');
+      setSelectedIds((previous) => {
+        const next = new Set(previous);
+        next.delete(gradeTarget.studentId);
+        return next;
+      });
+      closeSpeakingGradeModal();
+      await resultsQuery.refetch();
+    } catch (err) {
+      setGradeError(err instanceof Error ? err.message : 'Failed to save manual speaking grade');
+    } finally {
+      setIsSavingGrade(false);
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -140,7 +470,9 @@ export default function DownloadsPage() {
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-slate-900 dark:text-white">Batch Downloads</h1>
-          <p className="text-slate-500 mt-1">Select students to download their combined IELTS reports</p>
+          <p className="text-slate-500 mt-1">
+            Select students to download combined IELTS reports. Download is enabled after Listening, Reading, Writing, and manually graded Speaking are complete.
+          </p>
         </div>
         
         <Button 
@@ -216,7 +548,11 @@ export default function DownloadsPage() {
                     <input 
                       type="checkbox" 
                       className="rounded border-slate-300 text-slate-900 focus:ring-slate-300"
-                      checked={selectedIds.size === filteredGroups.length && filteredGroups.length > 0}
+                      checked={
+                        selectedIds.size === selectableGroups.length &&
+                        selectableGroups.length > 0
+                      }
+                      disabled={selectableGroups.length === 0}
                       onChange={toggleSelectAll}
                     />
                   </th>
@@ -224,27 +560,35 @@ export default function DownloadsPage() {
                   <th className="px-6 py-4 text-center text-xs font-semibold text-slate-500 uppercase tracking-wider">Listening</th>
                   <th className="px-6 py-4 text-center text-xs font-semibold text-slate-500 uppercase tracking-wider">Reading</th>
                   <th className="px-6 py-4 text-center text-xs font-semibold text-slate-500 uppercase tracking-wider">Writing</th>
+                  <th className="px-6 py-4 text-center text-xs font-semibold text-slate-500 uppercase tracking-wider">Speaking (Manual)</th>
                   <th className="px-6 py-4 text-center text-xs font-semibold text-slate-500 uppercase tracking-wider">Overall Band</th>
                   <th className="px-6 py-4 text-right text-xs font-semibold text-slate-500 uppercase tracking-wider">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
                 {paginatedGroups.map((group) => {
+                  const manualSpeakingBand = getManualSpeakingBand(group.results.speaking);
+                  const reportReady = isReportReadyForDownload(group);
+                  const hasCoreResults = Boolean(
+                    group.results.listening &&
+                      group.results.reading &&
+                      group.results.writing,
+                  );
                   const scores = [
                     group.results.listening?.bandScore || 0,
                     group.results.reading?.bandScore || 0,
                     group.results.writing?.bandScore || 0,
-                    0 // Speaking placeholder
+                    manualSpeakingBand || 0,
                   ].filter(s => s > 0);
-                  
-                  const overall = scores.length > 0 
-                    ? Math.round((scores.reduce((a, b) => a + b, 0) / scores.length) * 2) / 2 
+
+                  const overall = reportReady
+                    ? Math.round((scores.reduce((a, b) => a + b, 0) / 4) * 2) / 2
                     : '-';
 
                   return (
                     <tr 
                       key={group.student.id} 
-                      className={`hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors cursor-pointer ${selectedIds.has(group.student.id) ? 'bg-slate-100/60 dark:bg-slate-800/40' : ''}`}
+                      className={`transition-colors ${reportReady ? 'cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/40' : 'cursor-not-allowed bg-slate-50/40 dark:bg-slate-800/20'} ${selectedIds.has(group.student.id) ? 'bg-slate-100/60 dark:bg-slate-800/40' : ''}`}
                       onClick={() => toggleSelect(group.student.id)}
                     >
                       <td className="px-6 py-4" onClick={(e) => e.stopPropagation()}>
@@ -252,6 +596,7 @@ export default function DownloadsPage() {
                           type="checkbox" 
                           className="rounded border-slate-300 text-slate-900 focus:ring-slate-300"
                           checked={selectedIds.has(group.student.id)}
+                          disabled={!reportReady}
                           onChange={() => toggleSelect(group.student.id)}
                         />
                       </td>
@@ -296,32 +641,94 @@ export default function DownloadsPage() {
                         )}
                       </td>
                       <td className="px-6 py-4 text-center">
+                        {group.results.speaking ? (
+                          <div className="inline-flex items-center justify-center gap-2">
+                            {manualSpeakingBand !== null ? (
+                              <Badge variant="success" size="sm">
+                                <span className="font-bold">{manualSpeakingBand}</span>
+                              </Badge>
+                            ) : (
+                              <Badge variant="warning" size="sm">Pending</Badge>
+                            )}
+
+                            {manualSpeakingBand === null && (
+                              <button
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  openSpeakingGradeModal(group);
+                                }}
+                                className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-amber-300 bg-amber-50 text-sm font-bold leading-none text-amber-700 transition-colors hover:bg-amber-100"
+                                title="Grade speaking manually"
+                                aria-label="Grade speaking manually"
+                              >
+                                +
+                              </button>
+                            )}
+                          </div>
+                        ) : hasCoreResults ? (
+                          <div className="inline-flex items-center justify-center gap-2">
+                            <Badge variant="warning" size="sm">Pending</Badge>
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                openSpeakingGradeModal(group);
+                              }}
+                              className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-amber-300 bg-amber-50 text-sm font-bold leading-none text-amber-700 transition-colors hover:bg-amber-100"
+                              title="Grade speaking manually"
+                              aria-label="Grade speaking manually"
+                            >
+                              +
+                            </button>
+                          </div>
+                        ) : (
+                          <span className="text-slate-300 dark:text-slate-600">-</span>
+                        )}
+                      </td>
+                      <td className="px-6 py-4 text-center">
                         <div className="inline-flex items-center justify-center px-3 py-1 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-bold text-sm">
                           {overall}
                         </div>
                       </td>
                       <td className="px-6 py-4 text-right" onClick={(e) => e.stopPropagation()}>
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          onClick={() => generateBatchPDF([{
-                            student: group.student,
-                            results: group.results,
-                            testDate: group.testDate
-                          }])}
-                        >
-                          <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                          </svg>
-                          Report
-                        </Button>
+                        <div className="flex justify-end gap-2">
+                          {hasCoreResults && (
+                            <Button
+                              size="sm"
+                              variant={manualSpeakingBand === null ? 'warning' : 'secondary'}
+                              onClick={() => openSpeakingGradeModal(group)}
+                            >
+                              {manualSpeakingBand === null ? 'Grade Speaking' : 'Edit Speaking'}
+                            </Button>
+                          )}
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            disabled={!reportReady}
+                            onClick={() =>
+                              generateBatchPDF([
+                                {
+                                  student: group.student,
+                                  results: group.results,
+                                  testDate: group.testDate,
+                                },
+                              ])
+                            }
+                          >
+                            <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                            </svg>
+                            Report
+                          </Button>
+                        </div>
                       </td>
                     </tr>
                   );
                 })}
                 {filteredGroups.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="px-6 py-12 text-center text-slate-500">
+                    <td colSpan={8} className="px-6 py-12 text-center text-slate-500">
                       {searchTerm ? 'No students match your search' : 'No results found for report generation.'}
                     </td>
                   </tr>
@@ -398,6 +805,130 @@ export default function DownloadsPage() {
           </div>
         </div>
       )}
+
+      <Modal
+        isOpen={Boolean(gradeTarget)}
+        onClose={closeSpeakingGradeModal}
+        title="Manual Speaking Grade"
+        width="max-w-xl"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-slate-500">
+            Student:{' '}
+            <span className="font-semibold text-slate-800">
+              {gradeTarget?.studentName || '-'}
+            </span>
+          </p>
+
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <Input
+              label="Fluency & Coherence"
+              type="number"
+              min={0}
+              max={9}
+              step={0.5}
+              value={gradeForm.fluencyCoherence}
+              onChange={(event) =>
+                setGradeForm((previous) => ({
+                  ...previous,
+                  fluencyCoherence: event.target.value,
+                }))
+              }
+            />
+            <Input
+              label="Lexical Resource"
+              type="number"
+              min={0}
+              max={9}
+              step={0.5}
+              value={gradeForm.lexicalResource}
+              onChange={(event) =>
+                setGradeForm((previous) => ({
+                  ...previous,
+                  lexicalResource: event.target.value,
+                }))
+              }
+            />
+            <Input
+              label="Grammar Range & Accuracy"
+              type="number"
+              min={0}
+              max={9}
+              step={0.5}
+              value={gradeForm.grammaticalRangeAccuracy}
+              onChange={(event) =>
+                setGradeForm((previous) => ({
+                  ...previous,
+                  grammaticalRangeAccuracy: event.target.value,
+                }))
+              }
+            />
+            <Input
+              label="Pronunciation"
+              type="number"
+              min={0}
+              max={9}
+              step={0.5}
+              value={gradeForm.pronunciation}
+              onChange={(event) =>
+                setGradeForm((previous) => ({
+                  ...previous,
+                  pronunciation: event.target.value,
+                }))
+              }
+            />
+          </div>
+
+          <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+            <p className="text-xs uppercase tracking-wide text-slate-500">Overall Band (Auto)</p>
+            <p className="mt-1 text-lg font-semibold text-slate-900">
+              {parsedSpeakingScores.overallBand !== null
+                ? parsedSpeakingScores.overallBand.toFixed(1)
+                : '-'}
+            </p>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-700">Comment (optional)</label>
+            <textarea
+              value={gradeForm.comment}
+              onChange={(event) =>
+                setGradeForm((previous) => ({
+                  ...previous,
+                  comment: event.target.value,
+                }))
+              }
+              rows={3}
+              className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-slate-900 focus:border-slate-400 focus:ring-2 focus:ring-slate-300 focus:outline-none"
+              placeholder="Add a short note for this speaking evaluation"
+            />
+          </div>
+
+          {gradeError && (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+              {gradeError}
+            </div>
+          )}
+
+          <div className="flex justify-end gap-3 pt-2">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={closeSpeakingGradeModal}
+              disabled={isSavingGrade}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={() => void handleSaveSpeakingGrade()}
+              disabled={isSavingGrade}
+            >
+              {isSavingGrade ? 'Saving...' : 'Save Speaking Grade'}
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

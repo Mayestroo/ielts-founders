@@ -18,6 +18,7 @@ import {
   useMemo,
   useRef,
 } from 'react';
+import { useRouter } from 'next/navigation';
 
 interface AuthContextType {
   user: User | null;
@@ -32,6 +33,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
+  const router = useRouter();
   const logoutTriggered = useRef(false);
 
   const profileQuery = useQuery({
@@ -101,7 +103,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = useCallback(() => {
     api.logout();
     queryClient.clear();
-  }, [queryClient]);
+    router.push('/login');
+  }, [queryClient, router]);
 
   const hasRole = useCallback((...roles: Role[]) => {
     if (!user) return false;

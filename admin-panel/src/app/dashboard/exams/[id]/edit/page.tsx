@@ -7,6 +7,7 @@ import {
     CardBody,
     CardHeader,
     Input,
+    MultiSelectCheckbox,
     Modal,
     Select,
 } from "@/components/ui";
@@ -188,6 +189,8 @@ export default function EditExamPage() {
     audioUrl: "",
     centerId: "",
   });
+  const [selectedCenterIds, setSelectedCenterIds] = useState<string[]>([]);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const [passages, setPassages] = useState<Passage[]>([]);
   const [questions, setQuestions] = useState<Question[]>([]);
@@ -213,14 +216,6 @@ export default function EditExamPage() {
   const updateExamMutation = useMutation({
     mutationFn: (payload: { id: string; data: Partial<CreateExamSectionForm> }) =>
       api.updateExamSection(payload.id, payload.data),
-    onSuccess: async (_result, variables) => {
-      await queryClient.invalidateQueries({ queryKey: adminQueryKeys.examSections() });
-      await queryClient.invalidateQueries({
-        queryKey: adminQueryKeys.examSection(variables.id),
-      });
-      await queryClient.invalidateQueries({ queryKey: adminQueryKeys.examSectionOptions() });
-      await queryClient.invalidateQueries({ queryKey: adminQueryKeys.dashboardStats() });
-    },
   });
 
   const centers = centersQuery.data ?? [];
@@ -239,6 +234,7 @@ export default function EditExamPage() {
       audioUrl: sectionQuery.data.audioUrl || "",
       centerId: sectionQuery.data.centerId,
     });
+    setSelectedCenterIds([sectionQuery.data.centerId]);
     setQuestions(sectionQuery.data.questions || []);
     setPassages(sectionQuery.data.passages || []);
     setTableDataDrafts({});
@@ -292,6 +288,39 @@ export default function EditExamPage() {
         : "Failed to load centers",
     );
   }, [centersQuery.error]);
+
+  useEffect(() => {
+    if (formData.type !== "SPEAKING" || questions.length > 0) {
+      return;
+    }
+
+    setQuestions([
+      {
+        id: "s1",
+        type: "SHORT_ANSWER",
+        questionText: "Part 1: Personal introduction and familiar topics.",
+        points: 3,
+        instruction:
+          "Answer briefly and naturally about yourself, your studies, and daily routines.",
+      } as Question,
+      {
+        id: "s2",
+        type: "SHORT_ANSWER",
+        questionText: "Part 2: Individual long turn.",
+        points: 3,
+        instruction:
+          "Speak for 1-2 minutes on the cue card topic with clear examples.",
+      } as Question,
+      {
+        id: "s3",
+        type: "SHORT_ANSWER",
+        questionText: "Part 3: Discussion and abstract questions.",
+        points: 3,
+        instruction:
+          "Discuss broader ideas related to Part 2 and justify your opinions.",
+      } as Question,
+    ]);
+  }, [formData.type, questions.length]);
 
   // Add passage (for Reading)
   const addPassage = () => {
@@ -481,45 +510,103 @@ export default function EditExamPage() {
       return;
     }
 
+    setIsSubmitting(true);
+
     try {
-      const submissionData: Partial<CreateExamSectionForm> = {
-        ...formData,
+      const basePayload: CreateExamSectionForm = {
+        title: formData.title,
+        type: formData.type,
+        description: formData.description,
+        duration: formData.duration,
         questions,
         passages: formData.type === "READING" ? passages : undefined,
+        ...(formData.audioUrl ? { audioUrl: formData.audioUrl } : {}),
+      };
+      const submissionData: Partial<CreateExamSectionForm> = {
+        ...basePayload,
       };
 
-      // Remove audioUrl if it's empty or null to avoid validation errors
-      if (!submissionData.audioUrl) {
-        delete submissionData.audioUrl;
+      if (user?.role === "SUPER_ADMIN") {
+        const uniqueCenterIds = Array.from(
+          new Set(selectedCenterIds.filter((centerId) => centerId.trim().length > 0))
+        );
+
+        if (uniqueCenterIds.length === 0) {
+          setError("Please select at least one center");
+          return;
+        }
+
+        const currentCenterId = sectionQuery.data?.centerId || formData.centerId;
+        const primaryCenterId = uniqueCenterIds.includes(currentCenterId)
+          ? currentCenterId
+          : uniqueCenterIds[0];
+        const additionalCenterIds = uniqueCenterIds.filter(
+          (centerId) => centerId !== primaryCenterId
+        );
+
+        submissionData.centerId = primaryCenterId;
+
+        await updateExamMutation.mutateAsync({
+          id: sectionId,
+          data: submissionData,
+        });
+
+        if (additionalCenterIds.length > 0) {
+          await Promise.all(
+            additionalCenterIds.map((centerId) =>
+              api.createExamSection({
+                ...basePayload,
+                centerId,
+              })
+            )
+          );
+        }
+      } else {
+        await updateExamMutation.mutateAsync({
+          id: sectionId,
+          data: submissionData,
+        });
       }
 
-      if (user?.role !== "SUPER_ADMIN") {
-        delete submissionData.centerId;
-      }
+      await queryClient.invalidateQueries({ queryKey: adminQueryKeys.examSections() });
+      await queryClient.invalidateQueries({ queryKey: adminQueryKeys.examSection(sectionId) });
+      await queryClient.invalidateQueries({ queryKey: adminQueryKeys.examSectionOptions() });
+      await queryClient.invalidateQueries({ queryKey: adminQueryKeys.dashboardStats() });
 
-      await updateExamMutation.mutateAsync({
-        id: sectionId,
-        data: submissionData,
-      });
       router.push("/dashboard/exams");
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Failed to update exam section"
       );
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   const handleImport = (data: CreateExamSectionForm) => {
+    const importedPayload = data as CreateExamSectionForm & {
+      centerIds?: string[];
+    };
+    const importedCenterIds = Array.isArray(importedPayload.centerIds)
+      ? importedPayload.centerIds.filter(
+          (centerId): centerId is string =>
+            typeof centerId === "string" && centerId.trim().length > 0
+        )
+      : data.centerId
+        ? [data.centerId]
+        : [];
+
     setFormData({
       title: data.title || "",
       type: data.type || "READING",
       description: data.description || "",
       duration: data.duration || 60,
       audioUrl: data.audioUrl || "",
-      centerId: data.centerId || "",
+      centerId: importedCenterIds[0] || "",
     });
     setQuestions(data.questions || []);
     setPassages(data.passages || []);
+    setSelectedCenterIds(importedCenterIds);
     setTableDataDrafts({});
     setFlowchartDataDrafts({});
   };
@@ -652,6 +739,7 @@ export default function EditExamPage() {
                   { value: "READING", label: "Reading" },
                   { value: "LISTENING", label: "Listening" },
                   { value: "WRITING", label: "Writing" },
+                  { value: "SPEAKING", label: "Speaking" },
                 ]}
                 value={formData.type}
                 onChange={(e) => {
@@ -730,17 +818,21 @@ export default function EditExamPage() {
             )}
 
             {user?.role === "SUPER_ADMIN" && (
-              <Select
-                label="Assigned Center"
-                value={formData.centerId}
-                onChange={(e) =>
-                  setFormData({ ...formData, centerId: e.target.value })
-                }
-                options={[
-                  { value: "", label: "Select a center" },
-                  ...centers.map((c) => ({ value: c.id, label: c.name })),
-                ]}
-                required
+              <MultiSelectCheckbox
+                id="assigned-centers"
+                label="Assigned Centers"
+                options={centers.map((center) => ({
+                  value: center.id,
+                  label: center.name,
+                }))}
+                value={selectedCenterIds}
+                onChange={(nextCenterIds) => {
+                  setSelectedCenterIds(nextCenterIds);
+                  setFormData((prev) => ({
+                    ...prev,
+                    centerId: nextCenterIds[0] || "",
+                  }));
+                }}
               />
             )}
           </CardBody>
@@ -1572,7 +1664,11 @@ export default function EditExamPage() {
           >
             Cancel
           </Button>
-          <Button type="submit" isLoading={updateExamMutation.isPending} className="flex-1">
+          <Button
+            type="submit"
+            isLoading={isSubmitting || updateExamMutation.isPending}
+            className="flex-1"
+          >
             Save Changes
           </Button>
         </div>

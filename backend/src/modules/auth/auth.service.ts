@@ -33,6 +33,7 @@ interface AuthUser {
   username: string;
   role: string;
   centerId: string | null;
+  goldActive?: boolean;
   premiumActive?: boolean;
   firstName?: string | null;
   lastName?: string | null;
@@ -227,6 +228,7 @@ export class AuthService {
         lastName: user.lastName,
         role: user.role,
         centerId: user.centerId,
+        goldActive: user.goldActive ?? false,
         premiumActive: user.premiumActive ?? false,
         isPremium: user.premiumActive ?? false,
         sessionAttendanceMode: user.sessionAttendanceMode,
@@ -650,6 +652,7 @@ export class AuthService {
 
     return {
       ...result,
+      goldActive: user.goldActive ?? false,
       premiumActive: user.premiumActive ?? false,
       isPremium: user.premiumActive ?? false,
       center: this.sanitizeCenter(center as Record<string, unknown> | null),

@@ -34,14 +34,15 @@ export function MatchingGroup({
 }: MatchingGroupProps) {
   const scrollRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const [dragOverId, setDragOverId] = useState<string | null>(null);
+  const canReuseOptions = (options || []).length < (questions || []).length;
   const usedOptionIds = new Set(
     (questions || [])
       .map((question) => answers[question.id])
       .filter((value): value is string => typeof value === "string" && value.length > 0),
   );
-  const availableOptions = (options || []).filter(
-    (option) => !usedOptionIds.has(option.id),
-  );
+  const availableOptions = canReuseOptions
+    ? (options || [])
+    : (options || []).filter((option) => !usedOptionIds.has(option.id));
 
   useEffect(() => {
     if (currentQuestionId && scrollRefs.current[currentQuestionId]) {

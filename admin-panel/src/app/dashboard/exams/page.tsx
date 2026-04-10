@@ -1,6 +1,7 @@
 'use client';
 
 import { Badge, Button, Card, CardBody, ConfirmationModal, useToast } from '@/components/ui';
+import { useAuth } from '@/contexts/AuthContext';
 import { api } from '@/lib/api';
 import { ADMIN_QUERY_TIMINGS } from '@/lib/query/config';
 import { adminQueryKeys } from '@/lib/query/keys';
@@ -9,14 +10,40 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 
-type TabType = 'READING' | 'LISTENING' | 'WRITING';
+type TabType = 'READING' | 'LISTENING' | 'WRITING' | 'SPEAKING';
+
+type GroupedExamSection = {
+  id: string;
+  sectionIds: string[];
+  centerIds: string[];
+  title: string;
+  type: ExamSection['type'];
+  description?: string;
+  duration: number;
+  teacher?: ExamSection['teacher'];
+  teacherId: string;
+  centerNames: string[];
+};
+
+const buildSectionFingerprint = (section: ExamSection) =>
+  JSON.stringify({
+    title: section.title,
+    type: section.type,
+    description: section.description || '',
+    duration: section.duration,
+    audioUrl: section.audioUrl || '',
+    questions: section.questions,
+    passages: section.passages || [],
+    teacherId: section.teacherId,
+  });
 
 export default function ExamSectionsPage() {
+  const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<TabType>('LISTENING');
   
   // Modal State
   const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [sectionToDelete, setSectionToDelete] = useState<string | null>(null);
+  const [sectionToDelete, setSectionToDelete] = useState<string[]>([]);
 
   // Alert State
   const queryClient = useQueryClient();
@@ -30,13 +57,67 @@ export default function ExamSectionsPage() {
   });
 
   const deleteSectionMutation = useMutation({
-    mutationFn: (sectionId: string) => api.deleteExamSection(sectionId),
+    mutationFn: async (sectionIds: string[]) => {
+      await Promise.all(sectionIds.map((sectionId) => api.deleteExamSection(sectionId)));
+    },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: adminQueryKeys.examSections() });
     },
   });
 
   const sections = useMemo(() => sectionsQuery.data ?? [], [sectionsQuery.data]);
+  const groupedSections = useMemo(() => {
+    if (user?.role !== 'SUPER_ADMIN') {
+      return sections.map((section) => ({
+        id: section.id,
+        sectionIds: [section.id],
+        centerIds: [section.centerId],
+        title: section.title,
+        type: section.type,
+        description: section.description,
+        duration: section.duration,
+        teacher: section.teacher,
+        teacherId: section.teacherId,
+        centerNames: section.center?.name ? [section.center.name] : [],
+      })) satisfies GroupedExamSection[];
+    }
+
+    const groupsByFingerprint = new Map<string, GroupedExamSection[]>();
+
+    sections.forEach((section) => {
+      const fingerprint = buildSectionFingerprint(section);
+      const existingGroups = groupsByFingerprint.get(fingerprint) || [];
+      const centerName = section.center?.name || section.centerId;
+
+      const reusableGroup = existingGroups.find(
+        (group) => !group.centerIds.includes(section.centerId)
+      );
+
+      if (reusableGroup) {
+        reusableGroup.sectionIds.push(section.id);
+        reusableGroup.centerIds.push(section.centerId);
+        reusableGroup.centerNames.push(centerName);
+        return;
+      }
+
+      existingGroups.push({
+        id: section.id,
+        sectionIds: [section.id],
+        centerIds: [section.centerId],
+        title: section.title,
+        type: section.type,
+        description: section.description,
+        duration: section.duration,
+        teacher: section.teacher,
+        teacherId: section.teacherId,
+        centerNames: centerName ? [centerName] : [],
+      });
+
+      groupsByFingerprint.set(fingerprint, existingGroups);
+    });
+
+    return Array.from(groupsByFingerprint.values()).flat();
+  }, [sections, user?.role]);
   const isLoading = sectionsQuery.isLoading && !sectionsQuery.data;
 
   useEffect(() => {
@@ -49,33 +130,38 @@ export default function ExamSectionsPage() {
 
   const counts = useMemo(() => {
     return {
-      LISTENING: sections.filter((section) => section.type === 'LISTENING').length,
-      READING: sections.filter((section) => section.type === 'READING').length,
-      WRITING: sections.filter((section) => section.type === 'WRITING').length,
+      LISTENING: groupedSections.filter((section) => section.type === 'LISTENING').length,
+      READING: groupedSections.filter((section) => section.type === 'READING').length,
+      WRITING: groupedSections.filter((section) => section.type === 'WRITING').length,
+      SPEAKING: groupedSections.filter((section) => section.type === 'SPEAKING').length,
     };
-  }, [sections]);
+  }, [groupedSections]);
 
-  const handleDeleteClick = (id: string) => {
-    setSectionToDelete(id);
+  const handleDeleteClick = (ids: string[]) => {
+    setSectionToDelete(ids);
     setShowDeleteModal(true);
   };
 
   const confirmDelete = async () => {
-    if (!sectionToDelete) return;
+    if (sectionToDelete.length === 0) return;
     try {
       await deleteSectionMutation.mutateAsync(sectionToDelete);
-      success('Section deleted successfully');
+      success(
+        sectionToDelete.length > 1
+          ? 'Sections deleted successfully'
+          : 'Section deleted successfully'
+      );
     } catch (err) {
       showError(err instanceof Error ? err.message : 'Failed to delete section');
     } finally {
       setShowDeleteModal(false);
-      setSectionToDelete(null);
+      setSectionToDelete([]);
     }
   };
 
   const cancelDelete = () => {
     setShowDeleteModal(false);
-    setSectionToDelete(null);
+    setSectionToDelete([]);
   };
 
   const getTypeBadgeVariant = (type: string) => {
@@ -83,6 +169,7 @@ export default function ExamSectionsPage() {
       case 'READING': return 'info';
       case 'LISTENING': return 'warning';
       case 'WRITING': return 'success';
+      case 'SPEAKING': return 'default';
       default: return 'default';
     }
   };
@@ -95,12 +182,14 @@ export default function ExamSectionsPage() {
         return <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" /></svg>;
       case 'WRITING':
         return <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>;
+      case 'SPEAKING':
+        return <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 18.5a4.5 4.5 0 004.5-4.5V8a4.5 4.5 0 10-9 0v6a4.5 4.5 0 004.5 4.5z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11v3a7 7 0 01-14 0v-3M12 21v-3" /></svg>;
       default:
         return null;
     }
   };
 
-  const filteredSections = sections.filter(section => section.type === activeTab);
+  const filteredSections = groupedSections.filter((section) => section.type === activeTab);
 
   if (isLoading) {
     return (
@@ -164,6 +253,17 @@ export default function ExamSectionsPage() {
             Writing
             <span className="ml-2 text-xs text-slate-400">{counts.WRITING}</span>
           </button>
+          <button
+            onClick={() => setActiveTab('SPEAKING')}
+            className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
+              activeTab === 'SPEAKING'
+                ? 'border-slate-900 text-slate-900 dark:text-white'
+                : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300 dark:hover:text-slate-300'
+            }`}
+          >
+            Speaking
+            <span className="ml-2 text-xs text-slate-400">{counts.SPEAKING}</span>
+          </button>
         </div>
       </div>
 
@@ -176,7 +276,8 @@ export default function ExamSectionsPage() {
                 <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-white shadow-sm ${
                   section.type === 'READING' ? 'bg-blue-600' :
                   section.type === 'LISTENING' ? 'bg-amber-500' :
-                  'bg-emerald-600'
+                  section.type === 'WRITING' ? 'bg-emerald-600' :
+                  'bg-indigo-600'
                 }`}>
                   {getTypeIcon(section.type)}
                 </div>
@@ -202,6 +303,27 @@ export default function ExamSectionsPage() {
                 </span>
               </div>
 
+              {section.centerNames.length > 0 && (
+                <div className="mb-4">
+                  <p className="text-xs text-slate-400 mb-2">Assigned Centers</p>
+                  <div className="flex flex-wrap gap-2">
+                    {section.centerNames.slice(0, 3).map((centerName) => (
+                      <span
+                        key={`${section.id}-${centerName}`}
+                        className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                      >
+                        {centerName}
+                      </span>
+                    ))}
+                    {section.centerNames.length > 3 && (
+                      <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                        +{section.centerNames.length - 3} more
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
+
               <div className="flex items-center justify-between pt-4 border-t border-slate-200 dark:border-slate-800">
                 <p className="text-xs text-slate-400">
                   by {section.teacher?.firstName || section.teacher?.username || 'Unknown'}
@@ -214,7 +336,11 @@ export default function ExamSectionsPage() {
                       </svg>
                     </Button>
                   </Link>
-                  <Button variant="ghost" size="sm" onClick={() => handleDeleteClick(section.id)}>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleDeleteClick(section.sectionIds)}
+                  >
                     <svg className="w-4 h-4 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                     </svg>

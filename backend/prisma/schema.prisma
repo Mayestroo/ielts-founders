@@ -21,6 +21,7 @@ enum ExamSectionType {
   LISTENING
   READING
   WRITING
+  SPEAKING
 }
 
 enum AssignmentStatus {
@@ -76,6 +77,7 @@ model User {
   sessionScheduledAt DateTime?
   sessionReferralSource SessionReferralSource?
   phoneNumber String?
+  goldActive Boolean @default(false)
   premiumActive Boolean @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

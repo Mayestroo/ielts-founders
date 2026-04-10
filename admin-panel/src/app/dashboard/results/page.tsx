@@ -32,6 +32,7 @@ interface MultiTaskAiEvaluation {
 
 type AiEvaluationPayload = AiEvaluation | MultiTaskAiEvaluation;
 type LegacyQuestion = Question & { correctAnswers?: unknown };
+type ExamMode = 'ONLINE' | 'OFFLINE';
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null;
@@ -55,6 +56,45 @@ const coerceAiEvaluation = (value: unknown): AiEvaluationPayload | null => {
   }
 
   return null;
+};
+
+const examModeBadgeVariant: Record<ExamMode, 'info' | 'warning'> = {
+  ONLINE: 'info',
+  OFFLINE: 'warning',
+};
+
+const examModeLabel: Record<ExamMode, string> = {
+  ONLINE: 'Online Exam',
+  OFFLINE: 'Offline Exam',
+};
+
+const getResultExamMode = (result: ExamResult): ExamMode => {
+  const answers = isRecord(result.answers)
+    ? (result.answers as Record<string, unknown>)
+    : {};
+
+  const attemptMode =
+    typeof answers._attemptMode === 'string'
+      ? answers._attemptMode.trim().toLowerCase()
+      : '';
+
+  if (attemptMode === 'full-mock' || attemptMode === 'offline-manual') {
+    return 'OFFLINE';
+  }
+
+  if (attemptMode === 'standalone' || answers._isStandalone === true) {
+    return 'ONLINE';
+  }
+
+  const fullMockSessionId = answers._fullMockSessionId;
+  if (
+    typeof fullMockSessionId === 'string' &&
+    fullMockSessionId.trim().length > 0
+  ) {
+    return 'OFFLINE';
+  }
+
+  return 'ONLINE';
 };
 
 export default function ResultsPage() {
@@ -107,6 +147,10 @@ export default function ResultsPage() {
     () => resultsQuery.data?.results ?? [],
     [resultsQuery.data],
   );
+  const visibleResults = useMemo(
+    () => results.filter((result) => result.section?.type !== 'SPEAKING'),
+    [results],
+  );
   const isLoading = resultsQuery.isLoading && !resultsQuery.data;
   const detailLoading = selectedResultQuery.isLoading || selectedResultQuery.isFetching;
 
@@ -139,11 +183,12 @@ export default function ResultsPage() {
   // Filtering States
   const [searchTerm, setSearchTerm] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
+  const [examModeFilter, setExamModeFilter] = useState<'' | ExamMode>('');
 
   // Grouping Logic
   const groupedResults = useMemo(() => {
     // Perform client-side filtering
-    const filtered = results.filter(result => {
+    const filtered = visibleResults.filter(result => {
       const student = result.student!;
       const matchesSearch = 
         (student.firstName?.toLowerCase().includes(searchTerm.toLowerCase()) || 
@@ -151,8 +196,10 @@ export default function ResultsPage() {
          student.username.toLowerCase().includes(searchTerm.toLowerCase()));
       
       const matchesType = !typeFilter || result.section?.type === typeFilter;
+      const matchesExamMode =
+        !examModeFilter || getResultExamMode(result) === examModeFilter;
       
-      return matchesSearch && matchesType;
+      return matchesSearch && matchesType && matchesExamMode;
     });
 
     const groups: Record<string, { student: User; results: ExamResult[]; latestDate: string }> = {};
@@ -175,7 +222,7 @@ export default function ResultsPage() {
     return Object.values(groups).sort((a, b) => 
       new Date(b.latestDate).getTime() - new Date(a.latestDate).getTime()
     );
-  }, [results, searchTerm, typeFilter]);
+  }, [visibleResults, searchTerm, typeFilter, examModeFilter]);
 
   // Client-side pagination logic
   const paginatedGroups = useMemo(() => {
@@ -184,14 +231,14 @@ export default function ResultsPage() {
   }, [groupedResults, page, pageSize]);
 
   const totalGroups = useMemo(() => {
-    return new Set(results.map((result) => result.studentId)).size;
-  }, [results]);
+    return new Set(visibleResults.map((result) => result.studentId)).size;
+  }, [visibleResults]);
 
-  const hasFilters = Boolean(searchTerm.trim() || typeFilter);
+  const hasFilters = Boolean(searchTerm.trim() || typeFilter || examModeFilter);
 
   useEffect(() => {
     setPage(1);
-  }, [searchTerm, typeFilter]);
+  }, [searchTerm, typeFilter, examModeFilter]);
 
   useEffect(() => {
     if (!resultsQuery.error) {
@@ -497,7 +544,7 @@ export default function ResultsPage() {
                                  { label: 'Task Achievement', data: evalData.taskAchievement },
                                  { label: 'Coherence & Cohesion', data: evalData.coherenceAndCohesion },
                                  { label: 'Lexical Resource', data: evalData.lexicalResource },
-                                 { label: 'Grammar', data: evalData.grammaticalRangeAndAccuracy },
+                                 { label: 'Grammatical Range & Accuracy', data: evalData.grammaticalRangeAndAccuracy },
                                ].map((criterion) => (
                                  <div key={criterion.label} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl p-4 hover:shadow-md transition-shadow">
                                     <div className="flex justify-between items-center mb-2">
@@ -566,7 +613,7 @@ export default function ResultsPage() {
                       { label: 'Task Achievement', data: aiEvaluation.taskAchievement },
                       { label: 'Coherence & Cohesion', data: aiEvaluation.coherenceAndCohesion },
                       { label: 'Lexical Resource', data: aiEvaluation.lexicalResource },
-                      { label: 'Grammar', data: aiEvaluation.grammaticalRangeAndAccuracy },
+                      { label: 'Grammatical Range & Accuracy', data: aiEvaluation.grammaticalRangeAndAccuracy },
                     ].map((criterion) => (
                       <div key={criterion.label} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl p-4 hover:shadow-md transition-shadow">
                         <div className="flex justify-between items-center mb-2">
@@ -649,17 +696,17 @@ export default function ResultsPage() {
       const correctAnswer =
         rawQuestion.correctAnswer ?? rawQuestion.correctAnswers;
       
-      // Only split if we have multiple points AND multiple correct answers to map them to
-      const shouldSplit = points > 1 && (
-        (rawQuestion.type === 'MCQ_MULTIPLE' && Array.isArray(correctAnswer)) ||
-        (['MATCHING','PLAN_MAP_LABELING','DIAGRAM_LABELING'].includes(rawQuestion.type) && typeof correctAnswer === 'object' && !Array.isArray(correctAnswer))
+      // Only split if we have multiple correct answers to map them to
+      const shouldSplit = (
+        (rawQuestion.type === 'MCQ_MULTIPLE' && Array.isArray(correctAnswer) && correctAnswer.length > 1) ||
+        (points > 1 && ['MATCHING','PLAN_MAP_LABELING','DIAGRAM_LABELING'].includes(rawQuestion.type) && typeof correctAnswer === 'object' && !Array.isArray(correctAnswer))
       );
 
       if (shouldSplit) {
         const studentAnswers = Array.isArray(studentAnswer)
-          ? studentAnswer
+          ? studentAnswer.map((entry) => String(entry).trim()).filter((entry) => entry.length > 0)
           : isRecord(studentAnswer)
-            ? Object.values(studentAnswer)
+            ? Object.values(studentAnswer).map((entry) => String(entry).trim()).filter((entry) => entry.length > 0)
             : [];
         const correctAnswersArr = Array.isArray(correctAnswer)
           ? correctAnswer
@@ -667,19 +714,38 @@ export default function ResultsPage() {
             ? Object.values(correctAnswer)
             : [];
         
+        // For MCQ_MULTIPLE: use greedy matching so order-independent correctness works
+        const remainingCorrect = correctAnswersArr
+          .map((entry) => String(entry).trim())
+          .filter((entry) => entry.length > 0);
+
+        const consumeMatch = (studentEntry: string): boolean => {
+          const normalized = studentEntry.toLowerCase().trim();
+          const matchIndex = remainingCorrect.findIndex(
+            (ce) => ce.toLowerCase().trim() === normalized,
+          );
+          if (matchIndex < 0) return false;
+          remainingCorrect.splice(matchIndex, 1);
+          return true;
+        };
+
         correctAnswersArr.forEach((ca, i) => {
           questionCounter++;
-          // For split questions, we mark as correct if the student's OVERALL set for this question contains this correct answer
-          // or if it's a direct index match for objects (Matching)
           let isPartCorrect = false;
           let displayStudentAnswer: string;
           
           if (Array.isArray(correctAnswer)) {
-              isPartCorrect = studentAnswers.some(sa => String(sa).toLowerCase().trim() === String(ca).toLowerCase().trim());
-             // Just show the student's selections
-              displayStudentAnswer = studentAnswers.length > 0 
-               ? studentAnswers.map((answer) => String(answer).toUpperCase()).join(', ')
-                : '-';
+              const studentEntry = studentAnswers[i];
+              if (!studentEntry || studentEntry.length === 0) {
+                isPartCorrect = false;
+                displayStudentAnswer = '-';
+              } else if (consumeMatch(studentEntry)) {
+                isPartCorrect = true;
+                displayStudentAnswer = studentEntry.toUpperCase();
+              } else {
+                isPartCorrect = false;
+                displayStudentAnswer = studentEntry.toUpperCase();
+              }
           } else if (isRecord(correctAnswer)) {
              // For Matching, check by specific sub-key if possible, or fallback to index
               const subId = Object.keys(correctAnswer)[i];
@@ -789,26 +855,40 @@ export default function ResultsPage() {
              </div>
              <div className="w-48">
                <Select
-                 options={[
-                   { value: '', label: 'All Section Types' },
-                   { value: 'READING', label: 'Reading' },
-                   { value: 'LISTENING', label: 'Listening' },
-                   { value: 'WRITING', label: 'Writing' },
-                 ]}
-                 value={typeFilter}
-                 onChange={(e) => setTypeFilter(e.target.value)}
-               />
-             </div>
-              <>
-                <Button 
-                  variant="secondary" 
-                  onClick={() => {
-                    setSearchTerm('');
-                    setTypeFilter('');
-                  }}
-                  disabled={!hasFilters}
-                >
-                  Clear
+                  options={[
+                    { value: '', label: 'All Section Types' },
+                    { value: 'READING', label: 'Reading' },
+                    { value: 'LISTENING', label: 'Listening' },
+                    { value: 'WRITING', label: 'Writing' },
+                  ]}
+                  value={typeFilter}
+                  onChange={(e) => setTypeFilter(e.target.value)}
+                />
+              </div>
+              <div className="w-48">
+                <Select
+                  options={[
+                    { value: '', label: 'All Exam Modes' },
+                    { value: 'ONLINE', label: 'Online Exam' },
+                    { value: 'OFFLINE', label: 'Offline Exam' },
+                  ]}
+                  value={examModeFilter}
+                  onChange={(e) =>
+                    setExamModeFilter((e.target.value as '' | ExamMode) || '')
+                  }
+                />
+              </div>
+               <>
+                 <Button 
+                   variant="secondary" 
+                   onClick={() => {
+                     setSearchTerm('');
+                     setTypeFilter('');
+                     setExamModeFilter('');
+                   }}
+                   disabled={!hasFilters}
+                 >
+                   Clear
                 </Button>
               </>
            </div>
@@ -824,6 +904,7 @@ export default function ResultsPage() {
                 <tr>
                   <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Student</th>
                   <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Completed Sections</th>
+                  <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Exam Modes</th>
                   <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Last Test Date</th>
                   <th className="px-6 py-4 text-right text-xs font-semibold text-slate-500 uppercase tracking-wider">Actions</th>
                 </tr>
@@ -831,6 +912,9 @@ export default function ResultsPage() {
               <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
                 {paginatedGroups.map((group) => {
                   const student = group.student;
+                  const modes = Array.from(
+                    new Set(group.results.map((result) => getResultExamMode(result))),
+                  );
 
                   return (
                     <tr key={student.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
@@ -856,6 +940,19 @@ export default function ResultsPage() {
                           ))}
                         </div>
                       </td>
+                      <td className="px-6 py-4">
+                        <div className="flex flex-wrap gap-2">
+                          {modes.map((mode) => (
+                            <Badge
+                              key={`${student.id}-${mode}`}
+                              variant={examModeBadgeVariant[mode]}
+                              size="sm"
+                            >
+                              {examModeLabel[mode]}
+                            </Badge>
+                          ))}
+                        </div>
+                      </td>
                       <td className="px-6 py-4 text-slate-500 dark:text-slate-400 text-sm">
                         {new Date(group.latestDate).toLocaleDateString()}
                       </td>
@@ -876,7 +973,7 @@ export default function ResultsPage() {
                 })}
                 {paginatedGroups.length === 0 && (
                    <tr>
-                     <td colSpan={4} className="px-6 py-12 text-center text-slate-500">
+                     <td colSpan={5} className="px-6 py-12 text-center text-slate-500">
                        {searchTerm || typeFilter ? 'No results match your filters' : 'No results found'}
                      </td>
                    </tr>
@@ -890,7 +987,7 @@ export default function ResultsPage() {
       {/* Student Specific Results Modal - MATCHING REFERENCE IMAGE */}
       {showSelectedStudentModal && selectedGroup && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <Card className="w-full max-w-5xl max-h-[90vh] h-auto flex flex-col">
+          <Card className="w-full max-w-7xl max-h-[90vh] h-auto flex flex-col">
             <CardHeader className="flex flex-row items-center justify-between">
               <div>
                 <h2 className="text-xl font-semibold text-slate-900 dark:text-white">Exam Results</h2>
@@ -907,12 +1004,16 @@ export default function ResultsPage() {
                       <th className="px-8 py-5 text-left text-[11px] font-bold text-slate-400 uppercase tracking-widest">Exam Section</th>
                       <th className="px-8 py-5 text-left text-[11px] font-bold text-slate-400 uppercase tracking-widest">Score</th>
                       <th className="px-8 py-5 text-left text-[11px] font-bold text-slate-400 uppercase tracking-widest">Band Score</th>
+                      <th className="px-8 py-5 text-left text-[11px] font-bold text-slate-400 uppercase tracking-widest">Exam Mode</th>
                       <th className="px-8 py-5 text-right text-[11px] font-bold text-slate-400 uppercase tracking-widest">Details</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                    {selectedGroup.results.sort((a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime()).map((result) => (
-                      <tr key={result.id} className="hover:bg-slate-50/50">
+                    {selectedGroup.results.sort((a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime()).map((result) => {
+                      const examMode = getResultExamMode(result);
+
+                      return (
+                        <tr key={result.id} className="hover:bg-slate-50/50">
                         <td className="px-8 py-6">
                            <div className="flex items-center gap-3">
                               <div className="w-9 h-9 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-700 dark:text-slate-200 font-bold text-sm">
@@ -956,13 +1057,19 @@ export default function ResultsPage() {
                                )}
                             </div>
                          </td>
+                         <td className="px-8 py-6">
+                           <Badge variant={examModeBadgeVariant[examMode]} size="sm">
+                             {examModeLabel[examMode]}
+                           </Badge>
+                         </td>
                          <td className="px-8 py-6 text-right">
                            <Button size="sm" variant="secondary" className="text-xs font-bold px-4" onClick={() => handleViewDetails(result.id)}>
                               View Full Breakdown
                            </Button>
                          </td>
-                      </tr>
-                    ))}
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -975,7 +1082,7 @@ export default function ResultsPage() {
       )}
 
       {/* Result Details Modal (Existing breakdown) */}
-      <Modal isOpen={showModal} onClose={closeModal} title="Exam Result Breakdown" width="max-w-5xl">
+      <Modal isOpen={showModal} onClose={closeModal} title="Exam Result Breakdown" width="max-w-7xl">
         <div className="max-h-[80vh] overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-slate-200">
           {detailLoading ? (
             <div className="py-12 flex justify-center"><div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-slate-400" /></div>
@@ -985,6 +1092,9 @@ export default function ResultsPage() {
                 <div>
                     <h3 className="text-lg font-bold text-slate-900">{selectedResult.section?.title}</h3>
                     <p className="text-sm text-slate-500">Submitted on {new Date(selectedResult.submittedAt).toLocaleString()}</p>
+                    <p className="text-xs text-slate-400 mt-1">
+                      {examModeLabel[getResultExamMode(selectedResult)]}
+                    </p>
                 </div>
                 <div className="flex items-center gap-6">
                     <div className="text-center">

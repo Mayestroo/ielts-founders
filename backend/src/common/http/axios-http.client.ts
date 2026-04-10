@@ -1,6 +1,23 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
-import { HttpClient } from '../interfaces/http-client.interface';
+import {
+  HttpClient,
+  RequestOptions,
+} from '../interfaces/http-client.interface';
+
+function normalizeOptions(
+  headersOrOptions?: Record<string, string> | RequestOptions,
+): RequestOptions {
+  if (!headersOrOptions) {
+    return {};
+  }
+  // If it has 'headers' or 'timeoutMs' keys, treat as RequestOptions
+  if ('headers' in headersOrOptions || 'timeoutMs' in headersOrOptions) {
+    return headersOrOptions as RequestOptions;
+  }
+  // Otherwise it's a plain headers map (legacy signature)
+  return { headers: headersOrOptions as Record<string, string> };
+}
 
 @Injectable()
 export class AxiosHttpClient implements HttpClient {
@@ -14,32 +31,44 @@ export class AxiosHttpClient implements HttpClient {
   async post<T>(
     url: string,
     body: unknown,
-    headers?: Record<string, string>,
+    headersOrOptions?: Record<string, string> | RequestOptions,
   ): Promise<T> {
+    const opts = normalizeOptions(headersOrOptions);
+    const timeoutMs = opts.timeoutMs ?? this.defaultTimeoutMs;
     try {
       const response = await this.httpService.axiosRef.post<T>(url, body, {
-        headers,
-        timeout: this.defaultTimeoutMs,
+        headers: opts.headers,
+        timeout: timeoutMs,
       });
       return response.data;
     } catch (error) {
-      this.handleHttpError('POST', url, error);
+      this.handleHttpError('POST', url, error, timeoutMs);
     }
   }
 
-  async get<T>(url: string, headers?: Record<string, string>): Promise<T> {
+  async get<T>(
+    url: string,
+    headersOrOptions?: Record<string, string> | RequestOptions,
+  ): Promise<T> {
+    const opts = normalizeOptions(headersOrOptions);
+    const timeoutMs = opts.timeoutMs ?? this.defaultTimeoutMs;
     try {
       const response = await this.httpService.axiosRef.get<T>(url, {
-        headers,
-        timeout: this.defaultTimeoutMs,
+        headers: opts.headers,
+        timeout: timeoutMs,
       });
       return response.data;
     } catch (error) {
-      this.handleHttpError('GET', url, error);
+      this.handleHttpError('GET', url, error, timeoutMs);
     }
   }
 
-  private handleHttpError(method: string, url: string, error: unknown): never {
+  private handleHttpError(
+    method: string,
+    url: string,
+    error: unknown,
+    timeoutMs: number,
+  ): never {
     const axiosError = error as {
       code?: string;
       message?: string;
@@ -52,12 +81,8 @@ export class AxiosHttpClient implements HttpClient {
     const status = axiosError.response?.status;
 
     if (isTimeout) {
-      this.logger.warn(
-        `${method} ${url} timed out after ${this.defaultTimeoutMs}ms`,
-      );
-      throw new Error(
-        `HTTP ${method} timeout after ${this.defaultTimeoutMs}ms`,
-      );
+      this.logger.warn(`${method} ${url} timed out after ${timeoutMs}ms`);
+      throw new Error(`HTTP ${method} timeout after ${timeoutMs}ms`);
     }
 
     if (status) {

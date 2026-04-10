@@ -31,6 +31,7 @@ import {
   CreateExamSectionDto,
   CreateFullMockDto,
   HeartbeatDto,
+  ManualGradeSpeakingDto,
   ReconnectDto,
   SaveHighlightsDto,
   SubmitAnswersDto,
@@ -443,6 +444,38 @@ export class ExamsController {
   ): Promise<unknown> {
     return this.writingEvaluationService.evaluateWriting(
       id,
+      req.user.id,
+      req.user.role,
+      req.user.centerId,
+    );
+  }
+
+  @Post('results/:id/manual-grade-speaking')
+  @Roles(Role.TEACHER, Role.CENTER_ADMIN, Role.SUPER_ADMIN)
+  manualGradeSpeaking(
+    @Param('id') id: string,
+    @Body() body: ManualGradeSpeakingDto,
+    @Request() req: AuthenticatedRequest,
+  ) {
+    return this.resultService.manualGradeSpeaking(
+      id,
+      body,
+      req.user.id,
+      req.user.role,
+      req.user.centerId,
+    );
+  }
+
+  @Post('results/student/:studentId/manual-grade-speaking')
+  @Roles(Role.TEACHER, Role.CENTER_ADMIN, Role.SUPER_ADMIN)
+  manualGradeSpeakingByStudent(
+    @Param('studentId') studentId: string,
+    @Body() body: ManualGradeSpeakingDto,
+    @Request() req: AuthenticatedRequest,
+  ) {
+    return this.resultService.manualGradeSpeakingByStudent(
+      studentId,
+      body,
       req.user.id,
       req.user.role,
       req.user.centerId,

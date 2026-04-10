@@ -40,8 +40,8 @@ const shouldRetryQuery = (failureCount: number, error: unknown) => {
 
 export const STUDENT_QUERY_TIMINGS = {
   profile: {
-    staleTime: 5 * 60 * 1000,
-    gcTime: 30 * 60 * 1000,
+    staleTime: 30 * 1000,
+    gcTime: 5 * 60 * 1000,
   },
   center: {
     staleTime: 30 * 60 * 1000,

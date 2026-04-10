@@ -1,8 +1,16 @@
+export interface RequestOptions {
+  headers?: Record<string, string>;
+  timeoutMs?: number;
+}
+
 export interface HttpClient {
   post<T>(
     url: string,
     body: unknown,
-    headers?: Record<string, string>,
+    headersOrOptions?: Record<string, string> | RequestOptions,
   ): Promise<T>;
-  get<T>(url: string, headers?: Record<string, string>): Promise<T>;
+  get<T>(
+    url: string,
+    headersOrOptions?: Record<string, string> | RequestOptions,
+  ): Promise<T>;
 }
