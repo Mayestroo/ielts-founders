@@ -25,6 +25,7 @@ interface ListeningSectionProps {
   questions: Question[];
   answers: Record<string, AnswerValue>;
   currentQuestionId: string;
+  noteCount: number;
   isSubmitting: boolean;
   showIntroVideo: boolean;
   showPlayOverlay: boolean;
@@ -52,6 +53,7 @@ interface ListeningSectionProps {
   onQuestionClick: (questionId: string) => void;
   onQuestionFocus: (questionId: string) => void;
   onPartClick: (partNumber: number) => void;
+  onOpenNotes: () => void;
   onSubmit: () => void;
   onConfirmSubmit: () => void;
   isReviewModalOpen: boolean;
@@ -77,6 +79,7 @@ export function ListeningSection({
   questions,
   answers,
   currentQuestionId,
+  noteCount,
   isSubmitting,
   showIntroVideo,
   showPlayOverlay,
@@ -102,6 +105,7 @@ export function ListeningSection({
   onQuestionClick,
   onQuestionFocus,
   onPartClick,
+  onOpenNotes,
   onSubmit,
   onConfirmSubmit,
   isReviewModalOpen,
@@ -264,6 +268,8 @@ export function ListeningSection({
           isAudioPlaying={isAudioPlaying}
           autoStart={timerStart && !showPlayOverlay && !sessionError}
           showTimer={showTimer}
+          noteCount={noteCount}
+          onOpenNotes={onOpenNotes}
           onTimerExpire={onTimerExpire}
           onOpenSettings={onOpenSettings}
         />

@@ -17,6 +17,7 @@ interface WritingSectionProps {
   activePartIndex: number;
   currentQuestionId: string;
   answers: Record<string, AnswerValue>;
+  noteCount: number;
   showIntroVideo: boolean;
   isSettingsOpen: boolean;
   timerStart?: boolean;
@@ -34,6 +35,7 @@ interface WritingSectionProps {
   onQuestionFocus: (questionId: string) => void;
   onQuestionClick: (questionId: string) => void;
   onPartClick: (partNumber: number) => void;
+  onOpenNotes: () => void;
   onSubmit: () => void;
   isSubmitting: boolean;
   sessionError: { type: string; message: string } | null;
@@ -50,6 +52,7 @@ export function WritingSection({
   activePartIndex,
   currentQuestionId,
   answers,
+  noteCount,
   showIntroVideo,
   isSettingsOpen,
   isVideoAutoplayBlocked,
@@ -65,6 +68,7 @@ export function WritingSection({
   onQuestionFocus,
   onQuestionClick,
   onPartClick,
+  onOpenNotes,
   onSubmit,
   isSubmitting,
   sessionError,
@@ -108,6 +112,8 @@ export function WritingSection({
           onTimerExpire={onTimerExpire}
           autoStart={timerStart && !sessionError}
           showTimer={showTimer}
+          noteCount={noteCount}
+          onOpenNotes={onOpenNotes}
           onOpenSettings={onOpenSettings}
         />
       </div>

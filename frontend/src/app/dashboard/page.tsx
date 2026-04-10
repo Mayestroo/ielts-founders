@@ -47,6 +47,7 @@ const getActionLabel = (
 };
 
 type DashboardSection =
+  | "FULL_ONLINE_MOCK"
   | "OFFLINE_EXAM"
   | "READING"
   | "LISTENING"
@@ -54,6 +55,10 @@ type DashboardSection =
   | "SPEAKING";
 type TierFilter = "ALL" | "FREE" | "GOLD" | "PREMIUM";
 type AccessTier = "FREE" | "GOLD" | "PREMIUM";
+type FullOnlineMockSectionType = Extract<
+  ExamSectionType,
+  "LISTENING" | "READING" | "WRITING"
+>;
 
 interface PremiumFlags {
   isPremium?: boolean;
@@ -70,9 +75,73 @@ const FREE_TEST_LIMITS: Record<ExamSectionType, number> = {
 const FREE_FULL_MOCK_LIMIT = 2;
 const FREE_FULL_TEST_COUNT = 1;
 const GOLD_FULL_TEST_COUNT = 10;
+const FULL_ONLINE_FREE_TEST_COUNT = 1;
+const FULL_ONLINE_STANDARD_TEST_COUNT = 10;
+const FULL_ONLINE_PREMIUM_TEST_COUNT = 20;
+const FULL_ONLINE_MOCK_SEQUENCE: FullOnlineMockSectionType[] = [
+  "LISTENING",
+  "READING",
+  "WRITING",
+];
+const FULL_ONLINE_MOCK_LABELS: Record<FullOnlineMockSectionType, string> = {
+  LISTENING: "Listening",
+  READING: "Reading",
+  WRITING: "Writing",
+};
+
+const getTierByFullOnlineMockOrder = (testOrder: number): AccessTier => {
+  if (testOrder <= FULL_ONLINE_FREE_TEST_COUNT) {
+    return "FREE";
+  }
+
+  if (testOrder <= FULL_ONLINE_STANDARD_TEST_COUNT) {
+    return "GOLD";
+  }
+
+  if (testOrder <= FULL_ONLINE_PREMIUM_TEST_COUNT) {
+    return "PREMIUM";
+  }
+
+  return "PREMIUM";
+};
+
+const extractTestNumberFromTitle = (title?: string | null): number | null => {
+  const normalized = (title || "").trim();
+  if (!normalized) {
+    return null;
+  }
+
+  const explicitTestMatch = normalized.match(/test\s*(\d+)/i);
+  if (explicitTestMatch) {
+    const explicitNumber = Number(explicitTestMatch[1]);
+    if (Number.isFinite(explicitNumber)) {
+      return explicitNumber;
+    }
+  }
+
+  const allNumbers = normalized.match(/\d+/g);
+  if (!allNumbers || allNumbers.length === 0) {
+    return null;
+  }
+
+  const parsed = Number(allNumbers[allNumbers.length - 1]);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+interface FullOnlineMockPackage {
+  packageKey: string;
+  packageOrder: number;
+  latestTimestamp: number;
+  assignmentsByType: Record<FullOnlineMockSectionType, ExamAssignment | null>;
+  nextAssignment: ExamAssignment | null;
+  completionByType: Record<FullOnlineMockSectionType, boolean>;
+  started: boolean;
+  completed: boolean;
+}
 
 const SECTION_OPTIONS: Array<{ key: DashboardSection; label: string; comingSoon?: boolean }> = [
-  { key: "OFFLINE_EXAM", label: "Full CDI at Founders" },
+  { key: "FULL_ONLINE_MOCK", label: "Full Online Mock" },
+  { key: "OFFLINE_EXAM", label: "Offline Mock at Founders" },
   { key: "READING", label: "Reading" },
   { key: "LISTENING", label: "Listening" },
   { key: "WRITING", label: "Writing" },
@@ -80,6 +149,7 @@ const SECTION_OPTIONS: Array<{ key: DashboardSection; label: string; comingSoon?
 ];
 
 const SECTION_CARD_ORDER: DashboardSection[] = [
+  "FULL_ONLINE_MOCK",
   "LISTENING",
   "READING",
   "WRITING",
@@ -95,6 +165,23 @@ const renderSectionIcon = (
   const sectionIconTint = isActive ? "#FFFFFF" : "#FF0000";
 
   switch (section) {
+    case "FULL_ONLINE_MOCK":
+      return (
+        <svg className={iconClasses} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M4 6h16M4 10h16M4 14h10M4 18h10"
+          />
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="m17 14 3 3-3 3"
+          />
+        </svg>
+      );
     case "OFFLINE_EXAM":
       return (
         <svg width="27" height="27" viewBox="0 0 27 27" fill="none" xmlns="http://www.w3.org/2000/svg" xmlnsXlink="http://www.w3.org/1999/xlink">
@@ -249,7 +336,7 @@ export default function DashboardPage() {
   const { user, isLoading, isAuthenticated, logout } = useAuth();
   const queryClient = useQueryClient();
   const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false);
-  const [selectedSection, setSelectedSection] = useState<DashboardSection>("LISTENING");
+  const [selectedSection, setSelectedSection] = useState<DashboardSection>("FULL_ONLINE_MOCK");
   const [selectedPlan, setSelectedPlan] = useState<TierFilter>("ALL");
   const [isSectionPending, startSectionTransition] = useTransition();
   const [isPlanPending, startPlanTransition] = useTransition();
@@ -261,6 +348,15 @@ export default function DashboardPage() {
     enabled: !!user?.id,
     staleTime: STUDENT_QUERY_TIMINGS.assignments.staleTime,
     gcTime: STUDENT_QUERY_TIMINGS.assignments.gcTime,
+    placeholderData: (previousData) => previousData,
+  });
+
+  const resultsQuery = useQuery({
+    queryKey: studentQueryKeys.myResults(),
+    queryFn: ({ signal }) => api.getMyResults({ signal }),
+    enabled: !!user?.id,
+    staleTime: STUDENT_QUERY_TIMINGS.results.staleTime,
+    gcTime: STUDENT_QUERY_TIMINGS.results.gcTime,
     placeholderData: (previousData) => previousData,
   });
 
@@ -300,6 +396,26 @@ export default function DashboardPage() {
       : "FREE";
 
   const freeAccess = useMemo(() => buildFreeAccess(assignments), [assignments]);
+  const standaloneSubmittedAssignmentIds = useMemo(() => {
+    const submitted = new Set<string>();
+
+    (resultsQuery.data ?? []).forEach((result) => {
+      const answers = (result.answers || {}) as Record<string, unknown>;
+      const source = typeof answers._attemptSource === "string" ? answers._attemptSource : "";
+
+      if (source && source !== "standalone") {
+        return;
+      }
+
+      const assignmentId =
+        typeof answers._assignmentId === "string" ? answers._assignmentId.trim() : "";
+      if (assignmentId) {
+        submitted.add(assignmentId);
+      }
+    });
+
+    return submitted;
+  }, [resultsQuery.data]);
   const assignmentTierById = useMemo(() => {
     const tierMap = new Map<string, AccessTier>();
     assignments.forEach((assignment) => {
@@ -321,6 +437,290 @@ export default function DashboardPage() {
       return userAccessTier === "PREMIUM";
     },
     [userAccessTier],
+  );
+
+  const fullOnlineCompletion = useMemo(() => {
+    const completedAssignmentIds = new Set<string>();
+
+    (resultsQuery.data ?? []).forEach((result) => {
+      const answers = (result.answers || {}) as Record<string, unknown>;
+      if (answers._attemptSource !== "full-online-mock") {
+        return;
+      }
+
+      const assignmentId =
+        typeof answers._assignmentId === "string" ? answers._assignmentId.trim() : "";
+      if (assignmentId) {
+        completedAssignmentIds.add(assignmentId);
+      }
+    });
+
+    return {
+      completedAssignmentIds,
+    };
+  }, [resultsQuery.data]);
+
+  const isFullOnlineAssignmentCompleted = useCallback(
+    (assignment: ExamAssignment | null): boolean => {
+      if (!assignment) {
+        return false;
+      }
+
+      if (fullOnlineCompletion.completedAssignmentIds.has(assignment.id)) {
+        return true;
+      }
+
+      return false;
+    },
+    [fullOnlineCompletion.completedAssignmentIds],
+  );
+
+  const standaloneFullOnlineAssignmentsByType = useMemo(() => {
+    const grouped: Record<FullOnlineMockSectionType, ExamAssignment[]> = {
+      LISTENING: [],
+      READING: [],
+      WRITING: [],
+    };
+
+    assignments.forEach((assignment) => {
+      if (assignment.fullMockSessionId) {
+        return;
+      }
+
+      if (standaloneSubmittedAssignmentIds.has(assignment.id)) {
+        return;
+      }
+
+      const type = assignment.section?.type;
+      if (type === "LISTENING" || type === "READING" || type === "WRITING") {
+        grouped[type].push(assignment);
+      }
+    });
+
+    FULL_ONLINE_MOCK_SEQUENCE.forEach((type) => {
+      grouped[type].sort((left, right) => {
+        const leftTitleNumber = extractTestNumberFromTitle(left.section?.title);
+        const rightTitleNumber = extractTestNumberFromTitle(right.section?.title);
+
+        if (
+          leftTitleNumber !== null &&
+          rightTitleNumber !== null &&
+          leftTitleNumber !== rightTitleNumber
+        ) {
+          return leftTitleNumber - rightTitleNumber;
+        }
+
+        if (leftTitleNumber !== null && rightTitleNumber === null) {
+          return -1;
+        }
+
+        if (leftTitleNumber === null && rightTitleNumber !== null) {
+          return 1;
+        }
+
+        return new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime();
+      });
+    });
+
+    return grouped;
+  }, [assignments, standaloneSubmittedAssignmentIds]);
+
+  const fullOnlineMockPackages = useMemo<FullOnlineMockPackage[]>(() => {
+    const listeningAssignments = standaloneFullOnlineAssignmentsByType.LISTENING;
+    const readingAssignments = standaloneFullOnlineAssignmentsByType.READING;
+    const writingAssignments = standaloneFullOnlineAssignmentsByType.WRITING;
+    const packageCount = Math.max(
+      listeningAssignments.length,
+      readingAssignments.length,
+      writingAssignments.length,
+    );
+
+    const packages: FullOnlineMockPackage[] = [];
+
+    for (let index = 0; index < packageCount; index += 1) {
+      const assignmentsByType: Record<FullOnlineMockSectionType, ExamAssignment | null> = {
+        LISTENING: listeningAssignments[index] || null,
+        READING: readingAssignments[index] || null,
+        WRITING: writingAssignments[index] || null,
+      };
+
+      const hasAnyAssignment = FULL_ONLINE_MOCK_SEQUENCE.some(
+        (type) => assignmentsByType[type] !== null,
+      );
+
+      if (!hasAnyAssignment) {
+        continue;
+      }
+
+      const sourceTitle =
+        assignmentsByType.LISTENING?.section?.title ||
+        assignmentsByType.READING?.section?.title ||
+        assignmentsByType.WRITING?.section?.title ||
+        "";
+      const extractedOrder = extractTestNumberFromTitle(sourceTitle);
+
+      const packageOrder = extractedOrder ?? index + 1;
+      const packageKey = `online-full-${packageOrder}-${index}`;
+      const latestTimestamp = Math.max(
+        ...FULL_ONLINE_MOCK_SEQUENCE.map(
+          (type) =>
+            assignmentsByType[type] !== null
+              ? new Date((assignmentsByType[type] as ExamAssignment).createdAt).getTime()
+              : 0,
+        ),
+      );
+      const completionByType: Record<FullOnlineMockSectionType, boolean> = {
+        LISTENING: isFullOnlineAssignmentCompleted(assignmentsByType.LISTENING),
+        READING: isFullOnlineAssignmentCompleted(assignmentsByType.READING),
+        WRITING: isFullOnlineAssignmentCompleted(assignmentsByType.WRITING),
+      };
+
+      const nextAssignment =
+        FULL_ONLINE_MOCK_SEQUENCE.map((type) => ({
+          assignment: assignmentsByType[type],
+          completed: completionByType[type],
+        })).find(
+          (entry): entry is { assignment: ExamAssignment; completed: boolean } =>
+            Boolean(entry.assignment && !entry.completed),
+        )?.assignment || null;
+
+      const availableCount = FULL_ONLINE_MOCK_SEQUENCE.filter(
+        (type) => assignmentsByType[type] !== null,
+      ).length;
+      const completedCount = FULL_ONLINE_MOCK_SEQUENCE.filter(
+        (type) => assignmentsByType[type] !== null && completionByType[type],
+      ).length;
+      const started = completedCount > 0;
+      const completed = availableCount > 0 && completedCount >= availableCount;
+
+      packages.push({
+        packageKey,
+        packageOrder,
+        latestTimestamp,
+        assignmentsByType,
+        nextAssignment,
+        completionByType,
+        started,
+        completed,
+      });
+    }
+
+    return packages.sort((left, right) => {
+      if (left.packageOrder !== right.packageOrder) {
+        return left.packageOrder - right.packageOrder;
+      }
+      return left.latestTimestamp - right.latestTimestamp;
+    });
+  }, [isFullOnlineAssignmentCompleted, standaloneFullOnlineAssignmentsByType]);
+
+  const getFullOnlineMockTier = useCallback(
+    (pkg: FullOnlineMockPackage): AccessTier => {
+      return getTierByFullOnlineMockOrder(pkg.packageOrder);
+    },
+    [],
+  );
+
+  const getFullOnlineMockPrimaryAssignment = useCallback(
+    (pkg: FullOnlineMockPackage): ExamAssignment | null => {
+      for (const type of FULL_ONLINE_MOCK_SEQUENCE) {
+        const assignment = pkg.assignmentsByType[type];
+        if (assignment) {
+          return assignment;
+        }
+      }
+
+      return null;
+    },
+    [],
+  );
+
+  const handleFullOnlineMockAction = useCallback(
+    async (pkg: FullOnlineMockPackage) => {
+      const nextAssignment = pkg.nextAssignment;
+      const primaryAssignment = getFullOnlineMockPrimaryAssignment(pkg);
+      const targetAssignment = nextAssignment ?? (pkg.completed ? primaryAssignment : null);
+
+      if (!targetAssignment) {
+        router.push("/history");
+        return;
+      }
+
+      const requiredTier = getFullOnlineMockTier(pkg);
+      if (requiredTier !== "FREE" && !canAccessTier(requiredTier)) {
+        const params = new URLSearchParams();
+        if (targetAssignment.section?.title) {
+          params.set("lockedTest", targetAssignment.section.title);
+        }
+        params.set("requiredTier", requiredTier.toLowerCase());
+        router.push(`/pricing${params.toString() ? `?${params.toString()}` : ""}`);
+        return;
+      }
+
+      try {
+        const nav = navigator as Navigator & {
+          keyboard?: { lock?: (keys: string[]) => Promise<void> };
+          userActivation?: { isActive: boolean };
+        };
+
+        if (!nav.userActivation || nav.userActivation.isActive) {
+          if (!document.fullscreenElement) {
+            await document.documentElement.requestFullscreen();
+          }
+
+          if (nav.keyboard?.lock) {
+            try {
+              await nav.keyboard.lock(["Escape"]);
+            } catch (lockError) {
+              console.warn("Keyboard lock failed:", lockError);
+            }
+          }
+        }
+      } catch (error) {
+        console.warn("Fullscreen request failed:", error);
+      }
+
+      const params = new URLSearchParams({
+        onlineMock: "1",
+      });
+      const listeningId = pkg.assignmentsByType.LISTENING?.id;
+      const readingId = pkg.assignmentsByType.READING?.id;
+      const writingId = pkg.assignmentsByType.WRITING?.id;
+
+      if (listeningId) {
+        params.set("onlineMockListeningId", listeningId);
+      }
+      if (readingId) {
+        params.set("onlineMockReadingId", readingId);
+      }
+      if (writingId) {
+        params.set("onlineMockWritingId", writingId);
+      }
+
+      router.push(`/exam/${targetAssignment.id}?${params.toString()}`);
+    },
+    [
+      canAccessTier,
+      getFullOnlineMockTier,
+      getFullOnlineMockPrimaryAssignment,
+      router,
+    ],
+  );
+
+  const getFullOnlineMockActionLabel = useCallback(
+    (pkg: FullOnlineMockPackage): string => {
+      const requiredTier = getFullOnlineMockTier(pkg);
+      if (requiredTier !== "FREE" && !canAccessTier(requiredTier)) {
+        return requiredTier === "GOLD" ? "Unlock Standard" : "Unlock Premium";
+      }
+
+      const nextAssignment = pkg.nextAssignment;
+      if (!nextAssignment) {
+        return pkg.completed ? "Practice Again" : "View Online Results";
+      }
+
+      return pkg.started ? "Continue Exam" : "Start Exam";
+    },
+    [canAccessTier, getFullOnlineMockTier],
   );
 
   const requestFullscreen = useCallback(async () => {
@@ -430,24 +830,33 @@ export default function DashboardPage() {
   // Transform assignments into display items (complete + parts) for each section type
   const readingDisplayAssignments = useMemo(() => {
     const readingAssignments = assignments.filter(
-      (a) => a.section?.type === "READING" && !a.fullMockSessionId
+      (a) =>
+        a.section?.type === "READING" &&
+        !a.fullMockSessionId &&
+        !standaloneSubmittedAssignmentIds.has(a.id)
     );
     return transformAssignments(readingAssignments, "READING");
-  }, [assignments]);
+  }, [assignments, standaloneSubmittedAssignmentIds]);
 
   const listeningDisplayAssignments = useMemo(() => {
     const listeningAssignments = assignments.filter(
-      (a) => a.section?.type === "LISTENING" && !a.fullMockSessionId
+      (a) =>
+        a.section?.type === "LISTENING" &&
+        !a.fullMockSessionId &&
+        !standaloneSubmittedAssignmentIds.has(a.id)
     );
     return transformAssignments(listeningAssignments, "LISTENING");
-  }, [assignments]);
+  }, [assignments, standaloneSubmittedAssignmentIds]);
 
   const writingDisplayAssignments = useMemo(() => {
     const writingAssignments = assignments.filter(
-      (a) => a.section?.type === "WRITING" && !a.fullMockSessionId
+      (a) =>
+        a.section?.type === "WRITING" &&
+        !a.fullMockSessionId &&
+        !standaloneSubmittedAssignmentIds.has(a.id)
     );
     return transformAssignments(writingAssignments, "WRITING");
-  }, [assignments]);
+  }, [assignments, standaloneSubmittedAssignmentIds]);
 
   const speakingDisplayAssignments = useMemo(() => {
     const speakingAssignments = assignments.filter(
@@ -547,18 +956,19 @@ export default function DashboardPage() {
 
   const filteredDisplayAssignments = filteredDisplayAssignmentsByPlan[selectedPlan];
 
-  // Handle non-sectioned assignments (Offline Exam and legacy sections)
+  // Handle non-sectioned assignments (Full Mock flows and legacy sections)
   const sectionAssignmentsBySection = useMemo<Record<DashboardSection, ExamAssignment[]>>(() => {
-    const offlineExam: ExamAssignment[] = [];
+    const fullMockAssignments: ExamAssignment[] = [];
 
     for (const assignment of sortedAssignments) {
       if (assignment.fullMockSessionId) {
-        offlineExam.push(assignment);
+        fullMockAssignments.push(assignment);
       }
     }
 
     return {
-      OFFLINE_EXAM: offlineExam,
+      FULL_ONLINE_MOCK: fullMockAssignments,
+      OFFLINE_EXAM: fullMockAssignments,
       READING: [],
       LISTENING: [],
       WRITING: [],
@@ -596,7 +1006,10 @@ export default function DashboardPage() {
   const filteredAssignments = filteredAssignmentsByPlan[selectedPlan];
 
   const displayedAssignments = useMemo(() => {
-    if (selectedSection === "OFFLINE_EXAM") {
+    if (
+      selectedSection === "FULL_ONLINE_MOCK" ||
+      selectedSection === "OFFLINE_EXAM"
+    ) {
       return sectionAssignments;
     }
 
@@ -730,7 +1143,7 @@ export default function DashboardPage() {
                 )}
               </div>
 
-              <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
+              <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-6">
                 {SECTION_CARD_ORDER.map((sectionKey) => {
                   const section = SECTION_OPTIONS.find((entry) => entry.key === sectionKey);
                   if (!section) {
@@ -783,7 +1196,9 @@ export default function DashboardPage() {
               </div>
             </section>
 
-            {selectedSection !== "OFFLINE_EXAM" && (
+            {selectedSection !== "FULL_ONLINE_MOCK" &&
+              selectedSection !== "OFFLINE_EXAM" &&
+              selectedSection !== "SPEAKING" && (
               <div className="grid grid-cols-2 gap-1 rounded-2xl border border-gray-200 bg-white p-1 shadow-sm sm:grid-cols-4">
                 {PLAN_OPTIONS.map((plan) => {
                   const activePlan = selectedPlan === plan.key;
@@ -818,8 +1233,12 @@ export default function DashboardPage() {
               </div>
             ) : (
               <>
-                {(selectedSection === "READING" || selectedSection === "LISTENING" || selectedSection === "WRITING" || selectedSection === "SPEAKING"
+                {(selectedSection === "READING" || selectedSection === "LISTENING" || selectedSection === "WRITING"
                   ? filteredDisplayAssignments.length === 0
+                  : selectedSection === "FULL_ONLINE_MOCK"
+                    ? fullOnlineMockPackages.length === 0
+                  : selectedSection === "SPEAKING"
+                    ? false
                   : displayedAssignments.length === 0) ? (
                   <div className="text-center py-12">
                     <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-gray-800 flex items-center justify-center">
@@ -838,7 +1257,9 @@ export default function DashboardPage() {
                       </svg>
                     </div>
                     <p className="text-gray-400">
-                      {selectedSection === "OFFLINE_EXAM"
+                      {selectedSection === "FULL_ONLINE_MOCK"
+                        ? "No tests found in Full Online Mock"
+                        : selectedSection === "OFFLINE_EXAM"
                         ? "No tests found in Offline Exam"
                         : selectedSection === "READING"
                           ? "No reading tests available"
@@ -851,13 +1272,175 @@ export default function DashboardPage() {
                                 : "No tests found for this filter"}
                     </p>
                     <p className="text-gray-500 text-sm mt-1">
-                      {selectedSection === "OFFLINE_EXAM"
+                      {selectedSection === "FULL_ONLINE_MOCK" ||
+                      selectedSection === "OFFLINE_EXAM"
                         ? "Try another section."
                         : "Tests will appear here once assigned."}
                     </p>
                   </div>
                 ) : (
                   <>
+                    {selectedSection === "FULL_ONLINE_MOCK" && (
+                      <div className="mt-2 mb-8">
+                        <div className="rounded-3xl border border-gray-200 bg-white p-6 shadow-sm">
+                          <div className="flex items-center justify-between gap-4">
+                            <h3 className="text-xl font-bold text-gray-900">Full Online Mock Tests</h3>
+                            <p className="text-sm text-gray-500">{fullOnlineMockPackages.length} total</p>
+                          </div>
+
+                          <div className="mt-6 space-y-4">
+                            {fullOnlineMockPackages.map((pkg) => {
+                              const packageAssignments = pkg.assignmentsByType;
+                              const packageNextAssignment = pkg.nextAssignment;
+                              const packageTier = getFullOnlineMockTier(pkg);
+                              const requiresUpgrade =
+                                packageTier !== "FREE" && !canAccessTier(packageTier);
+                              const packageActionLabel = getFullOnlineMockActionLabel(pkg);
+                              const hasAnyAssignment = FULL_ONLINE_MOCK_SEQUENCE.some(
+                                (type) => Boolean(packageAssignments[type]),
+                              );
+                              const titleSource =
+                                packageAssignments.LISTENING?.section?.title ||
+                                packageAssignments.READING?.section?.title ||
+                                packageAssignments.WRITING?.section?.title ||
+                                "";
+                              const testMatch = titleSource.match(/test\s*\d+/i);
+                              const packageTitle = testMatch
+                                ? `Full Online Mock (${testMatch[0].replace(/\s+/g, " ").trim()})`
+                                : `Full Online Mock ${pkg.packageOrder}`;
+
+                              return (
+                                <div key={pkg.packageKey} className="rounded-2xl border border-gray-200 p-4">
+                                  <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                                    <div>
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">
+                                          FULL ONLINE MOCK
+                                        </p>
+                                        <span
+                                          className={`inline-flex rounded-lg px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide ${
+                                            pkg.completed
+                                              ? "bg-emerald-100 text-emerald-700"
+                                              : pkg.started
+                                                ? "bg-sky-100 text-sky-700"
+                                                : "bg-gray-100 text-gray-700"
+                                          }`}
+                                        >
+                                          {pkg.completed
+                                            ? "Completed"
+                                            : pkg.started
+                                              ? "In Progress"
+                                              : "Assigned"}
+                                        </span>
+                                      </div>
+
+                                      <h4 className="mt-1 text-lg font-semibold text-gray-900">
+                                        {packageTitle}
+                                      </h4>
+                                      <p className="mt-1 text-sm text-gray-500">
+                                        Listening + Reading + Writing (Full)
+                                      </p>
+
+                                      <div className="mt-2 flex flex-wrap gap-2">
+                                        {FULL_ONLINE_MOCK_SEQUENCE.map((type) => {
+                                          const assignment = packageAssignments[type];
+                                          const isCompleted = pkg.completionByType[type];
+                                          const chipStyle = assignment
+                                            ? isCompleted
+                                              ? "bg-emerald-50 text-emerald-700"
+                                              : packageNextAssignment?.id === assignment.id
+                                                ? "bg-sky-50 text-sky-700"
+                                                : "bg-gray-100 text-gray-600"
+                                            : "bg-gray-100 text-gray-400";
+                                          const chipLabel = assignment
+                                            ? isCompleted
+                                              ? `${FULL_ONLINE_MOCK_LABELS[type]} Done`
+                                              : packageNextAssignment?.id === assignment.id
+                                                ? `${FULL_ONLINE_MOCK_LABELS[type]} Next`
+                                                : FULL_ONLINE_MOCK_LABELS[type]
+                                            : `${FULL_ONLINE_MOCK_LABELS[type]} Missing`;
+
+                                          return (
+                                            <span
+                                              key={`${pkg.packageKey}:${type}:chip`}
+                                              className={`inline-flex rounded-lg px-2.5 py-1 text-[11px] font-medium ${chipStyle}`}
+                                            >
+                                              {chipLabel}
+                                            </span>
+                                          );
+                                        })}
+                                      </div>
+                                    </div>
+
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          void handleFullOnlineMockAction(pkg);
+                                        }}
+                                        disabled={!hasAnyAssignment}
+                                        className={`inline-flex rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+                                          requiresUpgrade
+                                            ? "bg-amber-500 text-white hover:bg-amber-600"
+                                            : "bg-black text-white hover:bg-gray-800"
+                                        }`}
+                                      >
+                                        {packageActionLabel}
+                                      </button>
+
+                                      {pkg.completed && (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            router.push("/history");
+                                          }}
+                                          className="inline-flex rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-100"
+                                        >
+                                          View Online Results
+                                        </button>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {selectedSection === "SPEAKING" && (
+                      <div className="mt-2 mb-12 w-full">
+                        <div className="rounded-3xl border border-gray-200 bg-white p-8 shadow-sm">
+                          <div className="mx-auto max-w-2xl text-center">
+                            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-gray-500">
+                              Speaking Practice
+                            </p>
+                            <h3 className="mt-3 text-2xl font-bold text-gray-900">
+                              Practice Speaking on Telegram
+                            </h3>
+                            <p className="mt-3 text-sm leading-6 text-gray-600">
+                              Use our Speaking Bot for guided prompts, timed responses, and daily speaking drills.
+                              Your Telegram speaking workflow is separate from dashboard test sections.
+                            </p>
+                            <div className="mt-7">
+                              <a
+                                href="https://t.me/FoundersSpeakingBot"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-2 rounded-xl bg-[#229ED9] px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-[#1C8ABF]"
+                              >
+                                <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                                  <path d="M9.03 15.71 8.7 20.37c.48 0 .69-.21.94-.46l2.24-2.14 4.65 3.4c.85.47 1.45.22 1.68-.79l3.04-14.27.01-.01c.27-1.26-.45-1.75-1.28-1.44L1.96 11.53c-1.23.48-1.21 1.17-.21 1.48l4.6 1.43L17.03 7.7c.5-.33.96-.15.58.18" />
+                                </svg>
+                                Open Telegram
+                              </a>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
                     {selectedSection === "OFFLINE_EXAM" && (
                       <div className="max-w-6xl mx-auto mt-12 px-4">
                         <div className="bg-white rounded-4xl border border-gray-100 p-12 shadow-sm">
@@ -1041,7 +1624,7 @@ export default function DashboardPage() {
                       </div>
                     )}
 
-                    {(selectedSection === "READING" || selectedSection === "LISTENING" || selectedSection === "WRITING" || selectedSection === "SPEAKING") && (
+                    {(selectedSection === "READING" || selectedSection === "LISTENING" || selectedSection === "WRITING") && (
                       <div className="mt-2 mb-16 w-full">
                         <div className="bg-white rounded-3xl border border-gray-100 p-6 shadow-sm">
                           <div className="flex items-center justify-between gap-4">
@@ -1049,7 +1632,6 @@ export default function DashboardPage() {
                               {selectedSection === "READING" && "Reading Tests"}
                               {selectedSection === "LISTENING" && "Listening Tests"}
                               {selectedSection === "WRITING" && "Writing Tests"}
-                              {selectedSection === "SPEAKING" && "Speaking Tests"}
                             </h3>
                             <p className="text-sm text-gray-500">
                               {filteredDisplayAssignments.length} total
@@ -1059,7 +1641,9 @@ export default function DashboardPage() {
                           <div className="mt-6 space-y-4">
                             {filteredDisplayAssignments.map((item) => {
                               const hasScore =
-                                item.status === "SUBMITTED" && typeof item.score === "number";
+                                item.status === "SUBMITTED" &&
+                                typeof item.score === "number" &&
+                                item.score > 0;
                               const itemTier = getDisplayItemTier(item);
                               const badgeTier: AccessTier =
                                 selectedPlan === "PREMIUM" ? "PREMIUM" : itemTier;

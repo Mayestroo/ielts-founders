@@ -7,7 +7,7 @@ import { studentQueryKeys } from "@/lib/query/keys";
 import { ExamAssignment } from "@/types";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 function formatTime(totalSeconds: number) {
   const safeSeconds = Math.max(0, totalSeconds);
@@ -24,9 +24,13 @@ function BreakContent() {
   const { isAuthenticated, isLoading } = useAuth();
   const nextAssignmentId = searchParams.get("next");
   const endsAtParam = searchParams.get("endsAt");
+  const isOnlineMockFlow = searchParams.get("onlineMock") === "1";
+  const onlineMockListeningId = searchParams.get("onlineMockListeningId") || "";
+  const onlineMockReadingId = searchParams.get("onlineMockReadingId") || "";
+  const onlineMockWritingId = searchParams.get("onlineMockWritingId") || "";
 
   const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null);
-  const [autoStarted, setAutoStarted] = useState(false);
+  const autoStartedRef = useRef(false);
 
   const nextAssignmentQuery = useQuery({
     queryKey: studentQueryKeys.assignment(nextAssignmentId || ""),
@@ -100,17 +104,38 @@ function BreakContent() {
   const handleStart = useCallback(async () => {
     if (!nextAssignmentId) return;
     await requestFullscreen();
-    router.push(`/exam/${nextAssignmentId}?showVideo=1`);
-  }, [nextAssignmentId, requestFullscreen, router]);
+    const params = new URLSearchParams({ showVideo: "1" });
+    if (isOnlineMockFlow) {
+      params.set("onlineMock", "1");
+    }
+    if (onlineMockListeningId) {
+      params.set("onlineMockListeningId", onlineMockListeningId);
+    }
+    if (onlineMockReadingId) {
+      params.set("onlineMockReadingId", onlineMockReadingId);
+    }
+    if (onlineMockWritingId) {
+      params.set("onlineMockWritingId", onlineMockWritingId);
+    }
+    router.push(`/exam/${nextAssignmentId}?${params.toString()}`);
+  }, [
+    nextAssignmentId,
+    requestFullscreen,
+    router,
+    isOnlineMockFlow,
+    onlineMockListeningId,
+    onlineMockReadingId,
+    onlineMockWritingId,
+  ]);
 
   useEffect(() => {
-    if (remainingSeconds === null || remainingSeconds > 0 || autoStarted) {
+    if (remainingSeconds === null || remainingSeconds > 0 || autoStartedRef.current) {
       return;
     }
-    setAutoStarted(true);
+    autoStartedRef.current = true;
     const timeout = setTimeout(() => handleStart(), 1000);
     return () => clearTimeout(timeout);
-  }, [autoStarted, handleStart, remainingSeconds]);
+  }, [handleStart, remainingSeconds]);
 
   const canStart = remainingSeconds !== null && remainingSeconds <= 0;
 

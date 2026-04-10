@@ -170,7 +170,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                 </button>
               </div>
               <p className="mt-2 text-xs text-gray-500">
-                Full CDI at Founders always keeps timer enabled.
+                Offline Mock at Founders always keeps timer enabled.
               </p>
             </div>
           </div>

@@ -24,6 +24,7 @@ interface ReadingSectionProps {
   answers: Record<string, AnswerValue>;
   currentQuestionId: string;
   rightPanelRef: RefObject<HTMLDivElement>;
+  noteCount: number;
   isSubmitting: boolean;
   showIntroVideo: boolean;
   isSettingsOpen: boolean;
@@ -42,6 +43,7 @@ interface ReadingSectionProps {
   onQuestionClick: (questionId: string) => void;
   onQuestionFocus: (questionId: string) => void;
   onPartClick: (partNumber: number) => void;
+  onOpenNotes: () => void;
   onSubmit: () => void;
   onConfirmSubmit: () => void;
   isReviewModalOpen: boolean;
@@ -69,6 +71,7 @@ export function ReadingSection({
   answers,
   currentQuestionId,
   rightPanelRef,
+  noteCount,
   isSubmitting,
   showIntroVideo,
   isSettingsOpen,
@@ -85,6 +88,7 @@ export function ReadingSection({
   onQuestionClick,
   onQuestionFocus,
   onPartClick,
+  onOpenNotes,
   onSubmit,
   onConfirmSubmit,
   isReviewModalOpen,
@@ -108,6 +112,8 @@ export function ReadingSection({
         onTimerExpire={onTimerExpire}
         autoStart={timerStart && !sessionError}
         showTimer={showTimer}
+        noteCount={noteCount}
+        onOpenNotes={onOpenNotes}
         onOpenSettings={onOpenSettings}
       />
       <SettingsModal isOpen={isSettingsOpen} onClose={onCloseSettings} />

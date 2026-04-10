@@ -1,6 +1,7 @@
 "use client";
 
 import { ConfirmationModal } from "@/components/ui/ConfirmationModal";
+import { ExamNotesSidebar } from "@/components/exam";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSettings } from "@/contexts/SettingsContext";
 import { useExamParts } from "@/features/exam/hooks/useExamParts";
@@ -23,7 +24,7 @@ import {
   resolveListeningPartAudioUrl,
   resolveListeningPartDurationMinutes,
 } from "@/lib/listeningAudio";
-import { useExamStore } from "@/store";
+import { useExamNotesStore, useExamStore } from "@/store";
 import {
     BreakStatus,
     ExamAssignment,
@@ -342,6 +343,10 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
   const searchParams = useSearchParams();
   const forceShowVideo = searchParams.get("showVideo") === "1";
   const isProctoredPractice = searchParams.get("proctored") === "1";
+  const isOnlineMockFlow = searchParams.get("onlineMock") === "1";
+  const onlineMockListeningId = searchParams.get("onlineMockListeningId") || "";
+  const onlineMockReadingId = searchParams.get("onlineMockReadingId") || "";
+  const onlineMockWritingId = searchParams.get("onlineMockWritingId") || "";
 
   const [assignment, setAssignment] = useState<
     (ExamAssignment & { remainingTime?: number }) | null
@@ -375,9 +380,18 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
     useState<ExamResult | null>(null);
   const [isPracticeResultLoading, setIsPracticeResultLoading] = useState(false);
   const [showCorrectAnswers, setShowCorrectAnswers] = useState(true);
+  const noteCount = useExamNotesStore(
+    (state) => state.notes.length + (state.composer && !state.composer.highlightId ? 1 : 0),
+  );
+  const openNotesSidebar = useExamNotesStore((state) => state.openSidebar);
+  const resetNotesState = useExamNotesStore((state) => state.reset);
   const wasFullscreenRef = useRef<boolean>(true);
   const isExamCompletedRef = useRef<boolean>(false);
   const showExitWarningRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    resetNotesState();
+  }, [assignmentId, resetNotesState]);
 
   // Detect if this is a partial assignment (part or task)
   const isPartialAssignment = useMemo(
@@ -538,6 +552,52 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
     router.push("/dashboard");
   }, [router]);
 
+  const exitExamToOnlineResults = useCallback(async () => {
+    isExamCompletedRef.current = true;
+    if (document.fullscreenElement) {
+      try {
+        await document.exitFullscreen();
+      } catch (exitErr) {
+        console.warn("Failed to exit fullscreen:", exitErr);
+      }
+    }
+    router.push("/history");
+  }, [router]);
+
+  const onlineMockSequenceIds = useMemo(() => {
+    return [onlineMockListeningId, onlineMockReadingId, onlineMockWritingId].filter(
+      (id): id is string => id.trim().length > 0,
+    );
+  }, [onlineMockListeningId, onlineMockReadingId, onlineMockWritingId]);
+
+  const createOnlineMockQuery = useCallback(
+    (includeShowVideo = false) => {
+      const params = new URLSearchParams();
+      if (includeShowVideo) {
+        params.set("showVideo", "1");
+      }
+      if (isOnlineMockFlow) {
+        params.set("onlineMock", "1");
+      }
+      if (onlineMockListeningId) {
+        params.set("onlineMockListeningId", onlineMockListeningId);
+      }
+      if (onlineMockReadingId) {
+        params.set("onlineMockReadingId", onlineMockReadingId);
+      }
+      if (onlineMockWritingId) {
+        params.set("onlineMockWritingId", onlineMockWritingId);
+      }
+      return params;
+    },
+    [
+      isOnlineMockFlow,
+      onlineMockListeningId,
+      onlineMockReadingId,
+      onlineMockWritingId,
+    ],
+  );
+
   const navigateToNextAssignment = useCallback(
     async (currentAssignmentId: string) => {
       const allAssignments = await api.getMyAssignments();
@@ -564,13 +624,12 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
 
   const redirectToBreak = useCallback(
     (assignmentIdToStart: string, breakEndsAt: string) => {
-      const params = new URLSearchParams({
-        next: assignmentIdToStart,
-        endsAt: breakEndsAt,
-      });
+      const params = createOnlineMockQuery();
+      params.set("next", assignmentIdToStart);
+      params.set("endsAt", breakEndsAt);
       router.push(`/exam/break?${params.toString()}`);
     },
-    [router],
+    [createOnlineMockQuery, router],
   );
 
   const handleContinuePart = useCallback(() => {
@@ -603,8 +662,9 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
       return;
     }
 
-    router.push(`/exam/${pendingNavigation.nextAssignmentId}?showVideo=1`);
-  }, [pendingNavigation, redirectToBreak, router, exitExamToDashboard, isPartialAssignment, originalAssignmentId]);
+    const params = createOnlineMockQuery(true);
+    router.push(`/exam/${pendingNavigation.nextAssignmentId}?${params.toString()}`);
+  }, [pendingNavigation, redirectToBreak, router, exitExamToDashboard, isPartialAssignment, originalAssignmentId, createOnlineMockQuery]);
 
 
 
@@ -1334,8 +1394,17 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
       const submitAnswers: Record<string, unknown> = {
         ...answers,
         _attemptType: isPracticeMode ? resolvePracticeAttemptType() : "Full",
-        _attemptMode: isPracticeMode ? "standalone" : "full-mock",
-        _fullMockSessionId: assignmentForSubmit.fullMockSessionId ?? null,
+        _attemptMode:
+          isPracticeMode || isOnlineMockFlow ? "standalone" : "full-mock",
+        _attemptSource: isOnlineMockFlow
+          ? "full-online-mock"
+          : isPracticeMode
+            ? "standalone"
+            : "full-offline-mock",
+        _assignmentId: assignmentForSubmit.id,
+        _fullMockSessionId: isOnlineMockFlow
+          ? null
+          : assignmentForSubmit.fullMockSessionId ?? null,
         _attemptQuestionCount: attemptQuestionCount,
       };
 
@@ -1352,7 +1421,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
 
       const isOfflineMock = Boolean(submitResult.fullMockSessionId);
 
-      if (isPracticeMode && !isOfflineMock && !submitResult.breakEndsAt) {
+      if (isPracticeMode && !isOnlineMockFlow && !isOfflineMock && !submitResult.breakEndsAt) {
         const submitMeta: PracticeSubmitMeta = {
           resultId: submitResult.resultId ?? null,
           submissionId: submitResult.submissionId ?? null,
@@ -1391,12 +1460,49 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
           );
           return;
         }
-        router.push(`/exam/${submitResult.nextAssignmentId}?showVideo=1`);
+        const params = createOnlineMockQuery(true);
+        router.push(`/exam/${submitResult.nextAssignmentId}?${params.toString()}`);
         return;
       }
 
       if (submitResult.fullMockSessionId) {
-        await exitExamToDashboard();
+        if (isOnlineMockFlow) {
+          await exitExamToOnlineResults();
+        } else {
+          await exitExamToDashboard();
+        }
+        return;
+      }
+
+      if (isOnlineMockFlow) {
+        if (onlineMockSequenceIds.length === 0) {
+          await exitExamToOnlineResults();
+          return;
+        }
+
+        const currentIndex = onlineMockSequenceIds.findIndex(
+          (id) => id === assignmentForSubmit.id,
+        );
+
+        if (currentIndex >= 0 && currentIndex + 1 < onlineMockSequenceIds.length) {
+          const nextPackageAssignmentId = onlineMockSequenceIds[currentIndex + 1];
+          const params = createOnlineMockQuery(true);
+          router.push(`/exam/${nextPackageAssignmentId}?${params.toString()}`);
+          return;
+        }
+
+        if (currentIndex === -1) {
+          const fallbackNextId = onlineMockSequenceIds.find(
+            (id) => id !== assignmentForSubmit.id,
+          );
+          if (fallbackNextId) {
+            const params = createOnlineMockQuery(true);
+            router.push(`/exam/${fallbackNextId}?${params.toString()}`);
+            return;
+          }
+        }
+
+        await exitExamToOnlineResults();
         return;
       }
 
@@ -1430,7 +1536,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
       setIsReviewModalOpen(false);
       setIsConfirmModalOpen(false);
     }
-  }, [assignment, isSubmitting, originalAssignmentId, handleStartResponse, withComputedRemainingTime, filterSectionForPart, syncAnswers, answers, tabId, isPracticeMode, resolvePracticeAttemptType, loadPracticeAttemptHistory, loadPracticeResultDetail, redirectToBreak, exitExamToDashboard, navigateToNextAssignment, isTransientSubmitFailure, recoverSubmittedStateAfterFailure, router]);
+  }, [assignment, isSubmitting, originalAssignmentId, handleStartResponse, withComputedRemainingTime, filterSectionForPart, syncAnswers, answers, tabId, isPracticeMode, resolvePracticeAttemptType, loadPracticeAttemptHistory, loadPracticeResultDetail, redirectToBreak, exitExamToDashboard, exitExamToOnlineResults, navigateToNextAssignment, isTransientSubmitFailure, recoverSubmittedStateAfterFailure, router, isOnlineMockFlow, onlineMockSequenceIds, createOnlineMockQuery]);
 
   // Keep ref updated
   useEffect(() => {
@@ -2085,6 +2191,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
             passages={passages}
             questions={questions}
             answers={answers}
+            noteCount={noteCount}
             currentQuestionId={currentQuestionId}
             rightPanelRef={rightPanelRef}
             isSubmitting={isSubmitting}
@@ -2103,6 +2210,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
             onQuestionClick={handleQuestionClick}
             onQuestionFocus={setCurrentQuestionId}
             onPartClick={handlePartClick}
+            onOpenNotes={openNotesSidebar}
             onSubmit={handleSubmit}
             onConfirmSubmit={handleFinalSubmit}
             isReviewModalOpen={isReviewModalOpen}
@@ -2126,6 +2234,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
             activePartIndex={activePartIndex}
             currentQuestionId={currentQuestionId}
             answers={answers}
+            noteCount={noteCount}
             showIntroVideo={showIntroVideo}
             isSettingsOpen={isSettingsOpen}
             isVideoAutoplayBlocked={isVideoAutoplayBlocked}
@@ -2141,6 +2250,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
             onQuestionFocus={setCurrentQuestionId}
             onQuestionClick={handleQuestionClick}
             onPartClick={handlePartClick}
+            onOpenNotes={openNotesSidebar}
             onSubmit={handleFinalSubmit}
             isSubmitting={isSubmitting}
             sessionError={sessionError}
@@ -2194,6 +2304,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
             currentPart={currentPart}
             questions={questions}
             answers={answers}
+            noteCount={noteCount}
             currentQuestionId={currentQuestionId}
             isSubmitting={isSubmitting}
             showIntroVideo={showIntroVideo}
@@ -2220,6 +2331,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
             onQuestionClick={handleQuestionClick}
             onQuestionFocus={setCurrentQuestionId}
             onPartClick={handlePartClick}
+            onOpenNotes={openNotesSidebar}
             onSubmit={handleSubmit}
             onConfirmSubmit={handleFinalSubmit}
             isReviewModalOpen={isReviewModalOpen}
@@ -2236,6 +2348,8 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
           />
         )}
       </div>
+
+      <ExamNotesSidebar />
     </>
   );
 }

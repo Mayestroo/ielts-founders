@@ -1296,7 +1296,7 @@ export default function FeedbackPage() {
           <div>
             <h2 className="text-2xl font-bold text-gray-900">Offline Results</h2>
             <p className="text-gray-500 mt-1">
-              Review your latest Full CDI at Founders performance.
+              Review your latest Offline Mock at Founders performance.
             </p>
             {hasLockedOfflineResults && (
               <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
