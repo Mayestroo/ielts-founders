@@ -83,10 +83,22 @@ const FULL_ONLINE_MOCK_SEQUENCE: FullOnlineMockSectionType[] = [
   "READING",
   "WRITING",
 ];
-const FULL_ONLINE_MOCK_LABELS: Record<FullOnlineMockSectionType, string> = {
-  LISTENING: "Listening",
-  READING: "Reading",
-  WRITING: "Writing",
+const FULL_ONLINE_MOCK_TARIFF_LABELS: Record<AccessTier, string> = {
+  FREE: "Free",
+  GOLD: "Standard",
+  PREMIUM: "Premium",
+};
+
+const getFullOnlineMockTariffBadgeStyles = (tier: AccessTier): string => {
+  if (tier === "FREE") {
+    return "bg-emerald-100 text-emerald-700";
+  }
+
+  if (tier === "GOLD") {
+    return "bg-sky-100 text-sky-700";
+  }
+
+  return "bg-amber-100 text-amber-700";
 };
 
 const getTierByFullOnlineMockOrder = (testOrder: number): AccessTier => {
@@ -1199,30 +1211,30 @@ export default function DashboardPage() {
             {selectedSection !== "FULL_ONLINE_MOCK" &&
               selectedSection !== "OFFLINE_EXAM" &&
               selectedSection !== "SPEAKING" && (
-              <div className="grid grid-cols-2 gap-1 rounded-2xl border border-gray-200 bg-white p-1 shadow-sm sm:grid-cols-4">
-                {PLAN_OPTIONS.map((plan) => {
-                  const activePlan = selectedPlan === plan.key;
-                  return (
-                    <button
-                      key={plan.key}
-                      type="button"
-                      disabled={isPlanPending}
-                      onClick={() =>
-                        startPlanTransition(() => {
-                          setSelectedPlan(plan.key);
-                        })
-                      }
-                      className={`rounded-xl px-3 py-2 text-sm font-medium transition-colors ${activePlan
-                        ? "bg-black text-white"
-                        : "text-gray-600 hover:bg-gray-100"
-                        }`}
-                    >
-                      {plan.label}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
+                <div className="grid grid-cols-2 gap-1 rounded-2xl border border-gray-200 bg-white p-1 shadow-sm sm:grid-cols-4">
+                  {PLAN_OPTIONS.map((plan) => {
+                    const activePlan = selectedPlan === plan.key;
+                    return (
+                      <button
+                        key={plan.key}
+                        type="button"
+                        disabled={isPlanPending}
+                        onClick={() =>
+                          startPlanTransition(() => {
+                            setSelectedPlan(plan.key);
+                          })
+                        }
+                        className={`rounded-xl px-3 py-2 text-sm font-medium transition-colors ${activePlan
+                          ? "bg-black text-white"
+                          : "text-gray-600 hover:bg-gray-100"
+                          }`}
+                      >
+                        {plan.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
           </div>
 
           <div>
@@ -1237,9 +1249,9 @@ export default function DashboardPage() {
                   ? filteredDisplayAssignments.length === 0
                   : selectedSection === "FULL_ONLINE_MOCK"
                     ? fullOnlineMockPackages.length === 0
-                  : selectedSection === "SPEAKING"
-                    ? false
-                  : displayedAssignments.length === 0) ? (
+                    : selectedSection === "SPEAKING"
+                      ? false
+                      : displayedAssignments.length === 0) ? (
                   <div className="text-center py-12">
                     <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-gray-800 flex items-center justify-center">
                       <svg
@@ -1260,20 +1272,20 @@ export default function DashboardPage() {
                       {selectedSection === "FULL_ONLINE_MOCK"
                         ? "No tests found in Full Online Mock"
                         : selectedSection === "OFFLINE_EXAM"
-                        ? "No tests found in Offline Exam"
-                        : selectedSection === "READING"
-                          ? "No reading tests available"
-                          : selectedSection === "LISTENING"
-                            ? "No listening tests available"
-                            : selectedSection === "WRITING"
-                              ? "No writing tests available"
-                              : selectedSection === "SPEAKING"
-                                ? "No speaking tests available"
-                                : "No tests found for this filter"}
+                          ? "No tests found in Offline Exam"
+                          : selectedSection === "READING"
+                            ? "No reading tests available"
+                            : selectedSection === "LISTENING"
+                              ? "No listening tests available"
+                              : selectedSection === "WRITING"
+                                ? "No writing tests available"
+                                : selectedSection === "SPEAKING"
+                                  ? "No speaking tests available"
+                                  : "No tests found for this filter"}
                     </p>
                     <p className="text-gray-500 text-sm mt-1">
                       {selectedSection === "FULL_ONLINE_MOCK" ||
-                      selectedSection === "OFFLINE_EXAM"
+                        selectedSection === "OFFLINE_EXAM"
                         ? "Try another section."
                         : "Tests will appear here once assigned."}
                     </p>
@@ -1291,7 +1303,6 @@ export default function DashboardPage() {
                           <div className="mt-6 space-y-4">
                             {fullOnlineMockPackages.map((pkg) => {
                               const packageAssignments = pkg.assignmentsByType;
-                              const packageNextAssignment = pkg.nextAssignment;
                               const packageTier = getFullOnlineMockTier(pkg);
                               const requiresUpgrade =
                                 packageTier !== "FREE" && !canAccessTier(packageTier);
@@ -1318,58 +1329,31 @@ export default function DashboardPage() {
                                           FULL ONLINE MOCK
                                         </p>
                                         <span
-                                          className={`inline-flex rounded-lg px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide ${
-                                            pkg.completed
-                                              ? "bg-emerald-100 text-emerald-700"
-                                              : pkg.started
-                                                ? "bg-sky-100 text-sky-700"
-                                                : "bg-gray-100 text-gray-700"
-                                          }`}
+                                          className={`inline-flex rounded-lg px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide ${getFullOnlineMockTariffBadgeStyles(packageTier)}`}
                                         >
-                                          {pkg.completed
-                                            ? "Completed"
-                                            : pkg.started
-                                              ? "In Progress"
-                                              : "Assigned"}
+                                          {FULL_ONLINE_MOCK_TARIFF_LABELS[packageTier]}
                                         </span>
                                       </div>
 
                                       <h4 className="mt-1 text-lg font-semibold text-gray-900">
                                         {packageTitle}
                                       </h4>
-                                      <p className="mt-1 text-sm text-gray-500">
-                                        Listening + Reading + Writing (Full)
-                                      </p>
-
-                                      <div className="mt-2 flex flex-wrap gap-2">
-                                        {FULL_ONLINE_MOCK_SEQUENCE.map((type) => {
-                                          const assignment = packageAssignments[type];
-                                          const isCompleted = pkg.completionByType[type];
-                                          const chipStyle = assignment
-                                            ? isCompleted
-                                              ? "bg-emerald-50 text-emerald-700"
-                                              : packageNextAssignment?.id === assignment.id
-                                                ? "bg-sky-50 text-sky-700"
-                                                : "bg-gray-100 text-gray-600"
-                                            : "bg-gray-100 text-gray-400";
-                                          const chipLabel = assignment
-                                            ? isCompleted
-                                              ? `${FULL_ONLINE_MOCK_LABELS[type]} Done`
-                                              : packageNextAssignment?.id === assignment.id
-                                                ? `${FULL_ONLINE_MOCK_LABELS[type]} Next`
-                                                : FULL_ONLINE_MOCK_LABELS[type]
-                                            : `${FULL_ONLINE_MOCK_LABELS[type]} Missing`;
-
-                                          return (
-                                            <span
-                                              key={`${pkg.packageKey}:${type}:chip`}
-                                              className={`inline-flex rounded-lg px-2.5 py-1 text-[11px] font-medium ${chipStyle}`}
-                                            >
-                                              {chipLabel}
-                                            </span>
-                                          );
-                                        })}
+                                      <div
+                                        className="mt-2 flex items-center gap-2"
+                                        aria-label="Listening, Reading, and Writing full test"
+                                      >
+                                        {FULL_ONLINE_MOCK_SEQUENCE.map((type) => (
+                                          <span
+                                            key={`${pkg.packageKey}:full-online-icon:${type}`}
+                                            className={`inline-flex items-center justify-center rounded-xl border border-gray-200 bg-white ${
+                                              type === "READING" ? "h-9 w-9" : "h-8 w-8"
+                                            }`}
+                                          >
+                                            {renderSectionIcon(type, false)}
+                                          </span>
+                                        ))}
                                       </div>
+
                                     </div>
 
                                     <div className="flex flex-wrap items-center gap-2">
@@ -1379,11 +1363,10 @@ export default function DashboardPage() {
                                           void handleFullOnlineMockAction(pkg);
                                         }}
                                         disabled={!hasAnyAssignment}
-                                        className={`inline-flex rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
-                                          requiresUpgrade
-                                            ? "bg-amber-500 text-white hover:bg-amber-600"
-                                            : "bg-black text-white hover:bg-gray-800"
-                                        }`}
+                                        className={`inline-flex rounded-lg px-4 py-2 text-sm font-medium transition-colors ${requiresUpgrade
+                                          ? "bg-amber-500 text-white hover:bg-amber-600"
+                                          : "bg-black text-white hover:bg-gray-800"
+                                          }`}
                                       >
                                         {packageActionLabel}
                                       </button>
@@ -1416,8 +1399,8 @@ export default function DashboardPage() {
                             <p className="text-xs font-semibold uppercase tracking-[0.2em] text-gray-500">
                               Speaking Practice
                             </p>
-                            <h3 className="mt-3 text-2xl font-bold text-gray-900">
-                              Practice Speaking on Telegram
+                            <h3 className="mt-3 text-2xl font-bold text-(--button-brand-color)">
+                              IELTS Speaking AI Examiner
                             </h3>
                             <p className="mt-3 text-sm leading-6 text-gray-600">
                               Use our Speaking Bot for guided prompts, timed responses, and daily speaking drills.
@@ -1428,7 +1411,7 @@ export default function DashboardPage() {
                                 href="https://t.me/FoundersSpeakingBot"
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="inline-flex items-center gap-2 rounded-xl bg-[#229ED9] px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-[#1C8ABF]"
+                                className="inline-flex items-center gap-2 rounded-xl bg-(--button-brand-color) px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-(--button-brand-hover-color)"
                               >
                                 <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                                   <path d="M9.03 15.71 8.7 20.37c.48 0 .69-.21.94-.46l2.24-2.14 4.65 3.4c.85.47 1.45.22 1.68-.79l3.04-14.27.01-.01c.27-1.26-.45-1.75-1.28-1.44L1.96 11.53c-1.23.48-1.21 1.17-.21 1.48l4.6 1.43L17.03 7.7c.5-.33.96-.15.58.18" />
