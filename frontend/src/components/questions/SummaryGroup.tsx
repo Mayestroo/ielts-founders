@@ -1,6 +1,7 @@
 'use client';
 
 import { sanitizeHtml } from '@/lib/sanitizeHtml';
+import { instructionAllowsOptionReuse } from '@/lib/optionReuse';
 import { Question } from '@/types';
 import { useState } from 'react';
 import { FillBlankQuestion } from './FillBlankQuestion';
@@ -30,7 +31,12 @@ export function SummaryGroup({
   const firstQuestion = questions[0];
   const hasOptions = firstQuestion && 'options' in firstQuestion && Array.isArray((firstQuestion as any).options);
   const options = hasOptions ? (firstQuestion as any).options : [];
-  const canReuseOptions = options.length < questions.length;
+  const instruction =
+    questions.find((question) =>
+      typeof question.instruction === 'string' && question.instruction.trim().length > 0,
+    )?.instruction || '';
+  const canReuseOptions =
+    instructionAllowsOptionReuse(instruction) || options.length < questions.length;
   const usedOptionIds = new Set(
     questions
       .map((question) => answers[question.id])

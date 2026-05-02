@@ -1,6 +1,7 @@
 'use client';
 
 import { Question } from '@/types';
+import { instructionAllowsOptionReuse } from '@/lib/optionReuse';
 import { FillBlankQuestion } from './FillBlankQuestion';
 
 interface FlowChartGroupProps {
@@ -29,7 +30,12 @@ export function FlowChartGroup({
   const firstQ = questions[0];
   const flowchartData = firstQ ? (firstQ as any).flowchartData : null;
   const options = firstQ ? (firstQ as any).options as { id: string; text: string }[] | undefined : undefined;
-  const canReuseOptions = (options?.length ?? 0) < questions.length;
+  const instruction =
+    questions.find((question) =>
+      typeof question.instruction === 'string' && question.instruction.trim().length > 0,
+    )?.instruction || '';
+  const canReuseOptions =
+    instructionAllowsOptionReuse(instruction) || (options?.length ?? 0) < questions.length;
   const usedOptionIds = new Set(
     questions
       .map((question) => answers[question.id])

@@ -1548,6 +1548,11 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
     setIsReviewModalOpen(true);
   }, [assignment]);
 
+  const handleWritingSubmit = useCallback(() => {
+    if (!assignment) return;
+    setIsConfirmModalOpen(true);
+  }, [assignment]);
+
   const handleTimerExpire = useCallback(() => {
     if (!isTimerActive || showPartResults) {
       return;
@@ -2251,7 +2256,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
             onQuestionClick={handleQuestionClick}
             onPartClick={handlePartClick}
             onOpenNotes={openNotesSidebar}
-            onSubmit={handleFinalSubmit}
+            onSubmit={handleWritingSubmit}
             isSubmitting={isSubmitting}
             sessionError={sessionError}
             onSessionResolve={() => setSessionError(null)}
@@ -2348,6 +2353,20 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
           />
         )}
       </div>
+
+      {section.type === "WRITING" && (
+        <ConfirmationModal
+          isOpen={isConfirmModalOpen}
+          onClose={() => setIsConfirmModalOpen(false)}
+          onConfirm={handleFinalSubmit}
+          title="Finish Section?"
+          message="Are you sure you want to finish this section? You will not be able to change your answers after this."
+          confirmText="Finish"
+          cancelText="Go Back"
+          variant="danger"
+          isLoading={isSubmitting}
+        />
+      )}
 
       <ExamNotesSidebar />
     </>

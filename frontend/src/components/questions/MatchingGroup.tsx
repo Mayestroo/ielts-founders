@@ -1,6 +1,7 @@
 "use client";
 
 import { HighlightableText } from "@/components/exam/HighlightableText";
+import { instructionAllowsOptionReuse } from "@/lib/optionReuse";
 import { sanitizeHtml } from "@/lib/sanitizeHtml";
 import { Question } from "@/types";
 import { useEffect, useRef, useState } from "react";
@@ -34,7 +35,12 @@ export function MatchingGroup({
 }: MatchingGroupProps) {
   const scrollRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const [dragOverId, setDragOverId] = useState<string | null>(null);
-  const canReuseOptions = (options || []).length < (questions || []).length;
+  const instruction =
+    (questions || []).find((question) =>
+      typeof question.instruction === "string" && question.instruction.trim().length > 0,
+    )?.instruction || "";
+  const canReuseOptions =
+    instructionAllowsOptionReuse(instruction) || (options || []).length < (questions || []).length;
   const usedOptionIds = new Set(
     (questions || [])
       .map((question) => answers[question.id])
