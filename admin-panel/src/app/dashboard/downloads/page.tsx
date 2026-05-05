@@ -6,7 +6,7 @@ import { generateBatchPDF } from '@/lib/generatePDF';
 import { ADMIN_QUERY_TIMINGS } from '@/lib/query/config';
 import { adminQueryKeys } from '@/lib/query/keys';
 import { ExamResult, User } from '@/types';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 
 interface StudentReportGroup {
@@ -86,27 +86,6 @@ const isStandaloneSpeakingResult = (result?: ExamResult): boolean => {
   }
 
   return answers._isStandalone === true;
-};
-
-const shouldUseIncomingSpeakingResult = (
-  currentResult: ExamResult | undefined,
-  incomingResult: ExamResult,
-): boolean => {
-  if (!currentResult) {
-    return true;
-  }
-
-  const currentStandalone = isStandaloneSpeakingResult(currentResult);
-  const incomingStandalone = isStandaloneSpeakingResult(incomingResult);
-
-  if (currentStandalone !== incomingStandalone) {
-    return currentStandalone && !incomingStandalone;
-  }
-
-  return (
-    new Date(incomingResult.submittedAt).getTime() >
-    new Date(currentResult.submittedAt).getTime()
-  );
 };
 
 const getManualSpeakingEvaluation = (
@@ -191,6 +170,7 @@ export default function DownloadsPage() {
   // Filtering State
   const [searchTerm, setSearchTerm] = useState('');
   const { error: showError, success } = useToast();
+  const queryClient = useQueryClient();
 
   const resultsQuery = useQuery({
     queryKey: adminQueryKeys.resultsList({ skip: 0, take: 1000 }),
@@ -204,30 +184,74 @@ export default function DownloadsPage() {
     const grouped: Record<string, StudentReportGroup> = {};
     const results = resultsQuery.data?.results ?? [];
 
+    // First pass: group all results by student and section type
+    const resultsByStudent: Record<
+      string,
+      Record<"listening" | "reading" | "writing" | "speaking", ExamResult[]>
+    > = {};
     results.forEach((result) => {
       const studentId = result.studentId;
-      if (!grouped[studentId]) {
-        grouped[studentId] = {
-          student: result.student!,
-          results: {},
-          testDate: result.submittedAt,
+      if (!resultsByStudent[studentId]) {
+        resultsByStudent[studentId] = {
+          listening: [],
+          reading: [],
+          writing: [],
+          speaking: [],
         };
       }
+      const type = result.section?.type?.toLowerCase();
+      if (
+        type === "listening" ||
+        type === "reading" ||
+        type === "writing" ||
+        type === "speaking"
+      ) {
+        resultsByStudent[studentId][type].push(result);
+      }
+    });
 
-      const type = result.section?.type;
-      if (type === 'LISTENING' && !grouped[studentId].results.listening) {
-        grouped[studentId].results.listening = result;
+    // Second pass: pick best result from each group
+    Object.entries(resultsByStudent).forEach(([studentId, sectionResults]) => {
+      const firstResult = results.find((r) => r.studentId === studentId);
+      if (!firstResult || !firstResult.student) {
+        // Skip if no student data (e.g., newly created result before refetch)
+        return;
       }
-      if (type === 'READING' && !grouped[studentId].results.reading) {
-        grouped[studentId].results.reading = result;
-      }
-      if (type === 'WRITING' && !grouped[studentId].results.writing) {
-        grouped[studentId].results.writing = result;
-      }
-      if (type === 'SPEAKING') {
-        const currentSpeaking = grouped[studentId].results.speaking;
-        if (shouldUseIncomingSpeakingResult(currentSpeaking, result)) {
-          grouped[studentId].results.speaking = result;
+
+      grouped[studentId] = {
+        student: firstResult.student,
+        results: {},
+        testDate: firstResult.submittedAt,
+      };
+
+      // Pick best listening (first non-standalone)
+      grouped[studentId].results.listening =
+        sectionResults.listening.find((r) => !isStandaloneSpeakingResult(r)) ||
+        sectionResults.listening[0];
+
+      // Pick best reading (first non-standalone)
+      grouped[studentId].results.reading =
+        sectionResults.reading.find((r) => !isStandaloneSpeakingResult(r)) ||
+        sectionResults.reading[0];
+
+      // Pick best writing (first non-standalone)
+      grouped[studentId].results.writing =
+        sectionResults.writing.find((r) => !isStandaloneSpeakingResult(r)) ||
+        sectionResults.writing[0];
+
+      // Pick best speaking: prefer manually graded, then non-standalone, then newest
+      const speakingResults = sectionResults.speaking;
+      if (speakingResults.length > 0) {
+        const manuallyGraded = speakingResults.find(
+          (r) => getManualSpeakingBand(r) !== null,
+        );
+        if (manuallyGraded) {
+          grouped[studentId].results.speaking = manuallyGraded;
+        } else {
+          const nonStandalone = speakingResults.find(
+            (r) => !isStandaloneSpeakingResult(r),
+          );
+          grouped[studentId].results.speaking = nonStandalone || speakingResults[0];
         }
       }
     });
@@ -247,6 +271,7 @@ export default function DownloadsPage() {
 
   const filteredGroups = useMemo(() => reportGroups.filter(group => {
     const student = group.student;
+    if (!student) return false;
     return (
       student.firstName?.toLowerCase().includes(searchTerm.toLowerCase()) || 
       student.lastName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -255,7 +280,7 @@ export default function DownloadsPage() {
   }), [reportGroups, searchTerm]);
 
   const groupByStudentId = useMemo(
-    () => new Map(reportGroups.map((group) => [group.student.id, group])),
+    () => new Map(reportGroups.filter(g => g.student).map((group) => [group.student!.id, group])),
     [reportGroups],
   );
 
@@ -436,20 +461,49 @@ export default function DownloadsPage() {
         comment: gradeForm.comment.trim() || undefined,
       };
 
+      let newResult: ExamResult;
       if (gradeTarget.speakingResult) {
-        await api.manualGradeSpeaking(gradeTarget.speakingResult.id, payload);
+        newResult = await api.manualGradeSpeaking(gradeTarget.speakingResult.id, payload);
       } else {
-        await api.manualGradeSpeakingByStudent(gradeTarget.studentId, payload);
+        // This creates a new speaking result for students without one
+        newResult = await api.manualGradeSpeakingByStudent(gradeTarget.studentId, payload);
       }
 
-      success('Speaking manual grade saved');
       setSelectedIds((previous) => {
         const next = new Set(previous);
         next.delete(gradeTarget.studentId);
         return next;
       });
       closeSpeakingGradeModal();
-      await resultsQuery.refetch();
+      
+      // Update cache with the graded result (now guaranteed to have student/section data from backend)
+      const currentData = resultsQuery.data;
+      if (currentData) {
+        const existingIndex = currentData.results.findIndex((r) => r.id === newResult.id);
+        let updatedResults: ExamResult[];
+        
+        if (existingIndex >= 0) {
+          // Replace existing result
+          updatedResults = currentData.results.map((r) =>
+            r.id === newResult.id ? newResult : r,
+          );
+        } else {
+          // Add newly created result to the beginning
+          updatedResults = [newResult, ...currentData.results];
+        }
+        
+        queryClient.setQueryData(
+          adminQueryKeys.resultsList({ skip: 0, take: 1000 }),
+          { ...currentData, results: updatedResults, total: currentData.total + (existingIndex < 0 ? 1 : 0) },
+        );
+      }
+      
+      // Invalidate as backup to ensure freshness
+      await queryClient.invalidateQueries({
+        queryKey: adminQueryKeys.resultsList({ skip: 0, take: 1000 }),
+      });
+
+      success('Speaking manual grade saved');
     } catch (err) {
       setGradeError(err instanceof Error ? err.message : 'Failed to save manual speaking grade');
     } finally {

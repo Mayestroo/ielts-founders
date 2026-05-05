@@ -390,6 +390,19 @@ export class ResultService {
         bandScore: prepared.overallBand,
         feedback: prepared.feedback,
       },
+      include: {
+        section: {
+          select: { id: true, title: true, type: true },
+        },
+        student: {
+          select: {
+            id: true,
+            username: true,
+            firstName: true,
+            lastName: true,
+          },
+        },
+      },
     });
 
     await this.invalidateResultReadCaches();
@@ -494,6 +507,19 @@ export class ResultService {
           _attemptMode: 'offline-manual',
         } as Prisma.InputJsonValue,
         feedback: prepared.feedback,
+      },
+      include: {
+        section: {
+          select: { id: true, title: true, type: true },
+        },
+        student: {
+          select: {
+            id: true,
+            username: true,
+            firstName: true,
+            lastName: true,
+          },
+        },
       },
     });
 
