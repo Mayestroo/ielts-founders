@@ -476,7 +476,8 @@ export default function DownloadsPage() {
       });
       closeSpeakingGradeModal();
       
-      // Update cache with the graded result (now guaranteed to have student/section data from backend)
+      // Update cache immediately with the graded result
+      // Backend now returns complete data (student/section included)
       const currentData = resultsQuery.data;
       if (currentData) {
         const existingIndex = currentData.results.findIndex((r) => r.id === newResult.id);
@@ -497,11 +498,6 @@ export default function DownloadsPage() {
           { ...currentData, results: updatedResults, total: currentData.total + (existingIndex < 0 ? 1 : 0) },
         );
       }
-      
-      // Invalidate as backup to ensure freshness
-      await queryClient.invalidateQueries({
-        queryKey: adminQueryKeys.resultsList({ skip: 0, take: 1000 }),
-      });
 
       success('Speaking manual grade saved');
     } catch (err) {
