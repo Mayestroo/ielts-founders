@@ -109,7 +109,6 @@ const PRICING_PLANS: PricingPlan[] = [
       "1 Speaking Mock with 8.0 - 8.5 holders",
       "200+ Predicted Speaking Part 1,2,3 questions (2026)",
       "10 Full AI-Powered Speaking Mock Tests",
-      "1 Monthly Group Session with a Native Speaker",
     ],
     ctaLabel: "BUY NOW",
   },
@@ -127,10 +126,10 @@ const PRICING_PLANS: PricingPlan[] = [
       "80 Single Listening tests",
       "60 Single Reading tests",
       "40 Single Writing tests",
-      "2 Speaking Mocks with 8.0 - 8.5 holders",
+      "1 Speaking Mocks with 8.0 - 8.5 holders",
       "400+ Predicted Speaking Part 1,2,3 questions (2026)",
       "20 Full AI-Powered Speaking Mock Tests",
-      "2 Monthly Group Sessions with a Native Speaker"
+      "1 Monthly Group Sessions with a Native Speaker"
     ],
     ctaLabel: "BUY NOW",
   },
