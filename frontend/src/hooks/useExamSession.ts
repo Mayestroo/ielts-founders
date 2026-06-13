@@ -79,7 +79,13 @@ export function useExamSession({
 
   const isAlreadySubmittedError = useCallback((error: unknown) => {
     if (!(error instanceof Error)) return false;
-    return error.message.toLowerCase().includes('already submitted');
+    const lower = error.message.toLowerCase();
+    return (
+      lower.includes('already submitted') ||
+      lower.includes('already been submitted') ||
+      lower.includes('already_submitted') ||
+      lower.includes('submission already')
+    );
   }, []);
 
   const isSessionExpiredError = useCallback((error: unknown) => {
@@ -233,9 +239,13 @@ export function useExamSession({
         switch (response.reason) {
           case 'time_expired':
           case 'expired':
-          case 'submitted':
             setStatus('error');
             onSessionExpired?.();
+            break;
+          case 'submitted':
+          case 'already_submitted':
+            setStatus('submitted');
+            setError(null);
             break;
           case 'another_tab':
             setTabConflict(true);
@@ -254,7 +264,6 @@ export function useExamSession({
       if (isAlreadySubmittedError(error)) {
         setStatus('submitted');
         setError(null);
-        onSessionExpired?.();
         return;
       }
       const isNetworkError = isTransientNetworkError(error);
@@ -306,7 +315,6 @@ export function useExamSession({
         switch (response.reason) {
           case 'already_submitted':
             setStatus('submitted');
-            onSessionExpired?.();
             break;
           case 'time_expired':
             setStatus('error');
@@ -376,7 +384,6 @@ export function useExamSession({
         syncError('Exam already submitted');
         setStatus('submitted');
         setError(null);
-        onSessionExpired?.();
         return;
       }
 

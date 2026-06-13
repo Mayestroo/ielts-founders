@@ -145,6 +145,7 @@ export class ResultService {
       (await this.isOfflineResultHiddenForStudent(
         result.studentId,
         result.sectionId,
+        result.answers,
       ))
     ) {
       throw new ForbiddenException('Result is not available yet');
@@ -537,67 +538,152 @@ export class ResultService {
     ]);
   }
 
+  /**
+   * Extracts the _fullMockSessionId stored inside a result's answers JSON.
+   *
+   * Returns:
+   *   { found: false }               – field absent (legacy result, use fallback)
+   *   { found: true, id: null }      – field present but null/empty (not a full mock)
+   *   { found: true, id: 'uuid…' }   – field present with a session ID
+   */
+  private extractFullMockSessionId(
+    answers: Prisma.JsonValue | null,
+  ): { found: false } | { found: true; id: string | null } {
+    if (!answers || typeof answers !== 'object' || Array.isArray(answers)) {
+      return { found: false };
+    }
+    const record = answers as Record<string, unknown>;
+    if (!Object.prototype.hasOwnProperty.call(record, '_fullMockSessionId')) {
+      return { found: false };
+    }
+    const raw = record._fullMockSessionId;
+    if (typeof raw === 'string' && raw.length > 0) {
+      return { found: true, id: raw };
+    }
+    // Key present but null / empty → explicitly NOT a full-mock result
+    return { found: true, id: null };
+  }
+
+  /**
+   * Returns true only when this specific result belongs to an OFFLINE full mock
+   * session whose admin has not yet enabled student visibility.
+   *
+   * Online results (assignment has an ExamSession) are always visible.
+   * Results not linked to any full mock session are always visible.
+   *
+   * We use _fullMockSessionId stored in the result's own answers to look up the
+   * exact session, avoiding false positives caused by findFirst returning an
+   * unrelated assignment for the same (studentId, sectionId) pair.
+   */
   private async isOfflineResultHiddenForStudent(
     studentId: string,
     sectionId: string,
+    resultAnswers?: Prisma.JsonValue | null,
   ): Promise<boolean> {
+    // --- Fast path: use _fullMockSessionId embedded in the result's answers ---
+    const extracted = this.extractFullMockSessionId(resultAnswers ?? null);
+
+    if (extracted.found) {
+      if (!extracted.id) {
+        // Field present and null/empty → definitively NOT a full-mock result
+        return false;
+      }
+
+      // We know exactly which full mock session this result belongs to.
+      const assignment = await this.prisma.examAssignment.findFirst({
+        where: { studentId, sectionId, fullMockSessionId: extracted.id },
+        select: {
+          examSession: { select: { id: true } },
+          fullMockSession: { select: { resultsVisibleToStudent: true } },
+        },
+      });
+
+      // Online assignment inside a full mock → always visible
+      if (assignment?.examSession) {
+        return false;
+      }
+
+      return assignment?.fullMockSession?.resultsVisibleToStudent !== true;
+    }
+
+    // --- Fallback: _fullMockSessionId key absent (legacy results) ---
+    // Look for the most-recently-created assignment for this section.
+    // If none belongs to a full mock session the result is visible;
+    // if one does and it was online it is also visible.
     const assignment = await this.prisma.examAssignment.findFirst({
-      where: {
-        studentId,
-        sectionId,
-      },
+      where: { studentId, sectionId },
+      orderBy: { createdAt: 'desc' },
       select: {
         fullMockSessionId: true,
-        fullMockSession: {
-          select: {
-            resultsVisibleToStudent: true,
-          },
-        },
+        examSession: { select: { id: true } },
+        fullMockSession: { select: { resultsVisibleToStudent: true } },
       },
     });
 
     if (!assignment?.fullMockSessionId) {
-      return false;
+      return false; // Not part of any full mock → always visible
+    }
+
+    if (assignment.examSession) {
+      return false; // Online exam → always visible
     }
 
     return assignment.fullMockSession?.resultsVisibleToStudent !== true;
   }
 
-  private async filterHiddenOfflineResults<T extends { sectionId: string }>(
-    studentId: string,
-    results: T[],
-  ): Promise<T[]> {
-    const assignments = await this.prisma.examAssignment.findMany({
-      where: {
-        studentId,
-      },
-      select: {
-        sectionId: true,
-        fullMockSessionId: true,
-        fullMockSession: {
-          select: {
-            resultsVisibleToStudent: true,
-          },
-        },
-      },
-    });
+  private async filterHiddenOfflineResults<
+    T extends { sectionId: string; answers: Prisma.JsonValue },
+  >(studentId: string, results: T[]): Promise<T[]> {
+    // Collect the distinct full mock session IDs referenced by these results.
+    const fullMockSessionIds = new Set<string>();
+    for (const result of results) {
+      const extracted = this.extractFullMockSessionId(result.answers);
+      if (extracted.found && extracted.id) fullMockSessionIds.add(extracted.id);
+    }
 
-    const sectionVisibility = new Map<string, boolean>();
-    assignments.forEach((assignment) => {
-      if (!assignment.fullMockSessionId) {
-        sectionVisibility.set(assignment.sectionId, true);
-        return;
+    // Key: `${fullMockSessionId}:${sectionId}` → visible?
+    const visibilityByFmsAndSection = new Map<string, boolean>();
+
+    if (fullMockSessionIds.size > 0) {
+      const assignments = await this.prisma.examAssignment.findMany({
+        where: {
+          studentId,
+          fullMockSessionId: { in: [...fullMockSessionIds] },
+        },
+        select: {
+          sectionId: true,
+          fullMockSessionId: true,
+          examSession: { select: { id: true } },
+          fullMockSession: { select: { resultsVisibleToStudent: true } },
+        },
+      });
+
+      for (const a of assignments) {
+        if (!a.fullMockSessionId) continue;
+        const key = `${a.fullMockSessionId}:${a.sectionId}`;
+        const isOnline = Boolean(a.examSession);
+        const isVisible =
+          isOnline || a.fullMockSession?.resultsVisibleToStudent === true;
+        // A key becomes visible as soon as any matching assignment says it is.
+        if (!visibilityByFmsAndSection.has(key) || isVisible) {
+          visibilityByFmsAndSection.set(key, isVisible);
+        }
+      }
+    }
+
+    return results.filter((result) => {
+      const extracted = this.extractFullMockSessionId(result.answers);
+
+      if (!extracted.found || !extracted.id) {
+        // Not linked to any full mock session → always visible
+        return true;
       }
 
-      sectionVisibility.set(
-        assignment.sectionId,
-        assignment.fullMockSession?.resultsVisibleToStudent === true,
-      );
+      const key = `${extracted.id}:${result.sectionId}`;
+      const visible = visibilityByFmsAndSection.get(key);
+      // Default to visible when no matching assignment is found (safety net)
+      return visible !== false;
     });
-
-    return results.filter(
-      (result) => sectionVisibility.get(result.sectionId) !== false,
-    );
   }
 
   private isStandaloneAttempt(answers: Prisma.JsonValue | null): boolean {

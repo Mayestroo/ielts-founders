@@ -388,10 +388,15 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
   const wasFullscreenRef = useRef<boolean>(true);
   const isExamCompletedRef = useRef<boolean>(false);
   const showExitWarningRef = useRef<boolean>(false);
+  const isSubmittingRef = useRef<boolean>(false);
 
   useEffect(() => {
     resetNotesState();
   }, [assignmentId, resetNotesState]);
+
+  useEffect(() => {
+    isSubmittingRef.current = isSubmitting;
+  }, [isSubmitting]);
 
   // Detect if this is a partial assignment (part or task)
   const isPartialAssignment = useMemo(
@@ -722,7 +727,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
   }, [requiresProctoring, showPartResults]);
 
   const handleSessionExpired = useCallback(() => {
-    if (!requiresProctoring || showPartResults) {
+    if (!requiresProctoring || showPartResults || isSubmittingRef.current) {
       return;
     }
 
@@ -1348,6 +1353,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
 
   const handleFinalSubmit = useCallback(async () => {
     if (!assignment || isSubmitting) return;
+    isSubmittingRef.current = true;
     setIsSubmitting(true);
     setError("");
 
@@ -1374,6 +1380,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
             ? startError.message
             : "Exam is not active. Please try again.";
         setError(startErrorMessage);
+        isSubmittingRef.current = false;
         setIsSubmitting(false);
         return;
       }
@@ -1448,11 +1455,13 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
         setShowCorrectAnswers(true);
         void loadPracticeResultDetail(submitMeta.resultId);
         void loadPracticeAttemptHistory();
+        isSubmittingRef.current = false;
         setIsSubmitting(false);
         return;
       }
 
       if (submitResult.nextAssignmentId) {
+        isExamCompletedRef.current = true;
         if (submitResult.breakEndsAt) {
           redirectToBreak(
             submitResult.nextAssignmentId,
@@ -1466,6 +1475,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
       }
 
       if (submitResult.fullMockSessionId) {
+        isExamCompletedRef.current = true;
         if (isOnlineMockFlow) {
           await exitExamToOnlineResults();
         } else {
@@ -1476,6 +1486,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
 
       if (isOnlineMockFlow) {
         if (onlineMockSequenceIds.length === 0) {
+          isExamCompletedRef.current = true;
           await exitExamToOnlineResults();
           return;
         }
@@ -1502,6 +1513,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
           }
         }
 
+        isExamCompletedRef.current = true;
         await exitExamToOnlineResults();
         return;
       }
@@ -1512,6 +1524,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
       // So if this is the final part, we redirect (which navigateToNextAssignment or exitExamToDashboard will do).
       // So no change here for final part.
 
+      isExamCompletedRef.current = true;
       await navigateToNextAssignment(assignmentForSubmit.id);
     } catch (err) {
       if (isTransientSubmitFailure(err)) {
@@ -1531,8 +1544,9 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
         setError(err instanceof Error ? err.message : "Failed to submit exam");
       }
 
-      setIsSubmitting(false);
     } finally {
+      isSubmittingRef.current = false;
+      setIsSubmitting(false);
       setIsReviewModalOpen(false);
       setIsConfirmModalOpen(false);
     }

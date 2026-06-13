@@ -431,6 +431,11 @@ export default function DashboardPage() {
   const assignmentTierById = useMemo(() => {
     const tierMap = new Map<string, AccessTier>();
     assignments.forEach((assignment) => {
+      if (assignment.fullMockSessionId) {
+        tierMap.set(assignment.id, "FREE");
+        return;
+      }
+
       tierMap.set(assignment.id, freeAccess.freeIds.has(assignment.id) ? "FREE" : "PREMIUM");
     });
     return tierMap;
