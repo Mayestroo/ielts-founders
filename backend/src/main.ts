@@ -2,7 +2,7 @@ import { ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import compression from 'compression';
-import { NextFunction, Request, Response } from 'express';
+import { json, NextFunction, Request, Response, urlencoded } from 'express';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { RuntimeFaultService } from './modules/runtime-fault/runtime-fault.service';
@@ -145,6 +145,9 @@ function validateProductionReadiness() {
 export function setupApp(app: INestApplication) {
   const configService = app.get(ConfigService);
   const runtimeFaultService = app.get(RuntimeFaultService);
+
+  app.use(json({ limit: '210mb' }));
+  app.use(urlencoded({ limit: '210mb', extended: true }));
 
   app.use((req: Request, res: Response, next: NextFunction) => {
     const path = req.originalUrl || req.url || '';
