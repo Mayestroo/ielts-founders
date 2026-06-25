@@ -5,8 +5,8 @@ import { RefObject } from 'react';
 interface IntroVideoOverlayProps {
   isOpen: boolean;
   sectionType?: string | null;
-  introVideoRef: RefObject<HTMLVideoElement>;
-  containerRef: RefObject<HTMLDivElement>;
+  introVideoRef: RefObject<HTMLVideoElement | null>;
+  containerRef: RefObject<HTMLDivElement | null>;
   isAutoplayBlocked: boolean;
   onAutoplayBlockedChange: (blocked: boolean) => void;
   onEnded: () => void;

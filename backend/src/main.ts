@@ -42,6 +42,11 @@ function readBoolean(value: string | undefined, fallback: boolean): boolean {
   return fallback;
 }
 
+function readBodyLimit(name: string, fallback: string): string {
+  const value = process.env[name]?.trim();
+  return value && value.length > 0 ? value : fallback;
+}
+
 function parseRedisUrl(url: string): Partial<RedisConfig> {
   const parsed = new URL(url);
   const dbFromPath = parsed.pathname.replace('/', '');
@@ -146,8 +151,13 @@ export function setupApp(app: INestApplication) {
   const configService = app.get(ConfigService);
   const runtimeFaultService = app.get(RuntimeFaultService);
 
-  app.use(json({ limit: '210mb' }));
-  app.use(urlencoded({ limit: '210mb', extended: true }));
+  app.use(json({ limit: readBodyLimit('JSON_BODY_LIMIT', '5mb') }));
+  app.use(
+    urlencoded({
+      limit: readBodyLimit('URLENCODED_BODY_LIMIT', '100kb'),
+      extended: true,
+    }),
+  );
 
   app.use((req: Request, res: Response, next: NextFunction) => {
     const path = req.originalUrl || req.url || '';

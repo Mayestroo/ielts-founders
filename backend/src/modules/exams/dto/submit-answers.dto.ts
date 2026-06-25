@@ -8,7 +8,7 @@ import {
 
 export class SubmitAnswersDto {
   @IsObject()
-  answers: Record<string, any>; // Question ID to answer mapping
+  answers: Record<string, unknown>; // Question ID to answer mapping
 
   @IsString()
   @IsNotEmpty()
@@ -21,5 +21,5 @@ export class SubmitAnswersDto {
 
 export class SaveHighlightsDto {
   @IsObject()
-  highlights: Record<string, any>; // Passage/section highlights
+  highlights: Record<string, unknown>; // Passage/section highlights
 }

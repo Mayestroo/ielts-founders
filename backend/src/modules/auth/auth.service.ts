@@ -76,6 +76,14 @@ const GOOGLE_AUTH_PASSWORD_PREFIX = 'google_auth_only$';
 const INVALID_LOGIN_MESSAGE =
   'Invalid credentials. If you signed up with Google, please continue with Google.';
 
+function requireJwtSecret(value: string | undefined, name: string): string {
+  const secret = value?.trim();
+  if (!secret) {
+    throw new Error(`${name} must be configured`);
+  }
+  return secret;
+}
+
 @Injectable()
 export class AuthService {
   private readonly refreshSecret: string;
@@ -87,9 +95,10 @@ export class AuthService {
     private configService: ConfigService,
     private responseCache: ResponseCacheService,
   ) {
-    this.refreshSecret =
-      configService.get<string>('JWT_REFRESH_SECRET') ||
-      (configService.get<string>('JWT_SECRET') || 'secret') + '-refresh';
+    this.refreshSecret = requireJwtSecret(
+      configService.get<string>('JWT_REFRESH_SECRET'),
+      'JWT_REFRESH_SECRET',
+    );
     this.refreshExpiresIn =
       configService.get<string>('JWT_REFRESH_EXPIRES_IN') || '7d';
   }

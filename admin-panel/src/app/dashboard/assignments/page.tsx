@@ -13,9 +13,23 @@ import {
 } from '@/types';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'next/navigation';
-import { useEffect, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useState } from 'react';
 
 export default function AssignmentsPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex items-center justify-center h-64">
+          <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-slate-400"></div>
+        </div>
+      }
+    >
+      <AssignmentsContent />
+    </Suspense>
+  );
+}
+
+function AssignmentsContent() {
   const searchParams = useSearchParams();
   const offlineModePreset = searchParams.get('mode') === 'offline';
   const [page, setPage] = useState(1);

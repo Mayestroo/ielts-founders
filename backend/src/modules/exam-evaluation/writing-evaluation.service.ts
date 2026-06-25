@@ -5,15 +5,15 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma, Role } from '@prisma/client';
-import {
-  EvaluateWritingSectionInput,
-  IeltsWritingResult,
-  IeltsWritingScores,
-  IeltsWritingSectionResult,
-} from '../ai/ielts-writing.types';
+import { EvaluateWritingSectionInput } from '../ai/ielts-writing.types';
 import { AiService } from '../ai/ai.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ResponseCacheService } from '../redis';
+import {
+  buildWritingSectionResult,
+  evaluateWritingTaskInputs,
+  WritingTaskResults,
+} from './writing-grading.util';
 
 interface QuestionItem {
   id: string;
@@ -38,79 +38,6 @@ const countWords = (text: string): number =>
     .trim()
     .split(/\s+/)
     .filter((token) => token.length > 0).length;
-
-const roundBand = (value: number): number => Math.round(value * 2) / 2;
-
-const emptyScores = (): IeltsWritingScores => ({
-  task_achievement: 0,
-  coherence_cohesion: 0,
-  lexical_resource: 0,
-  grammar: 0,
-});
-
-const buildSectionResult = (
-  taskResults: Partial<Record<'task1' | 'task2', IeltsWritingResult>>,
-): IeltsWritingSectionResult => {
-  const weights: Record<'task1' | 'task2', number> = {
-    task1: 1,
-    task2: 2,
-  };
-
-  const available = (['task1', 'task2'] as const).filter((taskType) =>
-    Boolean(taskResults[taskType]),
-  );
-
-  if (available.length === 0) {
-    throw new Error('No writing task evaluations available');
-  }
-
-  const totalWeight = available.reduce(
-    (sum, taskType) => sum + weights[taskType],
-    0,
-  );
-
-  const weightedScores = available.reduce((acc, taskType) => {
-    const result = taskResults[taskType]!;
-    const weight = weights[taskType];
-
-    return {
-      task_achievement:
-        acc.task_achievement + result.scores.task_achievement * weight,
-      coherence_cohesion:
-        acc.coherence_cohesion + result.scores.coherence_cohesion * weight,
-      lexical_resource:
-        acc.lexical_resource + result.scores.lexical_resource * weight,
-      grammar: acc.grammar + result.scores.grammar * weight,
-    };
-  }, emptyScores());
-
-  const normalizedScores: IeltsWritingScores = {
-    task_achievement: roundBand(weightedScores.task_achievement / totalWeight),
-    coherence_cohesion: roundBand(
-      weightedScores.coherence_cohesion / totalWeight,
-    ),
-    lexical_resource: roundBand(weightedScores.lexical_resource / totalWeight),
-    grammar: roundBand(weightedScores.grammar / totalWeight),
-  };
-
-  const weightedBand = roundBand(
-    available.reduce(
-      (sum, taskType) =>
-        sum + taskResults[taskType]!.overall_band * weights[taskType],
-      0,
-    ) / totalWeight,
-  );
-
-  return {
-    overall_band: weightedBand,
-    word_count_penalty: available.some(
-      (taskType) => taskResults[taskType]!.word_count_penalty,
-    ),
-    task1: taskResults.task1,
-    task2: taskResults.task2,
-    weighted_scores: normalizedScores,
-  };
-};
 
 @Injectable()
 export class WritingEvaluationService {
@@ -154,7 +81,7 @@ export class WritingEvaluationService {
     }
 
     const answers = (examResult.answers ?? {}) as Record<string, unknown>;
-    const questions = examResult.section.questions as QuestionItem[] | null;
+    const questions = this.getQuestionItems(examResult.section.questions);
     const taskInputs = this.buildTaskInputs(
       questions,
       answers,
@@ -167,7 +94,7 @@ export class WritingEvaluationService {
 
     try {
       const taskResults = await this.evaluateTaskInputs(taskInputs);
-      const sectionResult = buildSectionResult(taskResults);
+      const sectionResult = buildWritingSectionResult(taskResults);
 
       const updatedResult = await this.prisma.examResult.update({
         where: { id: resultId },
@@ -314,7 +241,7 @@ export class WritingEvaluationService {
   }
 
   private buildTaskInputs(
-    questions: QuestionItem[] | null,
+    questions: QuestionItem[],
     answers: Record<string, unknown>,
     sectionDescription: string | null,
   ): EvaluateWritingSectionInput[] {
@@ -368,21 +295,27 @@ export class WritingEvaluationService {
     return inputs;
   }
 
-  private async evaluateTaskInputs(
-    taskInputs: EvaluateWritingSectionInput[],
-  ): Promise<Partial<Record<'task1' | 'task2', IeltsWritingResult>>> {
-    const result: Partial<Record<'task1' | 'task2', IeltsWritingResult>> = {};
-
-    for (const taskInput of taskInputs) {
-      if (!taskInput.essay.trim()) {
-        continue;
-      }
-
-      result[taskInput.taskType] =
-        await this.aiService.evaluateWritingSection(taskInput);
+  private getQuestionItems(value: unknown): QuestionItem[] {
+    if (!Array.isArray(value)) {
+      return [];
     }
 
-    return result;
+    return value.filter((item): item is QuestionItem => {
+      if (!item || typeof item !== 'object') {
+        return false;
+      }
+
+      const question = item as Record<string, unknown>;
+      return (
+        typeof question.id === 'string' && typeof question.type === 'string'
+      );
+    });
+  }
+
+  private async evaluateTaskInputs(
+    taskInputs: EvaluateWritingSectionInput[],
+  ): Promise<WritingTaskResults> {
+    return evaluateWritingTaskInputs(this.aiService, taskInputs);
   }
 
   private async invalidateEvaluationReadCaches() {

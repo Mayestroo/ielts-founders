@@ -4,6 +4,7 @@ import { ConfirmationModal } from "@/components/ui/ConfirmationModal";
 import { ExamNotesSidebar } from "@/components/exam";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSettings } from "@/contexts/SettingsContext";
+import { useExamAnswers } from "@/features/exam/hooks/useExamAnswers";
 import { useExamParts } from "@/features/exam/hooks/useExamParts";
 import { ListeningSection } from "@/features/exam/sections/ListeningSection";
 import { ReadingSection } from "@/features/exam/sections/ReadingSection";
@@ -34,7 +35,7 @@ import {
     StartExamResponse,
 } from "@/types";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 interface AttemptHistoryItem {
   attempt: number;
@@ -351,7 +352,6 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
   const [assignment, setAssignment] = useState<
     (ExamAssignment & { remainingTime?: number }) | null
   >(null);
-  const [answers, setAnswers] = useState<Record<string, AnswerValue>>({});
   const [currentQuestionId, setCurrentQuestionId] = useState<string>("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
@@ -516,11 +516,12 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
     [isPartialAssignment, assignmentPart, assignmentTask]
   );
 
-  const audioRef = useRef<HTMLAudioElement>(null) as unknown as RefObject<HTMLAudioElement>;
-  const introVideoRef = useRef<HTMLVideoElement>(null) as unknown as RefObject<HTMLVideoElement>;
-  const introContainerRef = useRef<HTMLDivElement>(null) as unknown as RefObject<HTMLDivElement>;
-  const rightPanelRef = useRef<HTMLDivElement>(null) as unknown as RefObject<HTMLDivElement>;
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const introVideoRef = useRef<HTMLVideoElement | null>(null);
+  const introContainerRef = useRef<HTMLDivElement | null>(null);
+  const rightPanelRef = useRef<HTMLDivElement | null>(null);
   const isStartingRef = useRef(false);
+  const antiCheatViolationCountRef = useRef(0);
 
   const isExamStarted = assignment?.status === "IN_PROGRESS";
   const requiresProctoring = Boolean(assignment?.fullMockSessionId);
@@ -760,7 +761,28 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
     onTabConflict: handleTabConflict,
   });
 
-  useAntiCheat(requiresProctoring);
+  const {
+    answers,
+    setAnswers,
+    resetAnswers,
+    updateAnswer,
+  } = useExamAnswers({ syncAnswers });
+
+  const handleAntiCheatViolation = useCallback(
+    (violation: { type: string; detail: string; occurredAt: string }) => {
+      antiCheatViolationCountRef.current += 1;
+      updateAnswer(
+        "_antiCheatViolationCount",
+        String(antiCheatViolationCountRef.current),
+      );
+      updateAnswer("_lastAntiCheatViolation", JSON.stringify(violation));
+    },
+    [updateAnswer],
+  );
+
+  useAntiCheat(requiresProctoring, {
+    onViolation: handleAntiCheatViolation,
+  });
 
 
 
@@ -786,7 +808,8 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
   useEffect(() => {
     if (assignmentId && isAuthenticated) {
       setAssignment(null);
-      setAnswers({});
+      resetAnswers();
+      antiCheatViolationCountRef.current = 0;
       setError("");
       setAudioError(null);
       setIsAudioPlaying(false);
@@ -943,7 +966,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
           setError(err.message);
         });
     }
-  }, [assignmentId, originalAssignmentId, isPartialAssignment, assignmentPart, assignmentTask, forceShowVideo, handleStartResponse, isAuthenticated, withComputedRemainingTime, filterSectionForPart, redirectToBreak]);
+  }, [assignmentId, originalAssignmentId, isPartialAssignment, assignmentPart, assignmentTask, forceShowVideo, handleStartResponse, isAuthenticated, withComputedRemainingTime, filterSectionForPart, redirectToBreak, resetAnswers, setAnswers]);
 
   const enterFullscreen = useCallback(async () => {
     try {
@@ -1144,17 +1167,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
 
   const handleAnswerChange = useCallback(
     (questionId: string, value: AnswerValue) => {
-      // Sync with Zustand store for persistent local backup
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      useExamStore.getState().setAnswer(questionId, value as any);
-
-      setAnswers((prev) => {
-        const newAnswers = { ...prev, [questionId]: value };
-
-        syncAnswers({ [questionId]: value });
-
-        return newAnswers;
-      });
+      updateAnswer(questionId, value);
 
       const isActualQuestionId =
         Array.isArray(assignment?.section?.questions) &&
@@ -1164,7 +1177,7 @@ function ExamContent({ assignmentId }: { assignmentId: string }) {
         setCurrentQuestionId(questionId);
       }
     },
-    [syncAnswers, assignment?.section?.questions]
+    [assignment?.section?.questions, updateAnswer]
   );
 
   const handleQuestionClick = useCallback(

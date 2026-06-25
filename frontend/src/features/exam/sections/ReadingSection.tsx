@@ -23,15 +23,15 @@ interface ReadingSectionProps {
   questions: Question[];
   answers: Record<string, AnswerValue>;
   currentQuestionId: string;
-  rightPanelRef: RefObject<HTMLDivElement>;
+  rightPanelRef: RefObject<HTMLDivElement | null>;
   noteCount: number;
   isSubmitting: boolean;
   showIntroVideo: boolean;
   isSettingsOpen: boolean;
   onOpenSettings: () => void;
   onCloseSettings: () => void;
-  introVideoRef: RefObject<HTMLVideoElement>;
-  introContainerRef: RefObject<HTMLDivElement>;
+  introVideoRef: RefObject<HTMLVideoElement | null>;
+  introContainerRef: RefObject<HTMLDivElement | null>;
   isVideoAutoplayBlocked: boolean;
   timerStart?: boolean;
   showTimer?: boolean;

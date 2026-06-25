@@ -5,16 +5,19 @@ import {
   Injectable,
   Logger,
   NotFoundException,
-  ServiceUnavailableException,
 } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { AssignmentStatus, FullMockStatus, Prisma } from '@prisma/client';
+import {
+  toValidatedJson,
+  toValidatedJsonObject,
+} from '../../common/utils/json-persistence';
 import { ScoringService } from '../exam-evaluation/scoring.service';
 import {
   ExamSubmittedEvent,
+  SpeakingSubmittedEvent,
   WritingSubmittedEvent,
 } from '../exam-events/exam.events';
-import { AiService } from '../ai/ai.service';
 import { EvaluateWritingSectionInput } from '../ai/ielts-writing.types';
 import { SubmitAnswersDto } from '../exams/dto/submit-answers.dto';
 import { PrismaService } from '../prisma/prisma.service';
@@ -59,7 +62,6 @@ export class SubmissionService {
   constructor(
     private prisma: PrismaService,
     private scoringService: ScoringService,
-    private aiService: AiService,
     private sessionService: SessionService,
     private eventEmitter: EventEmitter2,
     private responseCache: ResponseCacheService,
@@ -167,8 +169,12 @@ export class SubmissionService {
       }
 
       let submitResult: unknown;
+      const submittedAnswers = toValidatedJsonObject(
+        submitDto.answers,
+        'answers',
+      );
       const persistedAnswers = this.buildPersistedAnswers(
-        submitDto.answers as Record<string, unknown>,
+        submittedAnswers,
         assignment as AssignmentWithSection,
         isPracticeSubmission,
       );
@@ -240,7 +246,7 @@ export class SubmissionService {
     targetStatus: AssignmentStatus = AssignmentStatus.SUBMITTED,
   ) {
     const answers = persistedAnswers as Record<string, string>;
-    const questions = assignment.section.questions as QuestionItem[] | null;
+    const questions = this.getQuestionItems(assignment.section.questions);
 
     const tasksToEvaluate: EvaluateWritingSectionInput[] = [];
 
@@ -287,6 +293,10 @@ export class SubmissionService {
     }
 
     const persisted = await this.prisma.$transaction(async (tx) => {
+      const answersJson = toValidatedJson(persistedAnswers, {
+        label: 'answers',
+        requirePlainObject: true,
+      });
       const claimed = await tx.examAssignment.updateMany({
         where: {
           id: assignment.id,
@@ -294,7 +304,7 @@ export class SubmissionService {
         },
         data: {
           status: targetStatus,
-          answers: persistedAnswers as Prisma.InputJsonValue,
+          answers: answersJson,
           score: 0,
         },
       });
@@ -310,7 +320,7 @@ export class SubmissionService {
           score: 0,
           totalScore: 9,
           bandScore: null,
-          answers: persistedAnswers as Prisma.InputJsonValue,
+          answers: answersJson,
           feedback: undefined,
         },
       });
@@ -391,7 +401,7 @@ export class SubmissionService {
     studentId: string,
     targetStatus: AssignmentStatus = AssignmentStatus.SUBMITTED,
   ) {
-    const questions = assignment.section.questions as QuestionItem[];
+    const questions = this.getQuestionItems(assignment.section.questions);
     const calculation = this.scoringService.calculateScore(
       questions,
       persistedAnswers,
@@ -399,6 +409,10 @@ export class SubmissionService {
     );
 
     const persisted = await this.prisma.$transaction(async (tx) => {
+      const answersJson = toValidatedJson(persistedAnswers, {
+        label: 'answers',
+        requirePlainObject: true,
+      });
       const claimed = await tx.examAssignment.updateMany({
         where: {
           id: assignment.id,
@@ -406,7 +420,7 @@ export class SubmissionService {
         },
         data: {
           status: targetStatus,
-          answers: persistedAnswers as Prisma.InputJsonValue,
+          answers: answersJson,
           score: calculation.score,
         },
       });
@@ -422,7 +436,7 @@ export class SubmissionService {
           score: calculation.score,
           totalScore: calculation.totalScore,
           bandScore: calculation.bandScore,
-          answers: persistedAnswers as Prisma.InputJsonValue,
+          answers: answersJson,
           feedback: undefined,
         },
       });
@@ -479,8 +493,7 @@ export class SubmissionService {
     studentId: string,
     targetStatus: AssignmentStatus = AssignmentStatus.SUBMITTED,
   ) {
-    const questions =
-      (assignment.section.questions as QuestionItem[] | null) || [];
+    const questions = this.getQuestionItems(assignment.section.questions);
 
     const speakingParts = (
       questions.length > 0 ? questions.slice(0, 3) : []
@@ -548,23 +561,13 @@ export class SubmissionService {
       );
     }
 
-    if (speakingParts.length === 3 && evaluableParts.length < 3) {
+    if (evaluableParts.length < speakingParts.length) {
       throw new BadRequestException(
-        'Please upload recordings for all 3 speaking parts before submitting',
+        `Please upload recordings for all ${speakingParts.length} speaking part(s) before submitting`,
       );
     }
 
-    const evaluatedParts: Array<{
-      partNumber: number;
-      questionId: string;
-      prompt: string;
-      audioUrl: string;
-      transcription: string;
-      evaluation: unknown;
-      bandScore: number;
-    }> = [];
-
-    for (const part of evaluableParts) {
+    const partsToEvaluate = evaluableParts.map((part) => {
       const partDurationKey = `${part.questionId}__durationSeconds`;
       const partDurationRaw =
         persistedAnswers[partDurationKey] ??
@@ -575,78 +578,20 @@ export class SubmissionService {
           ? parsedDuration
           : undefined;
 
-      let transcription = '';
-      try {
-        transcription = await this.aiService.transcribeAudioFromUrl(
-          part.audioUrl,
-        );
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        const normalized = message.toLowerCase();
-
-        if (
-          normalized.includes('no_speech_detected') ||
-          normalized.includes('empty text') ||
-          normalized.includes('transcription is empty')
-        ) {
-          throw new BadRequestException(
-            `No clear speech was detected in Part ${part.partNumber}. Please record Part ${part.partNumber} again and speak clearly.`,
-          );
-        }
-
-        if (normalized.includes('audio file not found')) {
-          throw new BadRequestException(
-            `Recording for Part ${part.partNumber} was not found. Please upload that part again.`,
-          );
-        }
-
-        this.logger.error(
-          `Speaking transcription failed for assignment ${assignment.id}, part ${part.partNumber}: ${message}`,
-        );
-        throw new ServiceUnavailableException(
-          'Speaking transcription service is temporarily unavailable. Please try again in a moment.',
-        );
-      }
-
-      let speakingEvaluation: Awaited<
-        ReturnType<AiService['evaluateSpeakingSection']>
-      >;
-      try {
-        speakingEvaluation = await this.aiService.evaluateSpeakingSection({
-          prompt: part.prompt,
-          transcription,
-          audioDurationSeconds,
-        });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        this.logger.error(
-          `Speaking evaluation failed for assignment ${assignment.id}, part ${part.partNumber}: ${message}`,
-        );
-        throw new ServiceUnavailableException(
-          'Speaking evaluation service is temporarily unavailable. Please try again in a moment.',
-        );
-      }
-
-      evaluatedParts.push({
+      return {
         partNumber: part.partNumber,
         questionId: part.questionId,
         prompt: part.prompt,
         audioUrl: part.audioUrl,
-        transcription,
-        evaluation: speakingEvaluation,
-        bandScore: speakingEvaluation.overall_band,
-      });
-    }
-
-    const averageBand =
-      evaluatedParts.reduce((sum, part) => sum + part.bandScore, 0) /
-      evaluatedParts.length;
-    const overallBand = Math.min(
-      9,
-      Math.max(0, Math.round(averageBand * 2) / 2),
-    );
+        audioDurationSeconds,
+      };
+    });
 
     const persisted = await this.prisma.$transaction(async (tx) => {
+      const answersJson = toValidatedJson(persistedAnswers, {
+        label: 'answers',
+        requirePlainObject: true,
+      });
       const claimed = await tx.examAssignment.updateMany({
         where: {
           id: assignment.id,
@@ -654,8 +599,8 @@ export class SubmissionService {
         },
         data: {
           status: targetStatus,
-          answers: persistedAnswers as Prisma.InputJsonValue,
-          score: overallBand,
+          answers: answersJson,
+          score: 0,
         },
       });
 
@@ -667,16 +612,13 @@ export class SubmissionService {
         data: {
           studentId,
           sectionId: assignment.sectionId,
-          score: overallBand,
+          score: 0,
           totalScore: 9,
-          bandScore: overallBand,
-          answers: persistedAnswers as Prisma.InputJsonValue,
+          bandScore: null,
+          answers: answersJson,
           feedback: {
-            parts: evaluatedParts,
-            summary: {
-              evaluatedParts: evaluatedParts.length,
-              overallBand,
-            },
+            status: 'PROCESSING',
+            parts: partsToEvaluate,
           } as unknown as Prisma.InputJsonValue,
         },
       });
@@ -701,13 +643,24 @@ export class SubmissionService {
     const { result, mockProgress } = persisted;
 
     this.eventEmitter.emit(
+      'speaking.submitted',
+      new SpeakingSubmittedEvent(
+        assignment.id,
+        result.id,
+        studentId,
+        assignment.sectionId,
+        partsToEvaluate,
+      ),
+    );
+
+    this.eventEmitter.emit(
       'exam.submitted',
       new ExamSubmittedEvent(
         assignment.id,
         studentId,
         assignment.sectionId,
         assignment.section.type,
-        overallBand,
+        null,
         result.id,
       ),
     );
@@ -717,10 +670,11 @@ export class SubmissionService {
       assignmentId: assignment.id,
       status: 'SUBMITTED',
       resultId: result.id,
-      score: overallBand,
+      score: 0,
       totalScore: 9,
-      bandScore: overallBand,
-      note: `Speaking section graded with AI evaluation across ${evaluatedParts.length} part(s).`,
+      bandScore: null,
+      gradingStatus: 'queued',
+      note: 'Speaking evaluation is in progress. Results will be available soon.',
       nextAssignmentId: mockProgress?.nextAssignmentId ?? null,
       breakEndsAt: mockProgress?.breakEndsAt ?? null,
       fullMockSessionId: assignment.fullMockSessionId ?? null,
@@ -773,6 +727,23 @@ export class SubmissionService {
     }
 
     return persistedAnswers;
+  }
+
+  private getQuestionItems(value: unknown): QuestionItem[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    return value.filter((item): item is QuestionItem => {
+      if (!item || typeof item !== 'object') {
+        return false;
+      }
+
+      const question = item as Record<string, unknown>;
+      return (
+        typeof question.id === 'string' && typeof question.type === 'string'
+      );
+    });
   }
 
   private async updateFullMockProgressInTransaction(
@@ -837,7 +808,6 @@ export class SubmissionService {
       'cache:assignments:student:v1:',
       'cache:results:list:v1:',
       'cache:results:student:v1:',
-      'cache:dashboard:stats:v1:',
     ]);
   }
 }

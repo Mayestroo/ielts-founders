@@ -14,6 +14,11 @@ export interface JwtPayload {
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor(configService: ConfigService) {
+    const jwtSecret = configService.get<string>('JWT_SECRET')?.trim();
+    if (!jwtSecret) {
+      throw new Error('JWT_SECRET must be configured');
+    }
+
     const cookieExtractor = (req: Request): string | null => {
       const header = req?.headers?.cookie;
       if (!header) {
@@ -36,7 +41,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         cookieExtractor,
       ]),
       ignoreExpiration: false,
-      secretOrKey: configService.get<string>('JWT_SECRET') || 'secret',
+      secretOrKey: jwtSecret,
     });
   }
 

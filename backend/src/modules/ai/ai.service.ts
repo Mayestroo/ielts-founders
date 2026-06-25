@@ -175,6 +175,26 @@ Rules:
 const DEFAULT_OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4.1';
 const DEFAULT_BACKEND_URL = process.env.BACKEND_URL?.trim() || '';
 
+const configuredImageHosts = new Set(
+  [
+    DEFAULT_BACKEND_URL,
+    process.env.FRONTEND_URL?.trim() || '',
+    process.env.ADMIN_URL?.trim() || '',
+    ...(process.env.AI_ALLOWED_IMAGE_HOSTS || '')
+      .split(',')
+      .map((host) => host.trim())
+      .filter(Boolean),
+  ]
+    .map((value) => {
+      try {
+        return new URL(value).hostname.toLowerCase();
+      } catch {
+        return value.toLowerCase();
+      }
+    })
+    .filter(Boolean),
+);
+
 const clampBand = (value: unknown): number => {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) {
@@ -397,8 +417,7 @@ const buildTaskContent = (
       },
     ];
 
-    if (resolvedImageUrl && isPublicImageUrl(resolvedImageUrl)) {
-      // Public URL — OpenAI can fetch it directly
+    if (resolvedImageUrl && isAllowedRemoteImageUrl(resolvedImageUrl)) {
       content.push({
         type: 'input_image',
         image_url: resolvedImageUrl,
@@ -535,10 +554,10 @@ const resolveImageUrl = (imageUrl?: string): string | null => {
   return `${normalizedBase}${normalizedPath}`;
 };
 
-const isPublicImageUrl = (imageUrl: string): boolean => {
+const isAllowedRemoteImageUrl = (imageUrl: string): boolean => {
   try {
     const parsed = new URL(imageUrl);
-    if (!['http:', 'https:'].includes(parsed.protocol)) {
+    if (parsed.protocol !== 'https:') {
       return false;
     }
 
@@ -561,7 +580,7 @@ const isPublicImageUrl = (imageUrl: string): boolean => {
       return false;
     }
 
-    return true;
+    return configuredImageHosts.has(host);
   } catch {
     return false;
   }

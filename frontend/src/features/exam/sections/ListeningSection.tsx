@@ -34,9 +34,9 @@ interface ListeningSectionProps {
   showTimer?: boolean;
   isAudioPlaying: boolean;
   audioError: string | null;
-  audioRef: RefObject<HTMLAudioElement>;
-  introVideoRef: RefObject<HTMLVideoElement>;
-  introContainerRef: RefObject<HTMLDivElement>;
+  audioRef: RefObject<HTMLAudioElement | null>;
+  introVideoRef: RefObject<HTMLVideoElement | null>;
+  introContainerRef: RefObject<HTMLDivElement | null>;
   isVideoAutoplayBlocked: boolean;
   onVideoAutoplayBlockedChange: (blocked: boolean) => void;
   onVideoEnded: () => void;

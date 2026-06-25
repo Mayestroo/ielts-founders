@@ -23,8 +23,8 @@ interface WritingSectionProps {
   timerStart?: boolean;
   showTimer?: boolean;
   isVideoAutoplayBlocked: boolean;
-  introVideoRef: RefObject<HTMLVideoElement>;
-  introContainerRef: RefObject<HTMLDivElement>;
+  introVideoRef: RefObject<HTMLVideoElement | null>;
+  introContainerRef: RefObject<HTMLDivElement | null>;
   onVideoAutoplayBlockedChange: (blocked: boolean) => void;
   onVideoEnded: () => void;
   onRequestFullscreen: () => Promise<void>;

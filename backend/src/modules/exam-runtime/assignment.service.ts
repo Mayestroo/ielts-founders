@@ -12,6 +12,7 @@ import {
   Prisma,
   Role,
 } from '@prisma/client';
+import { toValidatedJson } from '../../common/utils/json-persistence';
 import { CreateAssignmentDto } from '../exams/dto/create-assignment.dto';
 import { CreateFullMockDto } from '../exams/dto/create-full-mock.dto';
 import { PrismaService } from '../prisma/prisma.service';
@@ -1351,7 +1352,10 @@ export class AssignmentService {
       where: { id: assignmentId },
       data: {
         status: AssignmentStatus.SUBMITTED,
-        answers: answers as Prisma.InputJsonValue,
+        answers: toValidatedJson(answers, {
+          label: 'answers',
+          requirePlainObject: true,
+        }),
         score,
       },
     });
@@ -1362,7 +1366,12 @@ export class AssignmentService {
   async updateAnswers(assignmentId: string, answers: unknown): Promise<void> {
     await this.prisma.examAssignment.update({
       where: { id: assignmentId },
-      data: { answers: answers as Prisma.InputJsonValue },
+      data: {
+        answers: toValidatedJson(answers, {
+          label: 'answers',
+          requirePlainObject: true,
+        }),
+      },
     });
   }
 
@@ -1385,7 +1394,12 @@ export class AssignmentService {
 
     return this.prisma.examAssignment.update({
       where: { id: assignmentId },
-      data: { highlights: highlights as Prisma.InputJsonValue },
+      data: {
+        highlights: toValidatedJson(highlights, {
+          label: 'highlights',
+          maxBytes: 1024 * 1024,
+        }),
+      },
     });
   }
 
@@ -1407,8 +1421,6 @@ export class AssignmentService {
       ASSIGNMENTS_GROUPED_CACHE_PREFIX,
       STUDENT_ASSIGNMENTS_CACHE_PREFIX,
       'cache:dashboard:stats:v1:',
-      'cache:results:list:v1:',
-      'cache:results:student:v1:',
     ]);
   }
 

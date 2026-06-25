@@ -534,7 +534,6 @@ export class ResultService {
       RESULTS_LIST_CACHE_PREFIX,
       STUDENT_RESULTS_CACHE_PREFIX,
       'cache:dashboard:stats:v1:',
-      'cache:assignments:grouped:v1:',
     ]);
   }
 

@@ -12,12 +12,19 @@ import { TokenCleanupService } from './token-cleanup.service';
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
       imports: [ConfigModule],
-      useFactory: (configService: ConfigService) => ({
-        secret: configService.get<string>('JWT_SECRET'),
-        signOptions: {
-          expiresIn: configService.get<string>('JWT_EXPIRES_IN') || '7d',
-        } as JwtSignOptions,
-      }),
+      useFactory: (configService: ConfigService) => {
+        const jwtSecret = configService.get<string>('JWT_SECRET')?.trim();
+        if (!jwtSecret) {
+          throw new Error('JWT_SECRET must be configured');
+        }
+
+        return {
+          secret: jwtSecret,
+          signOptions: {
+            expiresIn: configService.get<string>('JWT_EXPIRES_IN') || '7d',
+          } as JwtSignOptions,
+        };
+      },
       inject: [ConfigService],
     }),
   ],

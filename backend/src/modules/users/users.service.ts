@@ -11,12 +11,19 @@ import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 
 type TariffLabel = 'PREMIUM' | 'GOLD' | 'FREE';
+type SanitizableCenter = { loginPassword?: unknown } & Record<string, unknown>;
+type SanitizableUser = {
+  password?: unknown;
+  center?: SanitizableCenter | null;
+} & Record<string, unknown>;
 
 @Injectable()
 export class UsersService {
   constructor(private prisma: PrismaService) {}
 
-  private sanitizeCenter(center: any) {
+  private sanitizeCenter<T extends SanitizableCenter | null | undefined>(
+    center: T,
+  ) {
     if (!center) {
       return center;
     }
@@ -28,7 +35,7 @@ export class UsersService {
     };
   }
 
-  private sanitizeUser(user: any) {
+  private sanitizeUser<T extends SanitizableUser | null | undefined>(user: T) {
     if (!user) {
       return user;
     }
@@ -132,7 +139,7 @@ export class UsersService {
     roleFilter?: Role,
     centerFilter?: string,
   ) {
-    let where: any = {};
+    let where: Prisma.UserWhereInput = {};
 
     if (userRole === Role.CENTER_ADMIN) {
       // CENTER_ADMIN sees only users in their center

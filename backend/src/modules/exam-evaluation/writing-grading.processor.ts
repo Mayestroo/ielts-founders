@@ -5,12 +5,6 @@ import { Prisma } from '@prisma/client';
 import { Job } from 'bullmq';
 import { AiService } from '../ai/ai.service';
 import {
-  EvaluateWritingSectionInput,
-  IeltsWritingResult,
-  IeltsWritingScores,
-  IeltsWritingSectionResult,
-} from '../ai/ielts-writing.types';
-import {
   WritingGradedEvent,
   WritingGradingFailedEvent,
 } from '../exam-events/exam.events';
@@ -20,97 +14,10 @@ import {
   WritingGradingJobData,
   WritingGradingResult,
 } from '../queue/writing-grading.types';
-
-const roundBand = (value: number): number => Math.round(value * 2) / 2;
-
-const emptyScores = (): IeltsWritingScores => ({
-  task_achievement: 0,
-  coherence_cohesion: 0,
-  lexical_resource: 0,
-  grammar: 0,
-});
-
-const buildSectionResult = (
-  taskResults: Partial<Record<'task1' | 'task2', IeltsWritingResult>>,
-): IeltsWritingSectionResult => {
-  const weights: Record<'task1' | 'task2', number> = {
-    task1: 1,
-    task2: 2,
-  };
-
-  const available = (['task1', 'task2'] as const).filter((taskType) =>
-    Boolean(taskResults[taskType]),
-  );
-
-  if (available.length === 0) {
-    throw new Error('No writing task evaluations available');
-  }
-
-  const totalWeight = available.reduce(
-    (sum, taskType) => sum + weights[taskType],
-    0,
-  );
-
-  const weightedScores = available.reduce((acc, taskType) => {
-    const result = taskResults[taskType]!;
-    const weight = weights[taskType];
-
-    return {
-      task_achievement:
-        acc.task_achievement + result.scores.task_achievement * weight,
-      coherence_cohesion:
-        acc.coherence_cohesion + result.scores.coherence_cohesion * weight,
-      lexical_resource:
-        acc.lexical_resource + result.scores.lexical_resource * weight,
-      grammar: acc.grammar + result.scores.grammar * weight,
-    };
-  }, emptyScores());
-
-  const normalizedScores: IeltsWritingScores = {
-    task_achievement: roundBand(weightedScores.task_achievement / totalWeight),
-    coherence_cohesion: roundBand(
-      weightedScores.coherence_cohesion / totalWeight,
-    ),
-    lexical_resource: roundBand(weightedScores.lexical_resource / totalWeight),
-    grammar: roundBand(weightedScores.grammar / totalWeight),
-  };
-
-  const weightedBand = roundBand(
-    available.reduce(
-      (sum, taskType) =>
-        sum + taskResults[taskType]!.overall_band * weights[taskType],
-      0,
-    ) / totalWeight,
-  );
-
-  return {
-    overall_band: weightedBand,
-    word_count_penalty: available.some(
-      (taskType) => taskResults[taskType]!.word_count_penalty,
-    ),
-    task1: taskResults.task1,
-    task2: taskResults.task2,
-    weighted_scores: normalizedScores,
-  };
-};
-
-const evaluateTaskInputs = async (
-  aiService: AiService,
-  taskInputs: EvaluateWritingSectionInput[],
-): Promise<Partial<Record<'task1' | 'task2', IeltsWritingResult>>> => {
-  const result: Partial<Record<'task1' | 'task2', IeltsWritingResult>> = {};
-
-  for (const taskInput of taskInputs) {
-    if (!taskInput.essay.trim()) {
-      continue;
-    }
-
-    result[taskInput.taskType] =
-      await aiService.evaluateWritingSection(taskInput);
-  }
-
-  return result;
-};
+import {
+  buildWritingSectionResult,
+  evaluateWritingTaskInputs,
+} from './writing-grading.util';
 
 @Processor(WRITING_GRADING_QUEUE, {
   concurrency: 3,
@@ -157,8 +64,11 @@ export class WritingGradingProcessor extends WorkerHost {
     });
 
     try {
-      const taskResults = await evaluateTaskInputs(this.aiService, tasks);
-      const sectionResult = buildSectionResult(taskResults);
+      const taskResults = await evaluateWritingTaskInputs(
+        this.aiService,
+        tasks,
+      );
+      const sectionResult = buildWritingSectionResult(taskResults);
 
       this.logger.log(
         `Grading completed for submission ${submissionId}, bandScore: ${sectionResult.overall_band}`,

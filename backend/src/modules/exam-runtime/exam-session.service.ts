@@ -5,12 +5,8 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import {
-  AssignmentStatus,
-  ExamAssignment,
-  ExamSection,
-  Prisma,
-} from '@prisma/client';
+import { AssignmentStatus, ExamAssignment, ExamSection } from '@prisma/client';
+import { toValidatedJson } from '../../common/utils/json-persistence';
 import { PrismaService } from '../prisma/prisma.service';
 import { SessionService } from '../session/session.service';
 
@@ -45,6 +41,11 @@ interface LatencyMetrics {
   samples: number[];
 }
 
+interface PendingCheckpoint {
+  answers: Record<string, unknown>;
+  highlights: unknown[];
+}
+
 @Injectable()
 export class ExamSessionService {
   private readonly logger = new Logger(ExamSessionService.name);
@@ -67,6 +68,8 @@ export class ExamSessionService {
     checkpoints: 0,
     checkpointFailures: 0,
   };
+  private readonly checkpointWrites = new Map<string, Promise<void>>();
+  private readonly pendingCheckpoints = new Map<string, PendingCheckpoint>();
   private readonly operationLatency: Record<OperationName, LatencyMetrics> = {
     sync: {
       count: 0,
@@ -254,31 +257,61 @@ export class ExamSessionService {
     answers: Record<string, unknown>,
     highlights: unknown[],
   ) {
-    void this.prisma.examAssignment
-      .updateMany({
+    if (this.checkpointWrites.has(assignmentId)) {
+      this.pendingCheckpoints.set(assignmentId, { answers, highlights });
+      return;
+    }
+
+    const writeCheckpoint = async (payload: PendingCheckpoint) => {
+      const result = await this.prisma.examAssignment.updateMany({
         where: {
           id: assignmentId,
           status: { not: AssignmentStatus.SUBMITTED },
         },
         data: {
-          answers: answers as Prisma.InputJsonValue,
-          highlights: highlights as Prisma.InputJsonValue,
+          answers: toValidatedJson(payload.answers, {
+            label: 'answers',
+            requirePlainObject: true,
+          }),
+          highlights: toValidatedJson(payload.highlights, {
+            label: 'highlights',
+            maxBytes: 1024 * 1024,
+          }),
         },
-      })
-      .then((result) => {
-        if (result.count === 0) {
-          this.syncMetrics.checkpointFailures += 1;
-          this.logger.warn(
-            `Checkpoint skipped because assignment ${assignmentId} is already submitted`,
-          );
-        }
-      })
-      .catch(() => {
+      });
+
+      if (result.count === 0) {
+        this.syncMetrics.checkpointFailures += 1;
+        this.logger.warn(
+          `Checkpoint skipped because assignment ${assignmentId} is already submitted`,
+        );
+      }
+    };
+
+    const run = async (payload: PendingCheckpoint): Promise<void> => {
+      try {
+        await writeCheckpoint(payload);
+      } catch {
         this.syncMetrics.checkpointFailures += 1;
         this.logger.warn(
           `Checkpoint persistence failed for assignment ${assignmentId}`,
         );
-      });
+      } finally {
+        const pending = this.pendingCheckpoints.get(assignmentId);
+        if (pending) {
+          this.pendingCheckpoints.delete(assignmentId);
+          const nextRun = run(pending);
+          this.checkpointWrites.set(assignmentId, nextRun);
+          void nextRun;
+        } else {
+          this.checkpointWrites.delete(assignmentId);
+        }
+      }
+    };
+
+    const currentRun = run({ answers, highlights });
+    this.checkpointWrites.set(assignmentId, currentRun);
+    void currentRun;
   }
 
   private maybeEmitSyncMetrics() {
@@ -464,8 +497,7 @@ export class ExamSessionService {
         return this.heartbeatFromDatabase(assignmentId, studentId);
       }
 
-      // Retry heartbeat
-      return this.heartbeat(assignmentId, studentId, tabId);
+      return this.heartbeatFromDatabase(assignmentId, studentId);
     } finally {
       this.recordOperationLatency('heartbeat', Date.now() - startedAt);
     }
@@ -710,8 +742,14 @@ export class ExamSessionService {
         status: AssignmentStatus.IN_PROGRESS,
       },
       data: {
-        answers: mergedAnswers as Prisma.InputJsonValue,
-        highlights: mergedHighlights as Prisma.InputJsonValue,
+        answers: toValidatedJson(mergedAnswers, {
+          label: 'answers',
+          requirePlainObject: true,
+        }),
+        highlights: toValidatedJson(mergedHighlights, {
+          label: 'highlights',
+          maxBytes: 1024 * 1024,
+        }),
       },
     });
 
@@ -737,7 +775,12 @@ export class ExamSessionService {
           id: assignmentId,
           status: AssignmentStatus.IN_PROGRESS,
         },
-        data: { answers: answers as Prisma.InputJsonValue },
+        data: {
+          answers: toValidatedJson(answers, {
+            label: 'answers',
+            requirePlainObject: true,
+          }),
+        },
       })
       .then((result) => {
         if (result.count === 0) {
@@ -829,7 +872,12 @@ export class ExamSessionService {
           id: assignment.id,
           status: AssignmentStatus.IN_PROGRESS,
         },
-        data: { answers: mergedAnswers as Prisma.InputJsonValue },
+        data: {
+          answers: toValidatedJson(mergedAnswers, {
+            label: 'answers',
+            requirePlainObject: true,
+          }),
+        },
       });
 
       if (updated.count !== 1) {

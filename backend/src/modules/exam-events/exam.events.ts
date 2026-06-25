@@ -1,5 +1,13 @@
 import { EvaluateWritingSectionInput } from '../ai/ielts-writing.types';
 
+export interface SpeakingPartEvaluationInput {
+  partNumber: number;
+  questionId: string;
+  prompt: string;
+  audioUrl: string;
+  audioDurationSeconds?: number;
+}
+
 export class WritingSubmittedEvent {
   constructor(
     public readonly submissionId: string,
@@ -28,6 +36,16 @@ export class WritingGradingFailedEvent {
     public readonly error: string,
     public readonly attemptsMade: number,
     public readonly maxAttempts: number,
+  ) {}
+}
+
+export class SpeakingSubmittedEvent {
+  constructor(
+    public readonly assignmentId: string,
+    public readonly resultId: string,
+    public readonly studentId: string,
+    public readonly sectionId: string,
+    public readonly parts: SpeakingPartEvaluationInput[],
   ) {}
 }
 

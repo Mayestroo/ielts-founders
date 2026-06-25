@@ -5,14 +5,9 @@ import { Prisma } from '@prisma/client';
 import { Queue } from 'bullmq';
 import { AiService } from '../ai/ai.service';
 import {
-  EvaluateWritingSectionInput,
-  IeltsWritingResult,
-  IeltsWritingScores,
-  IeltsWritingSectionResult,
-} from '../ai/ielts-writing.types';
-import {
   ExamStartedEvent,
   ExamSubmittedEvent,
+  SpeakingSubmittedEvent,
   WritingGradedEvent,
   WritingGradingFailedEvent,
   WritingSubmittedEvent,
@@ -21,97 +16,10 @@ import { PrismaService } from '../prisma/prisma.service';
 import { WRITING_GRADING_QUEUE } from '../queue/queue.module';
 import { WritingGradingJobData } from '../queue/writing-grading.types';
 import { ResponseCacheService } from '../redis';
-
-const roundBand = (value: number): number => Math.round(value * 2) / 2;
-
-const emptyScores = (): IeltsWritingScores => ({
-  task_achievement: 0,
-  coherence_cohesion: 0,
-  lexical_resource: 0,
-  grammar: 0,
-});
-
-const buildSectionResult = (
-  taskResults: Partial<Record<'task1' | 'task2', IeltsWritingResult>>,
-): IeltsWritingSectionResult => {
-  const weights: Record<'task1' | 'task2', number> = {
-    task1: 1,
-    task2: 2,
-  };
-
-  const available = (['task1', 'task2'] as const).filter((taskType) =>
-    Boolean(taskResults[taskType]),
-  );
-
-  if (available.length === 0) {
-    throw new Error('No writing task evaluations available');
-  }
-
-  const totalWeight = available.reduce(
-    (sum, taskType) => sum + weights[taskType],
-    0,
-  );
-
-  const weightedScores = available.reduce((acc, taskType) => {
-    const result = taskResults[taskType]!;
-    const weight = weights[taskType];
-
-    return {
-      task_achievement:
-        acc.task_achievement + result.scores.task_achievement * weight,
-      coherence_cohesion:
-        acc.coherence_cohesion + result.scores.coherence_cohesion * weight,
-      lexical_resource:
-        acc.lexical_resource + result.scores.lexical_resource * weight,
-      grammar: acc.grammar + result.scores.grammar * weight,
-    };
-  }, emptyScores());
-
-  const normalizedScores: IeltsWritingScores = {
-    task_achievement: roundBand(weightedScores.task_achievement / totalWeight),
-    coherence_cohesion: roundBand(
-      weightedScores.coherence_cohesion / totalWeight,
-    ),
-    lexical_resource: roundBand(weightedScores.lexical_resource / totalWeight),
-    grammar: roundBand(weightedScores.grammar / totalWeight),
-  };
-
-  const weightedBand = roundBand(
-    available.reduce(
-      (sum, taskType) =>
-        sum + taskResults[taskType]!.overall_band * weights[taskType],
-      0,
-    ) / totalWeight,
-  );
-
-  return {
-    overall_band: weightedBand,
-    word_count_penalty: available.some(
-      (taskType) => taskResults[taskType]!.word_count_penalty,
-    ),
-    task1: taskResults.task1,
-    task2: taskResults.task2,
-    weighted_scores: normalizedScores,
-  };
-};
-
-const evaluateTaskInputs = async (
-  aiService: AiService,
-  taskInputs: EvaluateWritingSectionInput[],
-): Promise<Partial<Record<'task1' | 'task2', IeltsWritingResult>>> => {
-  const result: Partial<Record<'task1' | 'task2', IeltsWritingResult>> = {};
-
-  for (const taskInput of taskInputs) {
-    if (!taskInput.essay.trim()) {
-      continue;
-    }
-
-    result[taskInput.taskType] =
-      await aiService.evaluateWritingSection(taskInput);
-  }
-
-  return result;
-};
+import {
+  buildWritingSectionResult,
+  evaluateWritingTaskInputs,
+} from './writing-grading.util';
 
 @Injectable()
 export class ExamEventListener {
@@ -120,11 +28,11 @@ export class ExamEventListener {
   constructor(
     @Optional()
     @InjectQueue(WRITING_GRADING_QUEUE)
-    private readonly writingQueue?: Queue<WritingGradingJobData>,
-    private readonly prisma?: PrismaService,
-    private readonly aiService?: AiService,
-    private readonly responseCache?: ResponseCacheService,
-    private readonly eventEmitter?: EventEmitter2,
+    private readonly writingQueue: Queue<WritingGradingJobData> | undefined,
+    private readonly prisma: PrismaService,
+    private readonly aiService: AiService,
+    private readonly responseCache: ResponseCacheService,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   @OnEvent('writing.submitted')
@@ -172,18 +80,6 @@ export class ExamEventListener {
   }
 
   private async processWritingInline(event: WritingSubmittedEvent) {
-    if (
-      !this.prisma ||
-      !this.aiService ||
-      !this.responseCache ||
-      !this.eventEmitter
-    ) {
-      this.logger.error(
-        `Inline grading dependencies missing for submission ${event.submissionId}`,
-      );
-      return;
-    }
-
     try {
       await this.prisma.writingSubmission.update({
         where: { id: event.submissionId },
@@ -195,8 +91,11 @@ export class ExamEventListener {
         },
       });
 
-      const taskResults = await evaluateTaskInputs(this.aiService, event.tasks);
-      const sectionResult = buildSectionResult(taskResults);
+      const taskResults = await evaluateWritingTaskInputs(
+        this.aiService,
+        event.tasks,
+      );
+      const sectionResult = buildWritingSectionResult(taskResults);
 
       await this.prisma.$transaction([
         this.prisma.writingSubmission.update({
@@ -265,6 +164,126 @@ export class ExamEventListener {
         ),
       );
     }
+  }
+
+  @OnEvent('speaking.submitted')
+  async handleSpeakingSubmitted(event: SpeakingSubmittedEvent) {
+    this.logger.log(
+      `Speaking submitted event received for result ${event.resultId}`,
+    );
+
+    if (event.parts.length === 0) {
+      await this.markSpeakingFailed(
+        event,
+        'No speaking recordings to evaluate',
+      );
+      return;
+    }
+
+    try {
+      const evaluatedParts: Array<{
+        partNumber: number;
+        questionId: string;
+        prompt: string;
+        audioUrl: string;
+        transcription: string;
+        evaluation: unknown;
+        bandScore: number;
+      }> = [];
+
+      for (const part of event.parts) {
+        const transcription = await this.aiService.transcribeAudioFromUrl(
+          part.audioUrl,
+        );
+
+        const speakingEvaluation = await this.aiService.evaluateSpeakingSection(
+          {
+            prompt: part.prompt,
+            transcription,
+            audioDurationSeconds: part.audioDurationSeconds,
+          },
+        );
+
+        evaluatedParts.push({
+          partNumber: part.partNumber,
+          questionId: part.questionId,
+          prompt: part.prompt,
+          audioUrl: part.audioUrl,
+          transcription,
+          evaluation: speakingEvaluation,
+          bandScore: speakingEvaluation.overall_band,
+        });
+      }
+
+      const averageBand =
+        evaluatedParts.reduce((sum, part) => sum + part.bandScore, 0) /
+        evaluatedParts.length;
+      const overallBand = Math.min(
+        9,
+        Math.max(0, Math.round(averageBand * 2) / 2),
+      );
+
+      const feedback = {
+        status: 'COMPLETED',
+        parts: evaluatedParts,
+        summary: {
+          evaluatedParts: evaluatedParts.length,
+          overallBand,
+        },
+      };
+
+      await this.prisma.$transaction([
+        this.prisma.examResult.update({
+          where: { id: event.resultId },
+          data: {
+            score: overallBand,
+            bandScore: overallBand,
+            feedback: feedback as unknown as Prisma.InputJsonValue,
+          },
+        }),
+        this.prisma.examAssignment.update({
+          where: { id: event.assignmentId },
+          data: { score: overallBand },
+        }),
+      ]);
+
+      await this.responseCache.delByPrefixes([
+        'cache:results:list:v1:',
+        'cache:results:student:v1:',
+        'cache:assignments:student:v1:',
+        'cache:dashboard:stats:v1:',
+      ]);
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : 'Unknown speaking grading error';
+      this.logger.error(
+        `Speaking grading failed for result ${event.resultId}: ${message}`,
+      );
+      await this.markSpeakingFailed(event, message);
+    }
+  }
+
+  private async markSpeakingFailed(
+    event: SpeakingSubmittedEvent,
+    errorMessage: string,
+  ) {
+    await this.prisma.examResult
+      .update({
+        where: { id: event.resultId },
+        data: {
+          feedback: {
+            status: 'FAILED',
+            error: errorMessage,
+          } as unknown as Prisma.InputJsonValue,
+        },
+      })
+      .catch(() => undefined);
+
+    await this.responseCache
+      .delByPrefixes(['cache:results:list:v1:', 'cache:results:student:v1:'])
+      .catch(() => undefined);
   }
 
   @OnEvent('writing.graded')

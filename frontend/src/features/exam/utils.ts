@@ -6,7 +6,7 @@ export const getEffectivePoints = (question: Question): number => {
   if (question.type === 'MCQ_MULTIPLE') {
     if (question.questionRange) {
       const rangeMatch = question.questionRange.match(
-        /(\d+)\s*[\u2013-]\s*(\d+)/
+        /(\d+)\s*(?:-|\u2013)\s*(\d+)/
       );
       if (rangeMatch) {
         const start = parseInt(rangeMatch[1]);
